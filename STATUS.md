@@ -12,10 +12,16 @@ verified run's layer/mask/plate, reproduces the frozen receipt
 exactly: changed_opaque_pixels = 0 over 580,613 checked opaque
 pixels, and the recomposed output's pixel hash is byte-identical
 to the frozen composite's. The MCP server runs over stdio with the
-same three tool shapes. Live model calls are implemented but were
-NOT exercised end-to-end against the Meta API from the Rust binary
-(except one inadvertent identify call, see Notes); the gate and
-the whole test suite are offline.
+same three tool shapes.
+
+**Live path: PROVEN for identify + cut_out; draw blocked at plate
+decode (2026-10-27, see "Live run" below).** One deliberate live
+chain ran from the Rust binary over stdio against the Meta API:
+identify and cut_out completed with real receipts; draw failed
+because muse-image-1.0 returns a **WebP** payload and the Rust
+image decoder speaks PNG/JPEG only. Two transport bugs had to be
+fixed first (proxy/TLS, below). The gate and the test suite remain
+offline.
 
 ## Build
 
@@ -101,6 +107,54 @@ premultiply round-trip and fixed-point coefficient math) is
 byte-exact at the real 1280×1920 → 1206×1925 fit geometry, not
 just close.
 
+## Live run (2026-10-27)
+
+One chain, driven over the binary's own stdio interface (data-URI
+ingest of `~/workspace/agenthand/tests/fixtures/chair_photo.jpg`,
+then handle-chained calls), fresh data dir in `live-data/`
+(untracked runtime state). Structured results saved in
+`live-run-2026-10-27.json`.
+
+- **identify — OK.** Concept "wooden slat-back chair", 1 attempt,
+  settled **$0.009377** (3,384 in / 1,211 out tokens).
+- **cut_out — OK.** Internal plan identify settled $0.008327;
+  sam-3.1 accepted the identify phrase on attempt 1 (mask 229,953
+  px, bbox [733, 225, 1328, 1239] — the same bbox the Python
+  dry-run gate recorded), no mask warnings, settled **$0.0025**.
+- **draw — FAILED at plate decode.** Error verbatim:
+  `BAD_IMAGE_RESPONSE — "The plate payload does not decode as an
+  image: unsupported image format (PNG and JPEG only)"`.
+  Diagnosis (one diagnostic API call from the Python side):
+  muse-image-1.0's `b64_json` payload is **WebP** (magic
+  `RIFF....WEBPVP8X`, extended WebP). Python never noticed because
+  Pillow decodes WebP transparently. The Rust decoder is
+  hand-rolled PNG/JPEG, so the plate can never decode. No
+  composite was produced, so there is no live Rust receipt and
+  the cross-implementation check (Python `agenthand-verify` on
+  the Rust run's source/final/mask) could not run — no final
+  exists. Remedies, not yet attempted: ask the images API for a
+  PNG payload if it honors a format parameter, or add a WebP
+  decoder (not a small change — the decode stack is hand-rolled).
+- **Ledger (this run):** settled $0.020204 (identify 0.009377 +
+  plan identify 0.008327 + cut_out 0.0025); the failed draw's
+  $0.01 reservation stayed counted (fail-closed, as designed),
+  for $0.030204 counted total — far under the $120 working cap /
+  $150 hard ceiling; the reserve-before-call gate held on every
+  call. Two earlier aborted driver runs died at TLS connect
+  (below) before any request reached Meta: their ledgers counted
+  a $0.024798 reservation each, but no API spend occurred.
+- **Transport fix (the reason the first live attempts failed):**
+  this VM's env names a TLS-intercepting egress proxy; reqwest
+  auto-detects it, and the proxy presents certificates signed by
+  a local CA that rustls (webpki roots) rejects —
+  `InvalidCertificate(UnknownIssuer)` on every call. Python never
+  hit this (httpx validates against the OS store, which trusts
+  the local CA). Direct egress presents the genuine DigiCert
+  chain, so `meta::build_client` now builds with `.no_proxy()`.
+  Trade-off, stated plainly: on a network where a proxy is the
+  ONLY egress, this client cannot connect until it also trusts
+  that proxy's CA.
+
 ## Design choices
 
 - **Hand-rolled JSON-RPC stdio loop, not rmcp.** Deliberate: exact
@@ -129,14 +183,13 @@ just close.
 
 ## What is stubbed or missing (blunt)
 
-- **Live end-to-end Rust run: not done.** identify / cut_out /
-  draw backends are implemented against `https://api.meta.ai/v1`
-  with the same prompts, schemas, projections, and retry rules as
-  Python, but no deliberate live call was made from the Rust
-  binary; correctness against the live API is unverified. (One
-  inadvertent identify call did fire during e2e testing before
-  the test's key isolation was fixed — it returned an error body,
-  BAD_MODEL_RESPONSE, worst-case cost about a cent of credits.)
+- **Live draw: blocked on WebP.** identify and cut_out are proven
+  live (see "Live run"); draw cannot complete until the plate
+  decoder accepts muse-image-1.0's WebP payloads or the API is
+  made to return PNG/JPEG. (Separately, one inadvertent identify
+  call fired during e2e testing before the test's key isolation
+  was fixed — it returned an error body, BAD_MODEL_RESPONSE,
+  worst-case cost about a cent of credits.)
 - **Ingest gaps vs Python**: no PNG eXIf orientation handling and
   no HEIC (Python gained HEIC via pillow-heif). JPEG EXIF
   orientation is implemented (all 8 transforms).

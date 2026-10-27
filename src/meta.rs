@@ -33,7 +33,17 @@ pub fn require_meta_api_key() -> Result<String, String> {
 }
 
 pub fn build_client() -> Result<reqwest::blocking::Client, String> {
+    // Direct connections only — never the environment's HTTP proxy.
+    // reqwest auto-detects proxy env vars, and a TLS-intercepting
+    // proxy presents certificates issued by its own local CA, which
+    // rustls (webpki roots) rightly rejects as UnknownIssuer; that
+    // is exactly how every live call from this VM died at connect
+    // time during the port's first live run (2026-10-27). Direct
+    // egress to api.meta.ai presents the genuine DigiCert chain.
+    // (Python's httpx stack never hit this: it validates against
+    // the OS store, which trusts the local proxy CA.)
     reqwest::blocking::Client::builder()
+        .no_proxy()
         .build()
         .map_err(|e| format!("cannot build HTTP client: {e}"))
 }

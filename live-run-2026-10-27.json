@@ -1,0 +1,109 @@
+{
+  "identify": {
+    "alternates": [
+      "wooden kitchen chair",
+      "vintage wood chair"
+    ],
+    "attempts": 1,
+    "call_id": "0872935a289744cbb620b49945489a76",
+    "concept": "wooden slat-back chair",
+    "condition_notes": "Visible surface wear and scuffs on seat and legs.",
+    "cost_usd": 0.009377,
+    "description": "Vintage solid wood slat-back chair with square seat and four straight legs in medium brown finish.",
+    "image": "asset://ee5451675a2644aabc58887846b2b4c6",
+    "listing_bullets": [
+      "Solid wood build with warm brown finish",
+      "Four-slat backrest with square seat",
+      "Straight legs with side stretchers",
+      "Classic farmhouse style dining chair"
+    ],
+    "model": "muse-spark-1.3",
+    "status": "ok",
+    "suggested_title": "Vintage Solid Wood Slat Back Dining Chair",
+    "tool": "identify",
+    "usage": {
+      "cached_input_tokens": 0,
+      "images": 0,
+      "input_tokens": 3384,
+      "output_tokens": 1211
+    }
+  },
+  "cut_out": {
+    "alternates": [
+      "vintage wood chair",
+      "solid wood side chair"
+    ],
+    "attempts": [
+      {
+        "components": 1,
+        "coverage": 0.093568,
+        "dominant_fraction": 1.0,
+        "mask_pixels": 229953,
+        "object_id": "0",
+        "outcome": "accepted",
+        "phrase": "wooden slat-back chair",
+        "records": 1
+      }
+    ],
+    "call_id": "86e0fae031684c2a91a884704e881a13",
+    "concept": "wooden slat-back chair",
+    "concept_source": "identify_internal",
+    "cost_usd": 0.0025,
+    "hashes": {
+      "foreground": {
+        "pixel_sha256": "e2b509b2126d4d5182ade176cedc149145462213b7a5d992765b1cf76d225aad",
+        "sha256": "0bef696aa445c1843f56097c556f32f96b1c980d890ad6229108b7e779dec455"
+      },
+      "mask": {
+        "pixel_sha256": "4ff790a66b1fd1ccbf0602acd9a598af0f18134895112378ac960915726c453d",
+        "sha256": "a5dfb9baf4d6ab1c8004a2526e75bed3a5afaf89f5e0823fb0a668ee909727f2"
+      },
+      "source": {
+        "pixel_sha256": "990ca8f1dd15375022008fa346babf572576c43eb007466f3f64d61b3cfe8c22",
+        "sha256": "b3c4f3a17c8a06f5f3997b62a34b59a597abce817d561c1ebdfc5f2462ff45ed"
+      }
+    },
+    "image": "asset://ee5451675a2644aabc58887846b2b4c6",
+    "mask_asset": "asset://6c6055ecce4b42a6a41f87da191a81a7",
+    "mask_overlay_asset": "asset://75a2ac1fbe7a4ddbbfa5d1015a9c8763",
+    "mask_review": {
+      "bbox": [
+        733,
+        225,
+        1328,
+        1239
+      ],
+      "bbox_fill": 0.38114,
+      "coverage": 0.093568,
+      "mask_pixels": 229953,
+      "touches_frame_edges": [],
+      "warnings": []
+    },
+    "model": "sam-3.1",
+    "output_asset": "asset://016c78b2b90543ac982c2122ad19af0d",
+    "plan_error": null,
+    "requested_concept": "wooden slat-back chair",
+    "status": "ok",
+    "tool": "cut_out",
+    "usage": {
+      "cached_input_tokens": 0,
+      "images": 1,
+      "input_tokens": 0,
+      "output_tokens": 0
+    }
+  },
+  "draw": {
+    "asset": "asset://016c78b2b90543ac982c2122ad19af0d",
+    "error": {
+      "code": "BAD_IMAGE_RESPONSE",
+      "cost_counted_usd": 0.01,
+      "message": "The plate payload does not decode as an image: unsupported image format (PNG and JPEG only)"
+    },
+    "fidelity_receipt": null,
+    "model": "muse-image-1.0",
+    "output_asset": null,
+    "scene_prompt": "a bright studio backdrop",
+    "status": "error",
+    "tool": "draw"
+  }
+}
