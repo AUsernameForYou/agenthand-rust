@@ -1,0 +1,82 @@
+[
+ {
+  "name": "down",
+  "mode": "resize",
+  "out": [
+   19,
+   11
+  ]
+ },
+ {
+  "name": "up",
+  "mode": "resize",
+  "out": [
+   53,
+   41
+  ]
+ },
+ {
+  "name": "tall",
+  "mode": "resize",
+  "out": [
+   11,
+   19
+  ]
+ },
+ {
+  "name": "vfirst",
+  "mode": "resize",
+  "out": [
+   38,
+   20
+  ]
+ },
+ {
+  "name": "rgbdown",
+  "mode": "resize",
+  "out": [
+   17,
+   13
+  ]
+ },
+ {
+  "name": "extreme",
+  "mode": "resize",
+  "out": [
+   120,
+   192
+  ]
+ },
+ {
+  "name": "fitwide",
+  "mode": "fit",
+  "out": [
+   19,
+   11
+  ]
+ },
+ {
+  "name": "fittall",
+  "mode": "fit",
+  "out": [
+   11,
+   19
+  ]
+ },
+ {
+  "name": "fitparity",
+  "mode": "fit",
+  "out": [
+   120,
+   192
+  ]
+ },
+ {
+  "name": "fitsq",
+  "mode": "fit",
+  "out": [
+   25,
+   25
+  ]
+ }
+]

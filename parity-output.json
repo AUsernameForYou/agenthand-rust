@@ -1,0 +1,144 @@
+{
+  "checks": [
+    {
+      "check": "source_file_sha256",
+      "ok": true,
+      "value": "f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b"
+    },
+    {
+      "check": "source_pixel_sha256",
+      "ok": true,
+      "value": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4"
+    },
+    {
+      "check": "foreground_file_sha256",
+      "ok": true,
+      "value": "fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf"
+    },
+    {
+      "check": "foreground_pixel_sha256",
+      "ok": true,
+      "value": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100"
+    },
+    {
+      "check": "mask_file_sha256",
+      "ok": true,
+      "value": "121a3f85f51067e848dfe776d57df83baece3c2369325ebf751354517a3e950b"
+    },
+    {
+      "check": "mask_pixel_sha256",
+      "ok": true,
+      "value": "e4f189b470f82430e15cd5060d100e555495c349aad7cfe5e824794955c18748"
+    },
+    {
+      "check": "plate_file_sha256",
+      "ok": true,
+      "value": "03eb75bfb812326f9f2632cfbdf747775b4d664953c91205b80333d49be907a7"
+    },
+    {
+      "check": "plate_pixel_sha256",
+      "ok": true,
+      "value": "061d98dcb7aa55f03c36538b5409cd750ae06594f2d2f88b55eac978f63a29db"
+    },
+    {
+      "check": "output_file_sha256",
+      "ok": true,
+      "value": "13b58a327820aa97e9aa306e861b9dd85c199d6a9ef5d53ea7755c3365a35451"
+    },
+    {
+      "check": "output_pixel_sha256",
+      "ok": true,
+      "value": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802"
+    },
+    {
+      "check": "recomposed_changed_opaque_pixels",
+      "ok": true,
+      "value": "0"
+    },
+    {
+      "check": "recomposed_opaque_pixels",
+      "ok": true,
+      "value": "580613"
+    },
+    {
+      "check": "recomposed_edge_band_pixels",
+      "ok": true,
+      "value": "0"
+    },
+    {
+      "check": "recomposed_transparent_pixels",
+      "ok": true,
+      "value": "1740937"
+    },
+    {
+      "check": "recomposed_mask_pixels_total",
+      "ok": true,
+      "value": "580613"
+    },
+    {
+      "check": "recomposed_edge_band_max_width_px",
+      "ok": true,
+      "value": "0"
+    },
+    {
+      "check": "recomposed_output_pixel_sha256",
+      "ok": true,
+      "value": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802"
+    },
+    {
+      "check": "draw_changed_opaque_pixels",
+      "ok": true,
+      "value": "0"
+    },
+    {
+      "check": "draw_output_pixel_sha256",
+      "ok": true,
+      "value": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802"
+    },
+    {
+      "check": "frozen_receipt_verify_from_disk_ok",
+      "ok": true,
+      "value": "[]"
+    }
+  ],
+  "frozen_receipt_verify_report": {
+    "checks": {
+      "color_profile_matches_receipt": true,
+      "color_profile_preserved": true,
+      "composite_file_integrity": true,
+      "composite_pixel_hash": true,
+      "foreground_file_integrity": true,
+      "foreground_pixel_hash": true,
+      "recount_changed_opaque_pixels": true,
+      "recount_edge_band_max_width_px": true,
+      "recount_edge_band_pixels": true,
+      "recount_mask_pixels_total": true,
+      "recount_opaque_fraction": true,
+      "recount_opaque_pixels": true,
+      "recount_transparent_pixels": true,
+      "source_file_integrity": true
+    },
+    "composite_asset": "asset://45deaf1acea14ab5839c641eee1cd277",
+    "foreground_asset": "asset://b8663615419e40389f4e48dbd0e38698",
+    "ok": true,
+    "problems": [],
+    "recomputed": {
+      "changed_opaque_pixels": 0,
+      "color_profile_output_sha256": null,
+      "color_profile_preserved": true,
+      "color_profile_source_sha256": null,
+      "edge_band_max_width_px": 0,
+      "edge_band_pixels": 0,
+      "mask_pixels_total": 580613,
+      "opaque_fraction": 1.0,
+      "opaque_pixels": 580613,
+      "transparent_pixels": 1740937
+    },
+    "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50"
+  },
+  "package": "/home/hatch/workspace/meta-hackathon/replay-package",
+  "parity": "PASS",
+  "transformations": [
+    "plate_resized_and_center_cropped_to_1206x1925"
+  ]
+}

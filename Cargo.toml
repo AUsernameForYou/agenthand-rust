@@ -1,0 +1,20 @@
+[package]
+name = "agenthand"
+version = "0.1.0"
+edition = "2021"
+description = "agenthand MCP server — Rust port (parallel experiment; the Python build is the shipped product)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+png = "0.17"
+flate2 = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+uuid = { version = "1", features = ["v4"] }
+jpeg-decoder = "0.3"
+fs2 = "0.4"
+
+[profile.release]
+opt-level = 3
