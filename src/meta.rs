@@ -750,7 +750,12 @@ pub fn request_plate_image(
         "model": model,
         "prompt": wrap_plate_prompt(prompt),
         "size": size,
-        "n": 1
+        "n": 1,
+        // muse-image-1.0 otherwise returns WebP (extended VP8X), which
+        // the hand-rolled plate decoder does not accept. A live probe on
+        // 2026-10-27 confirmed the endpoint honors this parameter and
+        // returns a PNG payload.
+        "output_format": "png"
     });
     let response = post_json(client, key, "/images/generations", &body).map_err(|e| {
         if e.contains("refus") {

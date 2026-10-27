@@ -14,21 +14,24 @@ pixels, and the recomposed output's pixel hash is byte-identical
 to the frozen composite's. The MCP server runs over stdio with the
 same three tool shapes.
 
-**Live path: PROVEN for identify + cut_out; draw blocked at plate
-decode (2026-10-27, see "Live run" below).** One deliberate live
-chain ran from the Rust binary over stdio against the Meta API:
-identify and cut_out completed with real receipts; draw failed
-because muse-image-1.0 returns a **WebP** payload and the Rust
-image decoder speaks PNG/JPEG only. Two transport bugs had to be
-fixed first (proxy/TLS, below). The gate and the test suite remain
-offline.
+**Live path: PROVEN for identify, cut_out, and draw
+(2026-10-27, see "Live run" below).** One live chain ran from the
+Rust binary over stdio against the Meta API. Draw initially failed
+because muse-image-1.0 returns a **WebP** payload by default and
+the Rust image decoder speaks PNG/JPEG only. A one-call probe then
+confirmed the images endpoint honors `output_format: "png"`; the
+Rust plate request now sends that parameter, and the follow-on
+live draw succeeded. Python's standalone verifier independently
+checked the exported Rust source/final/mask and passed it.
+Two transport bugs had to be fixed first (proxy/TLS, below). The
+gate and the test suite remain offline.
 
 ## Build
 
 - `cargo build` — clean (6 warnings, all dead-code/unused in the
   prototype surface).
 - `cargo build --release` — clean.
-- Release binary: `target/release/agenthand`, **6,301,416 bytes**
+- Release binary: `target/release/agenthand`, **6,303,896 bytes**
   (~6.0 MiB), one static binary, no Python runtime.
 - Rust was not preinstalled on this VM; installed via rustup
   (stable 1.99.1, minimal profile).
@@ -121,28 +124,39 @@ then handle-chained calls), fresh data dir in `live-data/`
   sam-3.1 accepted the identify phrase on attempt 1 (mask 229,953
   px, bbox [733, 225, 1328, 1239] — the same bbox the Python
   dry-run gate recorded), no mask warnings, settled **$0.0025**.
-- **draw — FAILED at plate decode.** Error verbatim:
-  `BAD_IMAGE_RESPONSE — "The plate payload does not decode as an
-  image: unsupported image format (PNG and JPEG only)"`.
-  Diagnosis (one diagnostic API call from the Python side):
-  muse-image-1.0's `b64_json` payload is **WebP** (magic
-  `RIFF....WEBPVP8X`, extended WebP). Python never noticed because
-  Pillow decodes WebP transparently. The Rust decoder is
-  hand-rolled PNG/JPEG, so the plate can never decode. No
-  composite was produced, so there is no live Rust receipt and
-  the cross-implementation check (Python `agenthand-verify` on
-  the Rust run's source/final/mask) could not run — no final
-  exists. Remedies, not yet attempted: ask the images API for a
-  PNG payload if it honors a format parameter, or add a WebP
-  decoder (not a small change — the decode stack is hand-rolled).
-- **Ledger (this run):** settled $0.020204 (identify 0.009377 +
-  plan identify 0.008327 + cut_out 0.0025); the failed draw's
-  $0.01 reservation stayed counted (fail-closed, as designed),
-  for $0.030204 counted total — far under the $120 working cap /
-  $150 hard ceiling; the reserve-before-call gate held on every
-  call. Two earlier aborted driver runs died at TLS connect
-  (below) before any request reached Meta: their ledgers counted
-  a $0.024798 reservation each, but no API spend occurred.
+- **draw — OK after the output-format probe.** The first draw
+  failed at plate decode with `BAD_IMAGE_RESPONSE` because
+  muse-image-1.0's default `b64_json` payload is **WebP** (magic
+  `RIFF....WEBPVP8X`, extended WebP), while the Rust decoder is
+  hand-rolled PNG/JPEG. A single diagnostic images call with
+  `output_format: "png"` (one generated image, **$0.01**) returned
+  a 2,078,097-byte payload with PNG magic `89504e470d0a1a0a` and
+  response field `output_format: "png"`. `meta::request_plate_image`
+  now sends that parameter. Reusing the stored cut_out foreground,
+  one live draw then settled **$0.01** (18,134 in / 1,730 out
+  usage tokens) and produced plate `asset://ce5faa2254554682b0007a480359be9f`
+  and final `asset://55cc00de0d4447f5a7577d02badeccef`.
+- **Rust live receipt:** 229,953 opaque pixels checked,
+  **0 changed**, 0 edge-band pixels, colour profile preserved
+  (no embedded profile on either side), output pixel sha256
+  `2e0eda846a3e996cffd2fdcc0cecfdc2bc839a8132b842cd049c90a476800a70`.
+- **Cross-implementation check — PASS.** The source, final, and
+  mask were exported to `live-data/exports/{source,final,mask}.png`.
+  Python's `agenthand.verify` reported `ok: true`, 229,953 checked
+  pixels, 0 changed, 0 edge-band pixels, and colour profile
+  preserved, with no problems.
+- **Ledger and total cost:** the successful chain settled
+  **$0.030204** (standalone identify 0.009377 + internal plan
+  identify 0.008327 + SAM cut_out 0.0025 + draw 0.01). The
+  live-data ledger's counted total is **$0.040204** because the
+  earlier failed draw's $0.01 reservation stayed counted
+  (fail-closed, as designed). Adding the separate $0.01 format
+  probe makes **$0.050204** of API spend associated with the live
+  experiment — far under the $120 working cap / $150 hard ceiling;
+  the reserve-before-call gate held on every Rust-server call.
+  Two earlier aborted driver runs died at TLS connect (below)
+  before any request reached Meta: their ledgers counted a
+  $0.024798 reservation each, but no API spend occurred.
 - **Transport fix (the reason the first live attempts failed):**
   this VM's env names a TLS-intercepting egress proxy; reqwest
   auto-detects it, and the proxy presents certificates signed by
@@ -183,10 +197,10 @@ then handle-chained calls), fresh data dir in `live-data/`
 
 ## What is stubbed or missing (blunt)
 
-- **Live draw: blocked on WebP.** identify and cut_out are proven
-  live (see "Live run"); draw cannot complete until the plate
-  decoder accepts muse-image-1.0's WebP payloads or the API is
-  made to return PNG/JPEG. (Separately, one inadvertent identify
+- **Default WebP plate payloads remain unsupported locally.**
+  The live draw path avoids them by requesting PNG from the API;
+  if a future response ignores `output_format`, the hand-rolled
+  decoder still rejects WebP. (Separately, one inadvertent identify
   call fired during e2e testing before the test's key isolation
   was fixed — it returned an error body, BAD_MODEL_RESPONSE,
   worst-case cost about a cent of credits.)
