@@ -319,8 +319,8 @@ pub fn plan_matches_item(plan: Option<&Value>, item_name: &str) -> bool {
 }
 
 const STRIPPABLE_LEADERS: [&str; 20] = [
-    "black", "white", "gray", "grey", "red", "orange", "yellow", "green", "blue", "purple",
-    "pink", "brown", "wooden", "wood", "large", "small", "big", "little", "vintage", "antique",
+    "black", "white", "gray", "grey", "red", "orange", "yellow", "green", "blue", "purple", "pink",
+    "brown", "wooden", "wood", "large", "small", "big", "little", "vintage", "antique",
 ];
 
 /// Concept phrasings to try for an item on one photo, best first.
@@ -559,7 +559,9 @@ pub fn sample_video_frames(
             .output();
         let ok = matches!(&ran, Ok(o) if o.status.success())
             && frame_path.is_file()
-            && std::fs::metadata(&frame_path).map(|m| m.len() > 0).unwrap_or(false);
+            && std::fs::metadata(&frame_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
         if ok {
             frames.push((frame_path, python_round(t, 2)));
         }
@@ -582,8 +584,7 @@ pub fn sample_video_frames(
 // ----------------------------------------------------------------------
 
 pub fn project_narration_cost_usd(duration_s: f64, max_tokens: u32) -> f64 {
-    let prompt_tokens =
-        duration_s * NARRATION_TOKENS_PER_SECOND + NARRATION_PROMPT_TOKENS_FLOOR;
+    let prompt_tokens = duration_s * NARRATION_TOKENS_PER_SECOND + NARRATION_PROMPT_TOKENS_FLOOR;
     prompt_tokens * 1.25 / 1_000_000.0 + max_tokens as f64 * 4.25 / 1_000_000.0
 }
 
@@ -669,7 +670,9 @@ pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
             while digits < bytes.len() && bytes[digits].is_ascii_digit() {
                 digits += 1;
             }
-            if digits > 0 && digits < bytes.len() && (bytes[digits] == b'.' || bytes[digits] == b')')
+            if digits > 0
+                && digits < bytes.len()
+                && (bytes[digits] == b'.' || bytes[digits] == b')')
             {
                 let rest = &item[digits + 1..];
                 item = rest.trim_start().to_string();
@@ -871,7 +874,10 @@ pub fn extract_narration_audio(
         ])
         .output();
     let (status_ok, stderr) = match &ran {
-        Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stderr).into_owned()),
+        Ok(o) => (
+            o.status.success(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        ),
         Err(e) => (false, e.to_string()),
     };
     let size = std::fs::metadata(&wav_path).map(|m| m.len()).unwrap_or(0);
@@ -943,10 +949,7 @@ fn fetch_baseten_surrogate() -> Result<String, String> {
     let mut raw: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     let header_end = loop {
-        if let Some(pos) = raw
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-        {
+        if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
             break pos + 4;
         }
         let n = stream
@@ -1017,10 +1020,7 @@ fn fetch_baseten_surrogate() -> Result<String, String> {
             "DynamicCredentialError: unsupported surrogate placement {placement:?} for credential custom.baseten"
         ));
     }
-    let surrogate = entry
-        .get("surrogate")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let surrogate = entry.get("surrogate").and_then(Value::as_str).unwrap_or("");
     if !surrogate.starts_with("hsurr:") {
         return Err(
             "DynamicCredentialError: credential helper returned a non-surrogate credential \
@@ -1540,7 +1540,10 @@ fn process_item(
     let mut sightings: Vec<Value> = Vec::new();
     for &photo_index in &item.candidate_photo_indices {
         let sighting = probe_photo(ctx, &name, &sources[photo_index], photo_index)?;
-        item_cost += sighting.get("cost_usd").and_then(Value::as_f64).unwrap_or(0.0);
+        item_cost += sighting
+            .get("cost_usd")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
         let is_ok = sighting.get("status").and_then(Value::as_str) == Some("ok");
         sightings.push(sighting);
         if is_ok && !probe_all_candidates {
@@ -1874,9 +1877,7 @@ fn flag_cross_item_duplicates(records: &mut [Value]) {
                     next.push(other.clone());
                     records[rec]["possible_duplicate_of"] = json!(next);
                 }
-                if let Some(flags) =
-                    records[rec].get_mut("flags").and_then(Value::as_array_mut)
-                {
+                if let Some(flags) = records[rec].get_mut("flags").and_then(Value::as_array_mut) {
                     flags.push(json!(format!(
                         "primary masks on photo {photo_index} overlap {} \
                          with IoU {iou:.2}; kept separate",
@@ -2117,7 +2118,15 @@ pub fn run_room(
     std::env::set_var("AGENTHAND_LEDGER_PATH", &room_ledger);
     let previous_store = std::env::var_os("AGENTHAND_LEDGER");
     std::env::set_var("AGENTHAND_LEDGER", "jsonl");
-    let result = run_room_body(still_paths, video_paths, out_dir, opts, store, &room_id, &room_ledger);
+    let result = run_room_body(
+        still_paths,
+        video_paths,
+        out_dir,
+        opts,
+        store,
+        &room_id,
+        &room_ledger,
+    );
     match previous {
         Some(value) => std::env::set_var("AGENTHAND_LEDGER_PATH", value),
         None => std::env::remove_var("AGENTHAND_LEDGER_PATH"),
@@ -2141,15 +2150,16 @@ fn run_room_body(
 ) -> Result<Value, String> {
     let chain = opts.chain.take().unwrap_or_else(default_chain);
     let verify_fn = opts.verify_fn.take().unwrap_or_else(default_verify_fn);
-    let narration_fn_owned: Option<NarrationFn> = if !opts.narrated_videos.is_empty()
-        || !opts.narrated_audios.is_empty()
-    {
-        Some(opts.narration_fn.take().unwrap_or_else(|| {
-            Box::new(|p: &Path| default_narration_fn(p)) as NarrationFn
-        }))
-    } else {
-        None
-    };
+    let narration_fn_owned: Option<NarrationFn> =
+        if !opts.narrated_videos.is_empty() || !opts.narrated_audios.is_empty() {
+            Some(
+                opts.narration_fn
+                    .take()
+                    .unwrap_or_else(|| Box::new(|p: &Path| default_narration_fn(p)) as NarrationFn),
+            )
+        } else {
+            None
+        };
     let spend_probe: SpendProbe = match opts.spend_probe.take() {
         Some(probe) => probe,
         None => {
@@ -2295,9 +2305,8 @@ fn run_room_body(
         let (w, h) = image_dims(&source.path);
         source.width = Some(w);
         source.height = Some(h);
-        identify_projection +=
-            project_identify_cost_usd(IDENTIFY_MODEL, Some(w), Some(h))?
-                * IDENTIFY_MAX_ATTEMPTS as f64;
+        identify_projection += project_identify_cost_usd(IDENTIFY_MODEL, Some(w), Some(h))?
+            * IDENTIFY_MAX_ATTEMPTS as f64;
     }
     let mut n_items_estimate = opts.item_names.len() + narrated_names.len();
     if n_items_estimate == 0 {
@@ -2334,9 +2343,9 @@ fn run_room_body(
                 .map(str::to_string);
         } else {
             let error = result.get("error").filter(|e| py_truthy(e)).cloned();
-            source.plan_error = Some(error.unwrap_or_else(|| {
-                json!({"code": "IDENTIFY_FAILED", "message": result.to_string()})
-            }));
+            source.plan_error = Some(error.unwrap_or_else(
+                || json!({"code": "IDENTIFY_FAILED", "message": result.to_string()}),
+            ));
             // A failed plan must not orphan the photo: ingest it
             // directly so item probing can still find handles.
             match ingest::ingest(&data_uri, &store) {
@@ -2459,7 +2468,12 @@ fn run_room_body(
         }
         // The SAM budget is per item, not per run.
         ctx.sam_calls.set(0);
-        item_records.push(process_item(&ctx, item, &sources, opts.probe_all_candidates)?);
+        item_records.push(process_item(
+            &ctx,
+            item,
+            &sources,
+            opts.probe_all_candidates,
+        )?);
     }
     flag_cross_item_duplicates(&mut item_records);
     let total_cost = python_round(spend_probe()? - spend_before, 6);
@@ -2719,7 +2733,11 @@ pub fn summarize_manifest(manifest: &Value) -> String {
             lines.push(format!(
                 "          verified independently: {} opaque px recounted from disk, {} changed",
                 py_str(verification.get("opaque_pixels").unwrap_or(&Value::Null)),
-                py_str(verification.get("changed_opaque_pixels").unwrap_or(&Value::Null)),
+                py_str(
+                    verification
+                        .get("changed_opaque_pixels")
+                        .unwrap_or(&Value::Null)
+                ),
             ));
         } else if status == "verify_failed" {
             let failure = item.get("failure").cloned().unwrap_or(Value::Null);

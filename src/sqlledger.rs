@@ -105,7 +105,9 @@ fn conn_for(path: &Path) -> Result<Arc<Mutex<Connection>>, String> {
     Ok(conn)
 }
 
-fn lock_conn(conn: &Arc<Mutex<Connection>>) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+fn lock_conn(
+    conn: &Arc<Mutex<Connection>>,
+) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
     conn.lock().map_err(|_| {
         "sqlite ledger connection is poisoned; refusing to spend with unknown spend state."
             .to_string()

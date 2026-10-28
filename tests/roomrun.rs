@@ -24,9 +24,9 @@ use agenthand::assets::{AssetStore, KIND_COMPOSITE, KIND_FOREGROUND};
 use agenthand::image::{encode_png_rgba, RgbaImage};
 use agenthand::roomrun::{
     bbox_iou, concept_variants, group_candidates, narration_cost_usd, parse_narration_reply,
-    probe_wav, project_narration_cost_usd, py_repr_str, rank_photos, run_room,
-    sample_video_frames, token_similarity, Candidate, NarrationFn, PhotoSource, RoomChain,
-    RoomRunOptions, VerifyFn, NARRATION_MODEL,
+    probe_wav, project_narration_cost_usd, py_repr_str, rank_photos, run_room, sample_video_frames,
+    token_similarity, Candidate, NarrationFn, PhotoSource, RoomChain, RoomRunOptions, VerifyFn,
+    NARRATION_MODEL,
 };
 use agenthand::{composite, config, ingest, ledger};
 use serde_json::{json, Value};
@@ -182,9 +182,9 @@ impl FakeChain {
                 },
             }));
         };
-        let fg_handle = self
-            .store
-            .put_image(&self.foreground_for(&object_id), KIND_FOREGROUND, None)?;
+        let fg_handle =
+            self.store
+                .put_image(&self.foreground_for(&object_id), KIND_FOREGROUND, None)?;
         self.fg_object
             .borrow_mut()
             .insert(fg_handle.clone(), object_id);
@@ -313,7 +313,10 @@ fn concept_variants_order_and_stripping() {
         concept_variants("gray storage box", None),
         vec!["gray storage box", "storage box", "box"]
     );
-    assert_eq!(concept_variants("straw hat", None), vec!["straw hat", "hat"]);
+    assert_eq!(
+        concept_variants("straw hat", None),
+        vec!["straw hat", "hat"]
+    );
     assert_eq!(
         concept_variants("orange suitcase", None),
         vec!["orange suitcase", "suitcase"]
@@ -325,15 +328,22 @@ fn concept_variants_order_and_stripping() {
 
 #[test]
 fn token_similarity_and_bbox_iou() {
-    assert_eq!(token_similarity(Some("orange suitcase"), Some("orange suitcase")), 1.0);
-    assert!(
-        token_similarity(Some("orange suitcase"), Some("orange spinner suitcase")) >= 0.6
+    assert_eq!(
+        token_similarity(Some("orange suitcase"), Some("orange suitcase")),
+        1.0
     );
+    assert!(token_similarity(Some("orange suitcase"), Some("orange spinner suitcase")) >= 0.6);
     let grey = token_similarity(Some("red leather wallet"), Some("brown leather wallet"));
     assert!((0.4..0.6).contains(&grey));
     assert!(token_similarity(Some("book"), Some("bookcase")) > 0.0); // prefix rule
-    assert_eq!(bbox_iou(Some(&json!([0, 0, 10, 10])), Some(&json!([0, 0, 10, 10]))), 1.0);
-    assert_eq!(bbox_iou(Some(&json!([0, 0, 10, 10])), Some(&json!([20, 20, 30, 30]))), 0.0);
+    assert_eq!(
+        bbox_iou(Some(&json!([0, 0, 10, 10])), Some(&json!([0, 0, 10, 10]))),
+        1.0
+    );
+    assert_eq!(
+        bbox_iou(Some(&json!([0, 0, 10, 10])), Some(&json!([20, 20, 30, 30]))),
+        0.0
+    );
     assert_eq!(bbox_iou(None, Some(&json!([0, 0, 1, 1]))), 0.0);
 }
 
@@ -344,14 +354,26 @@ fn group_candidates_merge_and_grey_zone() {
         photo_index: idx,
         plan: json!({}),
     };
-    let groups = group_candidates(&[cand("orange suitcase", 0), cand("orange spinner suitcase", 1)]);
+    let groups = group_candidates(&[
+        cand("orange suitcase", 0),
+        cand("orange spinner suitcase", 1),
+    ]);
     assert_eq!(groups.len(), 1);
     assert_eq!(groups[0].photo_indices, vec![0, 1]);
 
-    let groups = group_candidates(&[cand("red leather wallet", 0), cand("brown leather wallet", 1)]);
+    let groups = group_candidates(&[
+        cand("red leather wallet", 0),
+        cand("brown leather wallet", 1),
+    ]);
     assert_eq!(groups.len(), 2); // grey zone: kept both...
-    assert!(groups[0].flags.iter().any(|f| f.contains("possible duplicate"))); // ...and flagged
-    assert!(groups[1].flags.iter().any(|f| f.contains("possible duplicate")));
+    assert!(groups[0]
+        .flags
+        .iter()
+        .any(|f| f.contains("possible duplicate"))); // ...and flagged
+    assert!(groups[1]
+        .flags
+        .iter()
+        .any(|f| f.contains("possible duplicate")));
 }
 
 fn source_with_plan(path: &str, origin: &'static str, plan: Value) -> PhotoSource {
@@ -379,7 +401,11 @@ fn rank_photos_prefers_mention_then_stills() {
     // No mention anywhere: full coverage order, stills before frames —
     // a silent plan is weak evidence of absence, so the probe cap,
     // not the ranker, decides how far down the order a run goes.
-    sources.push(source_with_plan("f.jpg", "video_frame", plan("white bookcase")));
+    sources.push(source_with_plan(
+        "f.jpg",
+        "video_frame",
+        plan("white bookcase"),
+    ));
     let ranked = rank_photos("unicycle", &sources);
     assert_eq!(ranked, vec![0, 1, 2]);
 }
@@ -435,7 +461,10 @@ fn named_run_stages_and_manifests() {
     let fake = FakeChain::new(
         &root,
         vec![plan("straw hat"), plan("orange suitcase")],
-        contents(&[((0, "straw hat"), "hat1"), ((1, "orange suitcase"), "case1")]),
+        contents(&[
+            ((0, "straw hat"), "hat1"),
+            ((1, "orange suitcase"), "case1"),
+        ]),
     );
     let mut opts = base_opts(&fake, &root);
     opts.item_names = vec!["straw hat".to_string(), "orange suitcase".to_string()];
@@ -478,8 +507,8 @@ fn partial_failure_is_first_class() {
     assert_eq!(ghost["failure"]["stage"], "cut_out");
     assert_eq!(ghost["failure"]["code"], "NO_MATCH");
     assert!(!ghost["sightings"].as_array().unwrap().is_empty()); // the failed probes are in the record
-    // Failed probes still cost money, and the manifest says so:
-    // 2 concept variants x the per-call counted cost.
+                                                                 // Failed probes still cost money, and the manifest says so:
+                                                                 // 2 concept variants x the per-call counted cost.
     assert!(approx(ghost["cost_usd"].as_f64().unwrap(), 2.0 * CUT_COST));
     assert!(approx(
         ghost["sightings"][0]["cost_usd"].as_f64().unwrap(),
@@ -612,7 +641,10 @@ fn budget_stop_marks_remaining_items() {
     let fake = FakeChain::new(
         &root,
         vec![plan("orange suitcase"), plan("straw hat")],
-        contents(&[((0, "orange suitcase"), "case1"), ((1, "straw hat"), "hat1")]),
+        contents(&[
+            ((0, "orange suitcase"), "case1"),
+            ((1, "straw hat"), "hat1"),
+        ]),
     );
     let greedy = fake.clone();
     let mut opts = base_opts(&fake, &root);
@@ -856,7 +888,10 @@ fn default_verifier_reproves_a_real_draw() {
     assert_eq!(verification["ok"], true);
     assert_eq!(verification["changed_opaque_pixels"], 0);
     assert_eq!(verification["opaque_pixels"], 20 * 36); // the recount, from disk
-    assert_eq!(verification["opaque_pixels"], item["receipt"]["opaque_pixels"]);
+    assert_eq!(
+        verification["opaque_pixels"],
+        item["receipt"]["opaque_pixels"]
+    );
     assert_eq!(verification["checks_failed"], json!([]));
 }
 
@@ -926,7 +961,7 @@ fn room_run_spends_against_its_own_ledger() {
         *fake.spend.borrow()
     ));
     assert!(!submission_ledger.exists()); // the cumulative ledger untouched
-    // The caller's environment is restored after the run.
+                                          // The caller's environment is restored after the run.
     assert_eq!(
         std::env::var("AGENTHAND_LEDGER_PATH").unwrap(),
         submission_ledger.to_string_lossy()
@@ -966,8 +1001,14 @@ fn sample_video_frames_extracts() {
     let video = root.join("walk.mp4");
     let status = Command::new("ffmpeg")
         .args([
-            "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=64x64:rate=5",
-            "-pix_fmt", "yuv420p",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=64x64:rate=5",
+            "-pix_fmt",
+            "yuv420p",
         ])
         .arg(&video)
         .arg("-y")
@@ -1007,7 +1048,9 @@ fn wav_file(path: &Path, seconds: f64, rate: u32, peak: f64) -> PathBuf {
     data.extend_from_slice(b"data");
     data.extend_from_slice(&data_len.to_le_bytes());
     for i in 0..frames {
-        let sample = (peak * 32767.0 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / rate as f64).sin()) as i16;
+        let sample =
+            (peak * 32767.0 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / rate as f64).sin())
+                as i16;
         data.extend_from_slice(&sample.to_le_bytes());
     }
     std::fs::write(path, data).unwrap();
@@ -1064,7 +1107,11 @@ const NARRATION_REPLY: &str = "TRANSCRIPT\n\
     MENTIONED\n\
     suitcase\n";
 
-fn narrated_opts(fake: &Rc<FakeChain>, data_dir: &Path, narration: &Rc<FakeNarration>) -> RoomRunOptions {
+fn narrated_opts(
+    fake: &Rc<FakeChain>,
+    data_dir: &Path,
+    narration: &Rc<FakeNarration>,
+) -> RoomRunOptions {
     let mut opts = base_opts(fake, data_dir);
     opts.narration_fn = Some(narration.as_fn());
     opts
@@ -1112,8 +1159,10 @@ fn probe_wav_and_cost_projection() {
         (10.0 * 150.0 + 512.0) * 1.25e-6 + 4096.0 * 4.25e-6
     ));
     assert!(approx(
-        narration_cost_usd(Some(&json!({"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000})))
-            .unwrap(),
+        narration_cost_usd(Some(
+            &json!({"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000})
+        ))
+        .unwrap(),
         1.25 + 4.25
     ));
     assert!(narration_cost_usd(Some(&json!({}))).is_none());
@@ -1326,8 +1375,14 @@ fn narrated_video_without_audio_track_is_a_row() {
     let video = root.join("silent-walk.mp4");
     let status = Command::new("ffmpeg")
         .args([
-            "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=5",
-            "-pix_fmt", "yuv420p",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x64:rate=5",
+            "-pix_fmt",
+            "yuv420p",
         ])
         .arg(&video)
         .arg("-y")
@@ -1366,9 +1421,7 @@ fn summarize_manifest_matches_python_output_on_frozen_manifests() {
         "daniels-room-2026-10-28-v2",
         "daniels-room-narrated-2026-10-28",
     ] {
-        let dir = PathBuf::from(format!(
-            "{home}/workspace/meta-hackathon/roomrun/{run}"
-        ));
+        let dir = PathBuf::from(format!("{home}/workspace/meta-hackathon/roomrun/{run}"));
         let (Ok(manifest_text), Ok(expected)) = (
             std::fs::read_to_string(dir.join("manifest.json")),
             std::fs::read_to_string(dir.join("summary.txt")),
