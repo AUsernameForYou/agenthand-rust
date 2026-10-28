@@ -22,11 +22,20 @@
 //! gate on the same stale total, and no file lock is held while the
 //! billable call runs. WAL mode + a busy timeout let readers and the
 //! single writer interleave without `SQLITE_BUSY` surfacing.
+//!
+//! Connections are persistent: one connection per ledger path is
+//! opened on first use and kept for the life of the process (see
+//! `conn_for`). Opening a fresh connection per call re-paid the WAL
+//! pragma + schema setup every time (~66–176 ms/call in the spike's
+//! wall-clock harness); the cache removes that overhead while the
+//! per-connection mutex preserves the one-writer-at-a-time semantics
+//! the fresh-connection design got from SQLite itself.
 
 use crate::ledger::{Receipt, PHASE_FINAL, PHASE_PENDING, PHASE_SETTLED};
 use rusqlite::{params, Connection, TransactionBehavior};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -73,6 +82,33 @@ fn open(path: &Path) -> Result<Connection, String> {
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("cannot create sqlite ledger schema: {e}"))?;
     Ok(conn)
+}
+
+/// One persistent connection per ledger path, opened lazily and
+/// reused for the life of the process. A poisoned cache or
+/// connection mutex fails closed: spend state reached through a
+/// poisoned lock is state we cannot trust.
+static CONN_CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<Connection>>>>> = OnceLock::new();
+
+fn conn_for(path: &Path) -> Result<Arc<Mutex<Connection>>, String> {
+    let cache = CONN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().map_err(|_| {
+        "sqlite ledger connection cache is poisoned; refusing to spend with unknown spend state."
+            .to_string()
+    })?;
+    if let Some(conn) = cache.get(path) {
+        return Ok(Arc::clone(conn));
+    }
+    let conn = Arc::new(Mutex::new(open(path)?));
+    cache.insert(path.to_path_buf(), Arc::clone(&conn));
+    Ok(conn)
+}
+
+fn lock_conn(conn: &Arc<Mutex<Connection>>) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+    conn.lock().map_err(|_| {
+        "sqlite ledger connection is poisoned; refusing to spend with unknown spend state."
+            .to_string()
+    })
 }
 
 fn insert_receipt(conn: &Connection, receipt: &Receipt) -> Result<(), String> {
@@ -152,7 +188,8 @@ pub fn ledger_total_usd(path: &Path) -> Result<f64, String> {
     if !path.exists() {
         return Ok(0.0);
     }
-    let conn = open(path)?;
+    let conn = conn_for(path)?;
+    let conn = lock_conn(&conn)?;
     total_from_conn(&conn, path)
 }
 
@@ -161,7 +198,8 @@ pub fn count_receipts(path: &Path) -> Result<usize, String> {
     if !path.exists() {
         return Ok(0);
     }
-    let conn = open(path)?;
+    let conn = conn_for(path)?;
+    let conn = lock_conn(&conn)?;
     let n: i64 = conn
         .query_row("SELECT COUNT(*) FROM receipts", [], |row| row.get(0))
         .map_err(|e| format!("cannot count sqlite ledger receipts: {e}"))?;
@@ -173,7 +211,8 @@ pub fn append_receipt(path: &Path, receipt: &Receipt) -> Result<(), String> {
         receipt.usd_estimate,
         &format!("receipt for {}", receipt.tool),
     )?;
-    let conn = open(path)?;
+    let conn = conn_for(path)?;
+    let conn = lock_conn(&conn)?;
     insert_receipt(&conn, receipt)
 }
 
@@ -198,7 +237,8 @@ pub fn reserve(path: &Path, receipt: &Receipt, cap_usd: f64) -> Result<f64, Stri
         &format!("receipt for {}", receipt.tool),
     )?;
     let cap = validate_amount(cap_usd, "spend cap")?;
-    let mut conn = open(path)?;
+    let conn = conn_for(path)?;
+    let mut conn = lock_conn(&conn)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| format!("cannot begin sqlite ledger transaction: {e}"))?;
