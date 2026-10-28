@@ -29,7 +29,7 @@ const PREFIX_LENGTH: usize = 5;
 const MAX_SAFE: u64 = (1 << 53) - 1;
 
 fn alphabet() -> Vec<u8> {
-    let excluded = [b'"', b'\\', b',', b';', b'<', b'>', b'|'];
+    let excluded = *b"\"\\,;<>|";
     (0x21u8..0x7F).filter(|c| !excluded.contains(c)).collect()
 }
 
@@ -444,7 +444,7 @@ fn predict_byte(
     mode: i32,
     width: usize,
 ) -> Result<u8, String> {
-    if mode < 0 || mode >= SPATIAL_MODES {
+    if !(0..SPATIAL_MODES).contains(&mode) {
         return Err("Lossless mask payload uses an invalid predictor.".to_string());
     }
     let left = if x > 0 { output[offset - 1] } else { 0 };
@@ -520,7 +520,7 @@ fn decode_lossless_raster(payload: &str, width: usize, height: usize) -> Result<
     let length = width * height;
     let mut output = vec![0u8; length];
     let mut residuals = vec![0u8; length];
-    let mut zero_counts = vec![1u32; 32];
+    let mut zero_counts = [1u32; 32];
     let mut order_one = vec![ORDER_ONE_INITIAL; SYMBOLS * SYMBOLS];
     let mut order_one_totals = vec![SYMBOLS as i32 * ORDER_ONE_INITIAL as i32; SYMBOLS];
     let mut order_zero = vec![ORDER_ZERO_INITIAL; SYMBOLS];
@@ -842,7 +842,7 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
 fn place_in_frame(
     raster: &[u8],
     width: usize,
-    height: usize,
+    _height: usize,
     bounds: (i64, i64, i64, i64),
     frame_width: usize,
     frame_height: usize,

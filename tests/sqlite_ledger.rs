@@ -240,7 +240,7 @@ fn run_item(i: usize, latency: Duration) -> Result<(), String> {
     .map(|_| ())
 }
 
-fn store_total(dir: &PathBuf, sqlite: bool) -> f64 {
+fn store_total(dir: &Path, sqlite: bool) -> f64 {
     if sqlite {
         sqlledger::ledger_total_usd(&dir.join("ledger.sqlite3")).unwrap()
     } else {
@@ -248,7 +248,7 @@ fn store_total(dir: &PathBuf, sqlite: bool) -> f64 {
     }
 }
 
-fn store_rows(dir: &PathBuf, sqlite: bool) -> usize {
+fn store_rows(dir: &Path, sqlite: bool) -> usize {
     if sqlite {
         sqlledger::count_receipts(&dir.join("ledger.sqlite3")).unwrap()
     } else {

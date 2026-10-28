@@ -113,7 +113,7 @@ fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<Stri
 /// distance is measured to the image border instead.
 fn distance_to_class(alpha: &[u8], width: usize, height: usize, target: u8) -> Vec<i64> {
     let total = width * height;
-    if !alpha.iter().any(|&a| a == target) {
+    if !alpha.contains(&target) {
         let mut out = vec![0i64; total];
         for y in 0..height {
             for x in 0..width {
@@ -427,7 +427,7 @@ pub fn verify_receipt_from_disk(
     };
     let mut checks: Map<String, Value> = Map::new();
     let mut problems: Vec<String> = Vec::new();
-    let mut set_check = |checks: &mut Map<String, Value>,
+    let set_check = |checks: &mut Map<String, Value>,
                          problems: &mut Vec<String>,
                          name: &str,
                          ok: bool,
@@ -718,7 +718,7 @@ pub fn verify_files(
         crate::image::DecodedImage::Gray(g) => g.pixels.clone(),
         crate::image::DecodedImage::Rgba(r) => r
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>().0.iter()
             .map(|px| {
                 ((px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000) >> 16)
                     as u8

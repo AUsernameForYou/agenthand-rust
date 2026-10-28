@@ -245,7 +245,7 @@ pub fn ingest(source: &str, store: &AssetStore) -> Result<String, String> {
     } else {
         return Err(format!(
             "Image source must be an asset:// handle, an http(s) URL, or a base64 data URI; got {:?}...",
-            &source.chars().take(40).collect::<String>()
+            source.chars().take(40).collect::<String>()
         ));
     };
     if data.len() > max_image_bytes() {

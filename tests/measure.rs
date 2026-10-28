@@ -26,7 +26,7 @@ fn load_frame(path: &PathBuf) -> MeasureFrame {
 fn load_mask(path: &PathBuf) -> Vec<u8> {
     let bytes = std::fs::read(path).unwrap();
     let img = decode_image(&bytes).unwrap().into_rgba();
-    img.pixels.iter().step_by(4).map(|&r| r).collect()
+    img.pixels.iter().step_by(4).copied().collect()
 }
 
 /// Collapse every run of digits to a single '#', so error strings

@@ -23,6 +23,13 @@
 //! and cards with a narrower demonstrated envelope (the AH-35 mini:
 //! close-ups at ~190 px across or more) refuse outside it.
 
+// Notation in this module follows the reference implementation it
+// ports: `H` is always a homography, and the `H_*` names are its
+// variants (inverse, refined, seeded, ...). Snake-casing them would
+// make side-by-side reading against the Python/OpenCV original
+// harder, so the naming lint is allowed module-wide.
+#![allow(non_snake_case)]
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -82,24 +89,6 @@ fn norm(a: Pt) -> f64 {
 
 // ---------------------------------------------------------------------------
 // Python-compatible rounding / statistics helpers
-
-/// Python `round(x, ndigits)`: round-half-even on the exact value.
-fn py_round(x: f64, ndigits: i32) -> f64 {
-    let s = 10f64.powi(ndigits);
-    let v = x * s;
-    let f = v.floor();
-    let diff = v - f;
-    let r = if diff > 0.5 {
-        f + 1.0
-    } else if diff < 0.5 {
-        f
-    } else if (f as i64) % 2 == 0 {
-        f
-    } else {
-        f + 1.0
-    };
-    r / s
-}
 
 /// numpy linspace (endpoint included).
 fn linspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
@@ -604,8 +593,9 @@ pub struct CardProfile {
     pub ring_outer_mm: f64,
 }
 
+/// One tick mark on a card arm, in card space.
 #[derive(Clone, Debug)]
-struct Tick {
+pub struct Tick {
     arm: String,
     centre_mm: Pt,
     fraction_from_vertex: f64,
@@ -1425,7 +1415,7 @@ fn approx_poly_dp(chain: &[Pt], eps_in: f64) -> Vec<Pt> {
     // Slices are (start, end) index pairs along the wrapped order.
     let mut stack: Vec<(usize, usize)> = Vec::new();
     let mut right_start: usize = 0;
-    let mut slice_start: usize;
+    let slice_start: usize;
     let mut le_eps: bool;
     // 1. Approximately two farthest points (3 refinement rounds
     // starting from src[0]).
@@ -2369,7 +2359,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
     };
 
     let mut seed_observations: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
-    let mut observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
+    let observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
         let tm = tick_matches(frame, &mask, card, H, false, false);
         if tm.arms_hit >= 4 && tm.matched.len() >= 10 {
             Some((tm.matched, tm.corners))

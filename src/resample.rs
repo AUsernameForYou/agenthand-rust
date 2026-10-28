@@ -288,7 +288,7 @@ fn shift_for_div255(a: u32) -> u32 {
 /// c' = MULDIV255(c, a) per colour channel; alpha copied.
 fn premultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         let a = px[3] as u32;
         for c in 0..3 {
             out.push(shift_for_div255(px[c] as u32 * a + 128) as u8);
@@ -302,7 +302,7 @@ fn premultiply(pixels: &[u8]) -> Vec<u8> {
 /// alpha 0 or 255 copies the channel; else CLIP8(255*c/a).
 fn unpremultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         let a = px[3] as u32;
         for c in 0..3 {
             let v = px[c] as u32;

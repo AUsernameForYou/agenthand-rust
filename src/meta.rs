@@ -265,7 +265,7 @@ fn sanitize_plan_phrases(
     description: &str,
 ) -> (Option<String>, Vec<String>) {
     let mut pool: Vec<String> = Vec::new();
-    let mut add = |pool: &mut Vec<String>, phrase: Option<String>| {
+    let add = |pool: &mut Vec<String>, phrase: Option<String>| {
         if let Some(p) = phrase {
             if !pool.iter().any(|q| q.to_lowercase() == p.to_lowercase()) {
                 pool.push(p);

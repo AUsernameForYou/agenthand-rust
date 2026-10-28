@@ -258,7 +258,7 @@ impl AssetStore {
             crate::image::DecodedImage::Rgba(rgba) => {
                 // PIL: convert("L") uses ITU-R 601-2 luma.
                 let mut pixels = Vec::with_capacity((rgba.width * rgba.height) as usize);
-                for px in rgba.pixels.chunks_exact(4) {
+                for px in rgba.pixels.as_chunks::<4>().0 {
                     let l = (px[0] as u32 * 19595
                         + px[1] as u32 * 38470
                         + px[2] as u32 * 7471

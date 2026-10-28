@@ -39,7 +39,7 @@ impl RgbaImage {
 
     pub fn solid(width: u32, height: u32, rgba: [u8; 4]) -> Self {
         let mut pixels = vec![0u8; (width * height * 4) as usize];
-        for chunk in pixels.chunks_exact_mut(4) {
+        for chunk in pixels.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&rgba);
         }
         RgbaImage::new(width, height, pixels)
@@ -164,7 +164,7 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
         png::ColorType::GrayscaleAlpha => {
             // Pillow keeps LA as LA; convert("RGBA") maps L->RGB, A->A.
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for pair in buf.chunks_exact(2) {
+            for pair in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[pair[0], pair[0], pair[0], pair[1]]);
             }
             Ok(PngDecoded::Rgba(RgbaImage {
@@ -176,7 +176,7 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
         }
         png::ColorType::Rgb => {
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for px in buf.chunks_exact(3) {
+            for px in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             Ok(PngDecoded::Rgba(RgbaImage {
@@ -217,14 +217,14 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage, String> {
         }
         jpeg_decoder::PixelFormat::L16 => {
             let mut out = Vec::with_capacity(pixels.len() * 2);
-            for pair in pixels.chunks_exact(2) {
+            for pair in pixels.as_chunks::<2>().0 {
                 out.extend_from_slice(&[pair[0], pair[0], pair[0], 255]);
             }
             out
         }
         jpeg_decoder::PixelFormat::RGB24 => {
             let mut out = Vec::with_capacity(pixels.len() / 3 * 4);
-            for px in pixels.chunks_exact(3) {
+            for px in pixels.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             out
@@ -235,7 +235,7 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage, String> {
             // on the inverted values it exposes. Rare path for seller
             // photos; implemented per Pillow's formula on raw samples.
             let mut out = Vec::with_capacity(pixels.len());
-            for px in pixels.chunks_exact(4) {
+            for px in pixels.as_chunks::<4>().0 {
                 let (c, m, y, k) = (
                     255 - px[0] as u32,
                     255 - px[1] as u32,

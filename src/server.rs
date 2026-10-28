@@ -9,7 +9,7 @@
 //! draw's image preview as an image content block) with no SDK
 //! version skew to audit. Revisit rmcp once parity is proven.
 
-use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_MASK, KIND_OVERLAY};
+use crate::assets::{AssetStore, KIND_MASK, KIND_OVERLAY};
 use crate::billing::{self, BillingSummary};
 use crate::composite;
 use crate::config;

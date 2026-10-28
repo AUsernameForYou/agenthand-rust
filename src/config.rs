@@ -71,12 +71,11 @@ pub fn get_ledger_path() -> PathBuf {
 }
 
 /// Which ledger store `billing::billed_call` writes to, selected by
-/// `AGENTHAND_LEDGER`:
-/// - unset / `jsonl` / `jsonl:<path>` — the JSONL ledger (default);
-/// - `sqlite` — `ledger.sqlite3` in the data dir;
-/// - `sqlite:<path>` — the SQLite ledger at that path.
-/// An unrecognized value is an error: a store we cannot identify
-/// must stop spend, not silently pick one.
+/// `AGENTHAND_LEDGER`. Unset, `jsonl`, or `jsonl:<path>` selects the
+/// JSONL ledger (the default); `sqlite` selects `ledger.sqlite3` in
+/// the data dir; `sqlite:<path>` selects the SQLite ledger at that
+/// path. An unrecognized value is an error: a store we cannot
+/// identify must stop spend, not silently pick one.
 pub enum LedgerStore {
     Jsonl(PathBuf),
     Sqlite(PathBuf),
