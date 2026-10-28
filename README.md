@@ -11,6 +11,23 @@ agenthand: one static binary, no Python runtime. The Python build
 also on PyPI as `agenthand`) remains available as the fallback install
 and is the reference implementation this port is measured against.
 
+**Demo film:** _link lands here at the reveal (submissions close
+Nov 4, 2026)._
+**Verify a staged image in your browser:**
+https://ausernameforyou.github.io/agenthand/#fidelity
+**Project site:** https://ausernameforyou.github.io/agenthand/
+
+## The problem
+
+A staged listing photo sells the item, and it creates a trust
+problem. Generative photo tools rebuild the product from scratch, so
+details drift and flaws can quietly vanish. When a buyer says "you
+hid the scratch," the seller has no answer. As of October 22, 2026,
+most Etsy listings must include at least one unedited photo of the
+actual item against a real background; AI-assisted images are
+allowed only as supplements and must accurately represent the item.
+Staging is fine. Proof is the missing piece.
+
 ## The three tools
 
 - **identify** — reads a product photo and returns a description, a
@@ -28,6 +45,14 @@ One operator key, `META_API_KEY`, covers all model calls. The server
 starts and lists its tools without one; the key is required when a
 tool makes a model call. Every billable call passes a single choke
 point with a fail-closed spend cap.
+
+## Built with Meta AI
+
+| Tool | Model | Its job |
+|---|---|---|
+| identify | Muse Spark 1.3 | Reads the photo, plans the cut, writes the listing copy |
+| cut_out | SAM 3.1 | Draws the product mask |
+| draw | Muse Image 1.0 | Generates the background plate only |
 
 ## Architecture
 
@@ -88,6 +113,18 @@ For any other MCP client, point it at the bare binary:
 }
 ```
 
+Or register it from the command line — Claude Code:
+
+```sh
+claude mcp add agenthand --env META_API_KEY=your-key -- /path/to/agenthand
+```
+
+Codex:
+
+```sh
+codex mcp add agenthand --env META_API_KEY=your-key -- /path/to/agenthand
+```
+
 **macOS note:** the macOS binaries are unsigned and not notarized, so
 Gatekeeper will block the first launch of a browser-downloaded copy.
 Right-click → Open, or clear the quarantine flag
@@ -145,6 +182,37 @@ agenthand verify <source.png> <staged.png> <mask.png>
 
 It recounts the product pixels in the staged image against the source
 and mask and reports how many changed. The count is the claim.
+
+## Refusals and limits
+
+The refusals are designed, and they are part of the product:
+
+- **HEIC photos** are refused loudly; a from-scratch decoder is in
+  active development in this repo. The Python build handles HEIC
+  today.
+- **A foreground with zero opaque pixels** is refused: there is no
+  product layer to protect, so there is nothing to stage.
+- **A product layer with generated ancestry** is refused by draw.
+  Only a layer that came out of cut_out, untouched, can be staged.
+- **The size estimator refuses** below its 130-pixel card floor
+  rather than guessing at a dimension.
+- **Spend refuses.** Unknown models are refused, never priced at
+  zero, and every call must fit the cap before it runs: a $120
+  working cap under a $150 hard ceiling.
+
+`META_API_KEY` is a key for the Meta Model API (api.meta.ai); one
+operator key covers all three models. The server starts and lists
+its tools with no key at all, and the verifier plus the frozen
+replay need no key.
+
+## Provenance
+
+This repository was created on October 27, 2026, inside the Meta
+Global AI Developer Hackathon build window (Oct 26 – Nov 4, 2026),
+and every commit in it was written in-window; the history is the
+audit trail. The Rust implementation is a port of the Python
+reference implementation, whose dated build log (BUILD_LOG.md in
+that repo) records the project's provenance from an empty directory.
 
 ## License
 
