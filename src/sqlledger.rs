@@ -1,6 +1,7 @@
-//! SQLite-backed billing ledger (rusqlite, bundled SQLite) — a spike
-//! alternative store for `ledger.rs` with byte-for-byte identical
-//! ACCOUNTING semantics:
+//! SQLite-backed billing ledger (rusqlite, bundled SQLite) — the
+//! second store behind the same interface as `ledger.rs`, selected
+//! via `AGENTHAND_LEDGER` (see `config::get_ledger_store`), with
+//! byte-for-byte identical ACCOUNTING semantics:
 //!
 //! - reserve-then-settle: a "pending" receipt at the projected cost
 //!   before the call, a "settled" receipt with the same call_id and
@@ -184,6 +185,7 @@ fn total_from_conn(conn: &Connection, path: &Path) -> Result<f64, String> {
     Ok((total * 1e6).round() / 1e6)
 }
 
+/// The counted ledger total (same accounting as `ledger::ledger_total_usd`).
 pub fn ledger_total_usd(path: &Path) -> Result<f64, String> {
     if !path.exists() {
         return Ok(0.0);
@@ -206,6 +208,7 @@ pub fn count_receipts(path: &Path) -> Result<usize, String> {
     Ok(n as usize)
 }
 
+/// Insert one receipt row.
 pub fn append_receipt(path: &Path, receipt: &Receipt) -> Result<(), String> {
     validate_amount(
         receipt.usd_estimate,
@@ -216,6 +219,7 @@ pub fn append_receipt(path: &Path, receipt: &Receipt) -> Result<(), String> {
     insert_receipt(&conn, receipt)
 }
 
+/// Fail-closed cap check; the refusal message matches the JSONL store's.
 pub fn check_spend_cap(path: &Path, projected_usd: f64, cap_usd: f64) -> Result<f64, String> {
     let projected = validate_amount(projected_usd, "projected cost")?;
     let cap = validate_amount(cap_usd, "spend cap")?;
@@ -262,8 +266,8 @@ pub fn reserve(path: &Path, receipt: &Receipt, cap_usd: f64) -> Result<f64, Stri
 /// SQLite reduction; callers compare it with
 /// `ledger::ledger_total_usd` on the source — they must be equal.
 pub fn import_jsonl(jsonl_path: &Path, sqlite_path: &Path) -> Result<(usize, f64), String> {
-    let text = std::fs::read_to_string(jsonl_path)
-        .map_err(|e| format!("cannot read ledger: {e}"))?;
+    let text =
+        std::fs::read_to_string(jsonl_path).map_err(|e| format!("cannot read ledger: {e}"))?;
     if sqlite_path.exists() {
         return Err(format!(
             "sqlite ledger {} already exists; refusing to import over it.",
@@ -287,11 +291,16 @@ pub fn import_jsonl(jsonl_path: &Path, sqlite_path: &Path) -> Result<(usize, f64
         let amount_raw = record.get("usd_estimate").ok_or_else(|| {
             format!("{where_} has no usd_estimate; refusing to spend with unknown spend state.")
         })?;
-        let amount = amount_raw.as_f64().ok_or_else(|| {
-            format!("{where_}: amount {amount_raw} is not a number.")
-        })?;
+        let amount = amount_raw
+            .as_f64()
+            .ok_or_else(|| format!("{where_}: amount {amount_raw} is not a number."))?;
         let amount = validate_amount(amount, &where_)?;
-        let str_field = |key: &str| record.get(key).and_then(|v| v.as_str()).map(|s| s.to_string());
+        let str_field = |key: &str| {
+            record
+                .get(key)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        };
         let int_field = |key: &str| record.get(key).and_then(|v| v.as_i64()).unwrap_or(0);
         let receipt = Receipt {
             tool: str_field("tool").unwrap_or_default(),

@@ -12,15 +12,22 @@ use crate::pricing::{self, Usage};
 use base64::Engine;
 use serde_json::{json, Value};
 
+/// Base URL of the Meta Model API.
 pub const META_BASE_URL: &str = "https://api.meta.ai/v1";
+/// Output-token budget for one identify call.
 pub const IDENTIFY_MAX_TOKENS: i64 = 2048;
+/// Bounded retry budget for identify (body failures only).
 pub const IDENTIFY_MAX_ATTEMPTS: usize = 3;
+/// Bounded attempt budget for one cut_out call.
 pub const SAM_MAX_ATTEMPTS: usize = 2;
 
 const IDENTIFY_PROMPT_TOKENS: i64 = 300;
 
+/// Model behind the identify tool.
 pub const IDENTIFY_MODEL: &str = "muse-spark-1.3";
+/// Model behind the cut_out tool.
 pub const CUT_OUT_MODEL: &str = "sam-3.1";
+/// Model that generates draw's background plate.
 pub const DRAW_BACKGROUND_MODEL: &str = "muse-image-1.0";
 
 /// Raised when a real call is attempted with no META_API_KEY. Raised
@@ -32,6 +39,7 @@ pub fn require_meta_api_key() -> Result<String, String> {
     })
 }
 
+/// Build the shared HTTP client for Meta API calls.
 pub fn build_client() -> Result<reqwest::blocking::Client, String> {
     // Direct connections only — never the environment's HTTP proxy.
     // reqwest auto-detects proxy env vars, and a TLS-intercepting
@@ -70,8 +78,7 @@ fn post_json(
             text.chars().take(500).collect::<String>()
         ));
     }
-    serde_json::from_str(&text)
-        .map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -144,8 +151,17 @@ impl std::fmt::Display for IdentifyError {
 // -- phrase hygiene (port of the deterministic sanitizer) -------------------
 
 const FRAME_HEAD_NOUNS: [&str; 11] = [
-    "screen", "display", "monitor", "photo", "photograph", "image", "picture", "background",
-    "scene", "frame", "screenshot",
+    "screen",
+    "display",
+    "monitor",
+    "photo",
+    "photograph",
+    "image",
+    "picture",
+    "background",
+    "scene",
+    "frame",
+    "screenshot",
 ];
 
 fn phrase_tokens(phrase: &str) -> Vec<String> {
@@ -200,15 +216,25 @@ fn rewrite_frame_phrase(phrase: &str) -> Option<String> {
 }
 
 const DESCRIPTION_CUT_TOKENS: [&str; 15] = [
-    "on", "in", "against", "with", "beside", "near", "showing", "displaying", "featuring",
-    "sits", "sitting", "placed", "lying", "standing", "resting",
+    "on",
+    "in",
+    "against",
+    "with",
+    "beside",
+    "near",
+    "showing",
+    "displaying",
+    "featuring",
+    "sits",
+    "sitting",
+    "placed",
+    "lying",
+    "standing",
+    "resting",
 ];
 
 fn phrase_from_description(description: &str) -> Option<String> {
-    let head_text = description
-        .split(['.', ',', ';', ':'])
-        .next()
-        .unwrap_or("");
+    let head_text = description.split(['.', ',', ';', ':']).next().unwrap_or("");
     let mut tokens = phrase_tokens(head_text);
     while !tokens.is_empty() && ["the", "a", "an"].contains(&tokens[0].as_str()) {
         tokens.remove(0);
@@ -219,8 +245,7 @@ fn phrase_from_description(description: &str) -> Option<String> {
             break;
         }
         if FRAME_HEAD_NOUNS.contains(&token.as_str())
-            || (token.ends_with('s')
-                && FRAME_HEAD_NOUNS.contains(&&token[..token.len() - 1]))
+            || (token.ends_with('s') && FRAME_HEAD_NOUNS.contains(&&token[..token.len() - 1]))
         {
             continue;
         }
@@ -240,7 +265,7 @@ fn sanitize_plan_phrases(
     description: &str,
 ) -> (Option<String>, Vec<String>) {
     let mut pool: Vec<String> = Vec::new();
-    let mut add = |pool: &mut Vec<String>, phrase: Option<String>| {
+    let add = |pool: &mut Vec<String>, phrase: Option<String>| {
         if let Some(p) = phrase {
             if !pool.iter().any(|q| q.to_lowercase() == p.to_lowercase()) {
                 pool.push(p);
@@ -285,9 +310,16 @@ pub fn parse_identify_payload(content: &str) -> Result<Value, IdentifyError> {
         }
     };
     if !payload.is_object() {
-        return Err(IdentifyError::new("Identify response is not a JSON object."));
+        return Err(IdentifyError::new(
+            "Identify response is not a JSON object.",
+        ));
     }
-    for field in ["description", "concept", "suggested_title", "condition_notes"] {
+    for field in [
+        "description",
+        "concept",
+        "suggested_title",
+        "condition_notes",
+    ] {
         match payload.get(field).and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => {}
             _ => {
@@ -411,8 +443,8 @@ pub fn vision_identify(
             ]
         }]
     });
-    let response = post_json(client, key, "/chat/completions", &body)
-        .map_err(|e| IdentifyError::new(&e))?;
+    let response =
+        post_json(client, key, "/chat/completions", &body).map_err(|e| IdentifyError::new(&e))?;
     let mut usage = usage_of_chat(&response);
     let content = response
         .pointer("/choices/0/message/content")
@@ -514,6 +546,8 @@ pub fn vision_identify(
     }
 }
 
+/// Estimate image input tokens from pixel dimensions (32 px patches + 256);
+/// 4096 when the dimensions are unknown.
 pub fn estimate_image_input_tokens(width: Option<u32>, height: Option<u32>) -> i64 {
     match (width, height) {
         (Some(w), Some(h)) if w > 0 && h > 0 => {
@@ -524,7 +558,12 @@ pub fn estimate_image_input_tokens(width: Option<u32>, height: Option<u32>) -> i
     }
 }
 
-pub fn project_identify_cost_usd(model: &str, width: Option<u32>, height: Option<u32>) -> Result<f64, String> {
+/// Worst-case projected cost of one identify call; feeds the spend-cap gate.
+pub fn project_identify_cost_usd(
+    model: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<f64, String> {
     let input_tokens = estimate_image_input_tokens(width, height) + IDENTIFY_PROMPT_TOKENS;
     let one_call = pricing::estimate_cost_usd(
         model,
@@ -537,6 +576,7 @@ pub fn project_identify_cost_usd(model: &str, width: Option<u32>, height: Option
     Ok(crate::round6(2.0 * one_call))
 }
 
+/// Worst-case projected cost of one cut_out call at the given attempt budget.
 pub fn project_cut_out_cost_usd(model: &str, max_attempts: usize) -> Result<f64, String> {
     pricing::estimate_cost_usd(
         model,
@@ -547,6 +587,7 @@ pub fn project_cut_out_cost_usd(model: &str, max_attempts: usize) -> Result<f64,
     )
 }
 
+/// Worst-case projected cost of one draw call (a single generated image).
 pub fn project_draw_cost_usd(model: &str) -> Result<f64, String> {
     pricing::estimate_cost_usd(
         model,
@@ -608,7 +649,10 @@ pub fn segment_image(
         ..Default::default()
     };
     if let Some(raw) = response.get("usage") {
-        usage.input_tokens = raw.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        usage.input_tokens = raw
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         usage.output_tokens = raw
             .get("output_tokens")
             .and_then(|v| v.as_i64())
@@ -631,10 +675,14 @@ const IMAGE_SIZE_CANDIDATES: [(u32, u32); 5] = [
 
 const PLATE_INSTRUCTION: &str = "An empty scene photographed straight-on: the setting described below, with a clear, unobstructed flat surface in the center foreground where an object will be placed later. The scene is EMPTY: no product, no featured object on the central surface, no people, no animals, no text, no logos, no watermark. Scene: ";
 
+/// Wrap a scene description in the empty-plate instruction draw sends
+/// to the image model.
 pub fn wrap_plate_prompt(scene_prompt: &str) -> String {
     format!("{PLATE_INSTRUCTION}{scene_prompt}")
 }
 
+/// Nearest supported generation size for the given dimensions;
+/// `1024x1024` when the dimensions are unknown.
 pub fn closest_image_size(width: Option<u32>, height: Option<u32>) -> String {
     let (Some(w), Some(h)) = (width, height) else {
         return "1024x1024".to_string();
@@ -713,18 +761,21 @@ fn plate_bytes_from_response(
                     code: "IMAGE_CALL_FAILED".to_string(),
                     message: format!("Fetching the generated plate image failed: {e}"),
                 })?;
-                raw = Some(resp.bytes().map_err(|e| ImageError {
-                    code: "IMAGE_CALL_FAILED".to_string(),
-                    message: format!("Fetching the generated plate image failed: {e}"),
-                })?.to_vec());
+                raw = Some(
+                    resp.bytes()
+                        .map_err(|e| ImageError {
+                            code: "IMAGE_CALL_FAILED".to_string(),
+                            message: format!("Fetching the generated plate image failed: {e}"),
+                        })?
+                        .to_vec(),
+                );
             }
         }
     }
     let Some(raw) = raw else {
         return Err(ImageError {
             code: "BAD_IMAGE_RESPONSE".to_string(),
-            message: "The image model returned an item with neither b64_json nor url."
-                .to_string(),
+            message: "The image model returned an item with neither b64_json nor url.".to_string(),
         });
     };
     // Normalize to RGBA PNG bytes.
@@ -776,7 +827,10 @@ pub fn request_plate_image(
         ..Default::default()
     };
     if let Some(raw) = response.get("usage") {
-        usage.input_tokens = raw.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        usage.input_tokens = raw
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         usage.output_tokens = raw
             .get("output_tokens")
             .and_then(|v| v.as_i64())

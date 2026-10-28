@@ -39,7 +39,7 @@ impl RgbaImage {
 
     pub fn solid(width: u32, height: u32, rgba: [u8; 4]) -> Self {
         let mut pixels = vec![0u8; (width * height * 4) as usize];
-        for chunk in pixels.chunks_exact_mut(4) {
+        for chunk in pixels.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&rgba);
         }
         RgbaImage::new(width, height, pixels)
@@ -93,6 +93,7 @@ impl GrayImage {
     }
 }
 
+/// Lowercase hex SHA-256 of the given bytes.
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -163,7 +164,7 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
         png::ColorType::GrayscaleAlpha => {
             // Pillow keeps LA as LA; convert("RGBA") maps L->RGB, A->A.
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for pair in buf.chunks_exact(2) {
+            for pair in buf.as_chunks::<2>().0 {
                 out.extend_from_slice(&[pair[0], pair[0], pair[0], pair[1]]);
             }
             Ok(PngDecoded::Rgba(RgbaImage {
@@ -175,7 +176,7 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
         }
         png::ColorType::Rgb => {
             let mut out = Vec::with_capacity((width * height * 4) as usize);
-            for px in buf.chunks_exact(3) {
+            for px in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             Ok(PngDecoded::Rgba(RgbaImage {
@@ -216,14 +217,14 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage, String> {
         }
         jpeg_decoder::PixelFormat::L16 => {
             let mut out = Vec::with_capacity(pixels.len() * 2);
-            for pair in pixels.chunks_exact(2) {
+            for pair in pixels.as_chunks::<2>().0 {
                 out.extend_from_slice(&[pair[0], pair[0], pair[0], 255]);
             }
             out
         }
         jpeg_decoder::PixelFormat::RGB24 => {
             let mut out = Vec::with_capacity(pixels.len() / 3 * 4);
-            for px in pixels.chunks_exact(3) {
+            for px in pixels.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             out
@@ -234,7 +235,7 @@ fn decode_jpeg(data: &[u8]) -> Result<RgbaImage, String> {
             // on the inverted values it exposes. Rare path for seller
             // photos; implemented per Pillow's formula on raw samples.
             let mut out = Vec::with_capacity(pixels.len());
-            for px in pixels.chunks_exact(4) {
+            for px in pixels.as_chunks::<4>().0 {
                 let (c, m, y, k) = (
                     255 - px[0] as u32,
                     255 - px[1] as u32,
@@ -269,7 +270,11 @@ fn crc32(data: &[u8]) -> u32 {
         for n in 0..256u32 {
             let mut c = n;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB88320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             TABLE[n as usize] = c;
         }
@@ -348,7 +353,14 @@ fn filter_row(kind: u8, row: &[u8], prev: &[u8], bpp: usize) -> Vec<u8> {
 
 /// Encode filtered scanlines: pick per-row the filter minimizing the sum
 /// of absolute signed filter outputs (the classic libpng heuristic).
-fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], icc: Option<&[u8]>) -> Vec<u8> {
+fn encode_png(
+    width: u32,
+    height: u32,
+    color_type: u8,
+    bpp: usize,
+    rows: &[u8],
+    icc: Option<&[u8]>,
+) -> Vec<u8> {
     let row_len = width as usize * bpp;
     assert_eq!(rows.len(), row_len * height as usize);
     let mut raw = Vec::with_capacity((row_len + 1) * height as usize);
@@ -374,7 +386,8 @@ fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], 
     }
     let compressed = {
         use std::io::Write;
-        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&raw).expect("zlib write");
         encoder.finish().expect("zlib finish")
     };
@@ -406,12 +419,28 @@ fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], 
     out
 }
 
+/// Encode an RGBA image as PNG bytes.
 pub fn encode_png_rgba(img: &RgbaImage) -> Vec<u8> {
-    encode_png(img.width, img.height, 6, 4, &img.pixels, img.icc_profile.as_deref())
+    encode_png(
+        img.width,
+        img.height,
+        6,
+        4,
+        &img.pixels,
+        img.icc_profile.as_deref(),
+    )
 }
 
+/// Encode a grayscale image as PNG bytes.
 pub fn encode_png_gray(img: &GrayImage) -> Vec<u8> {
-    encode_png(img.width, img.height, 0, 1, &img.pixels, img.icc_profile.as_deref())
+    encode_png(
+        img.width,
+        img.height,
+        0,
+        1,
+        &img.pixels,
+        img.icc_profile.as_deref(),
+    )
 }
 
 /// Human-readable colour-space label for receipts, mirroring

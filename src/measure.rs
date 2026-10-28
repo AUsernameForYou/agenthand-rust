@@ -23,13 +23,25 @@
 //! and cards with a narrower demonstrated envelope (the AH-35 mini:
 //! close-ups at ~190 px across or more) refuse outside it.
 
+// Notation in this module follows the reference implementation it
+// ports: `H` is always a homography, and the `H_*` names are its
+// variants (inverse, refined, seeded, ...). Snake-casing them would
+// make side-by-side reading against the Python/OpenCV original
+// harder, so the naming lint is allowed module-wide.
+#![allow(non_snake_case)]
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Method identifier recorded in estimator output.
 pub const METHOD: &str = "card-homography v0 (seeded tick/corner homography, prototype)";
 
+/// Pixel floor: below this many pixels across the card, the estimator
+/// refuses rather than guessing.
 pub const MIN_CARD_PX: f64 = 130.0;
+/// At or above this card width in pixels, estimates carry the standard
+/// (narrower) ranges.
 pub const COMFORT_CARD_PX: f64 = 170.0;
 const SMALL_CARD_SYS_MAX: f64 = 0.055;
 
@@ -45,6 +57,7 @@ fn card_envelope_min_px(card_id: &str) -> Option<f64> {
     }
 }
 
+/// Default location of the card-profile JSON.
 pub fn default_profile_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -76,24 +89,6 @@ fn norm(a: Pt) -> f64 {
 
 // ---------------------------------------------------------------------------
 // Python-compatible rounding / statistics helpers
-
-/// Python `round(x, ndigits)`: round-half-even on the exact value.
-fn py_round(x: f64, ndigits: i32) -> f64 {
-    let s = 10f64.powi(ndigits);
-    let v = x * s;
-    let f = v.floor();
-    let diff = v - f;
-    let r = if diff > 0.5 {
-        f + 1.0
-    } else if diff < 0.5 {
-        f
-    } else if (f as i64) % 2 == 0 {
-        f
-    } else {
-        f + 1.0
-    };
-    r / s
-}
 
 /// numpy linspace (endpoint included).
 fn linspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
@@ -170,8 +165,7 @@ fn mat3_mul(a: &H3, b: &H3) -> H3 {
     let mut out = [0.0; 9];
     for r in 0..3 {
         for c in 0..3 {
-            out[r * 3 + c] =
-                a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+            out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
         }
     }
     out
@@ -373,7 +367,17 @@ fn dlt_kernel(pairs: &[(Pt, Pt)]) -> Option<H3> {
         vecs[8][idx],
     ];
     let inv_hnorm: H3 = [1.0 / smx, 0.0, cmx, 0.0, 1.0 / smy, cmy, 0.0, 0.0, 1.0];
-    let hnorm2: H3 = [s_mx, 0.0, -c_mx * s_mx, 0.0, s_my, -c_my * s_my, 0.0, 0.0, 1.0];
+    let hnorm2: H3 = [
+        s_mx,
+        0.0,
+        -c_mx * s_mx,
+        0.0,
+        s_my,
+        -c_my * s_my,
+        0.0,
+        0.0,
+        1.0,
+    ];
     let mut H = mat3_mul(&inv_hnorm, &mat3_mul(&h0, &hnorm2));
     normalize_h(&mut H);
     if H.iter().any(|v| !v.is_finite()) {
@@ -589,8 +593,9 @@ pub struct CardProfile {
     pub ring_outer_mm: f64,
 }
 
+/// One tick mark on a card arm, in card space.
 #[derive(Clone, Debug)]
-struct Tick {
+pub struct Tick {
     arm: String,
     centre_mm: Pt,
     fraction_from_vertex: f64,
@@ -620,6 +625,8 @@ fn arm_geometry(name: &str) -> Option<(&'static str, Pt)> {
     })
 }
 
+/// Load one card's profile (tick geometry and envelope gates) from
+/// the profile file.
 pub fn load_card_profile(profile_path: &Path, card_id: &str) -> Result<CardProfile, String> {
     let text = std::fs::read_to_string(profile_path)
         .map_err(|e| format!("Could not read profile {}: {e}", profile_path.display()))?;
@@ -632,10 +639,14 @@ pub fn load_card_profile(profile_path: &Path, card_id: &str) -> Result<CardProfi
         format!(
             "Card {card_id:?} not in profile {} (has: {})",
             profile_path.display(),
-            ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ids.iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )
     })?;
-    let get_pt = |v: &Value| -> Pt { pt(v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0)) };
+    let get_pt =
+        |v: &Value| -> Pt { pt(v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0)) };
     let mut frame = HashMap::new();
     for key in ["TL", "TR", "BL", "BR"] {
         frame.insert(
@@ -839,7 +850,14 @@ fn arm_tick_centres(
     tol: f64,
     max_run_frac: f64,
 ) -> Option<Vec<Pt>> {
-    let (values, points) = sample_along(&frame.gray, frame.width, frame.height, start_img, end_img, 240);
+    let (values, points) = sample_along(
+        &frame.gray,
+        frame.width,
+        frame.height,
+        start_img,
+        end_img,
+        240,
+    );
     // np.convolve(values, ones(5)/5, 'same'): zero-padded moving
     // average (kernel symmetric, so flip direction is immaterial).
     let n = values.len();
@@ -1036,28 +1054,31 @@ fn tick_matches(
         let arm_len_img = norm(direction);
         let half_width = 0.75 * card.stroke_mm * (arm_len_img / card.arm_len_mm);
         if with_lines {
-            if let Some(pts) =
-                arm_centreline_points(mask, frame.width, frame.height, start_img, end_img, half_width)
-            {
+            if let Some(pts) = arm_centreline_points(
+                mask,
+                frame.width,
+                frame.height,
+                start_img,
+                end_img,
+                half_width,
+            ) {
                 arm_lines.insert(arm.name.clone(), fit_line(&pts));
                 arm_points.insert(arm.name.clone(), pts);
             }
         }
-        let (mask_values, _) = sample_along(mask, frame.width, frame.height, start_img, end_img, 120);
-        let frac_on = mask_values.iter().filter(|&&v| v > 0.0).count() as f64
-            / mask_values.len() as f64;
+        let (mask_values, _) =
+            sample_along(mask, frame.width, frame.height, start_img, end_img, 120);
+        let frac_on =
+            mask_values.iter().filter(|&&v| v > 0.0).count() as f64 / mask_values.len() as f64;
         if frac_on < 0.55 {
             continue;
         }
-        let expected_img: Vec<Pt> = arm
-            .ticks_mm
-            .iter()
-            .map(|t| project1(H, *t))
-            .collect();
-        let centres = match arm_tick_centres(frame, start_img, end_img, &expected_img, tol, max_run_frac) {
-            Some(c) => c,
-            None => continue,
-        };
+        let expected_img: Vec<Pt> = arm.ticks_mm.iter().map(|t| project1(H, *t)).collect();
+        let centres =
+            match arm_tick_centres(frame, start_img, end_img, &expected_img, tol, max_run_frac) {
+                Some(c) => c,
+                None => continue,
+            };
         arms_hit += 1;
         pending.push((arm, centres));
     }
@@ -1175,7 +1196,11 @@ fn ink_mask(frame: &MeasureFrame) -> Vec<u8> {
             // mask by a pixel on soft edges — enough to shear the
             // sheet seed on small cards.
             let thresh = ((acc.round() as i32) - 12).max(0);
-            mask[y * w + x] = if (blurred[y * w + x] as i32) <= thresh { 255 } else { 0 };
+            mask[y * w + x] = if (blurred[y * w + x] as i32) <= thresh {
+                255
+            } else {
+                0
+            };
         }
     }
     mask
@@ -1224,7 +1249,11 @@ const DIRS8: [(i64, i64); 8] = [
 /// starting at its topmost-leftmost pixel.
 fn trace_outer(mask: &[u8], w: usize, h: usize, start: (i64, i64)) -> Vec<Pt> {
     let fg = |x: i64, y: i64| -> bool {
-        x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && mask[y as usize * w + x as usize] > 0
+        x >= 0
+            && y >= 0
+            && (x as usize) < w
+            && (y as usize) < h
+            && mask[y as usize * w + x as usize] > 0
     };
     let mut chain: Vec<Pt> = vec![pt(start.0 as f64, start.1 as f64)];
     let mut p = start;
@@ -1386,7 +1415,7 @@ fn approx_poly_dp(chain: &[Pt], eps_in: f64) -> Vec<Pt> {
     // Slices are (start, end) index pairs along the wrapped order.
     let mut stack: Vec<(usize, usize)> = Vec::new();
     let mut right_start: usize = 0;
-    let mut slice_start: usize;
+    let slice_start: usize;
     let mut le_eps: bool;
     // 1. Approximately two farthest points (3 refinement rounds
     // starting from src[0]).
@@ -1514,7 +1543,13 @@ fn order_quad(pts: &[Pt]) -> [Pt; 4] {
 
 /// Homography seed from the card sheet's own quad, or None (port
 /// of `_sheet_seed`).
-fn sheet_seed(mask: &[u8], w: usize, h: usize, card: &CardProfile, ring_centroid: Pt) -> Option<H3> {
+fn sheet_seed(
+    mask: &[u8],
+    w: usize,
+    h: usize,
+    card: &CardProfile,
+    ring_centroid: Pt,
+) -> Option<H3> {
     let mut contours = external_contours(mask, w, h, true);
     contours.sort_by(|a, b| {
         arc_length(b, true)
@@ -1569,8 +1604,7 @@ fn canny_edges(img: &[u8], w: usize, h: usize) -> Vec<u8> {
     let mut ang = vec![0.0f64; w * h];
     for y in 0..h as i64 {
         for x in 0..w as i64 {
-            let gx = -at(x - 1, y - 1) + at(x + 1, y - 1) - 2.0 * at(x - 1, y)
-                + 2.0 * at(x + 1, y)
+            let gx = -at(x - 1, y - 1) + at(x + 1, y - 1) - 2.0 * at(x - 1, y) + 2.0 * at(x + 1, y)
                 - at(x - 1, y + 1)
                 + at(x + 1, y + 1);
             let gy = -at(x - 1, y - 1) - 2.0 * at(x, y - 1) - at(x + 1, y - 1)
@@ -1594,8 +1628,7 @@ fn canny_edges(img: &[u8], w: usize, h: usize) -> Vec<u8> {
             if m <= 50.0 {
                 continue;
             }
-            let sector = ((ang[idx] + std::f64::consts::PI / 8.0)
-                / (std::f64::consts::PI / 4.0))
+            let sector = ((ang[idx] + std::f64::consts::PI / 8.0) / (std::f64::consts::PI / 4.0))
                 .floor() as usize
                 % 4;
             // (strict-side neighbour, weak-side neighbour) along
@@ -1719,8 +1752,7 @@ fn hough_segments(edges: &[u8], w: usize, h: usize) -> Vec<HoughSeg> {
         members.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         let mut run_start = 0usize;
         for j in 1..=members.len() {
-            let end_run = j == members.len()
-                || members[j].0 - members[j - 1].0 > 20.0;
+            let end_run = j == members.len() || members[j].0 - members[j - 1].0 > 20.0;
             if !end_run {
                 continue;
             }
@@ -2114,34 +2146,30 @@ fn solve_homography_pairs(pairs: &[(Pt, Pt)]) -> Option<H3> {
 // ---------------------------------------------------------------------------
 // Card detection
 
-fn fit_homography(
-    tick_pairs: &[(Pt, Pt)],
-    corner_pairs: &[(Pt, Pt)],
-) -> Option<H3> {
+fn fit_homography(tick_pairs: &[(Pt, Pt)], corner_pairs: &[(Pt, Pt)]) -> Option<H3> {
     let mut pool: Vec<(Pt, Pt)> = tick_pairs.to_vec();
     pool.extend_from_slice(corner_pairs);
     let (H_r, inliers) = ransac_homography(&pool)?;
     let n_inliers: usize = inliers.iter().filter(|&&b| b).count();
-    let (ticks_kept, corners_kept): (Vec<(Pt, Pt)>, Vec<(Pt, Pt)>) =
-        if n_inliers >= 8 {
-            let n_ticks = tick_pairs.len();
-            (
-                tick_pairs
-                    .iter()
-                    .zip(inliers[..n_ticks].iter())
-                    .filter(|(_, &k)| k)
-                    .map(|(p, _)| *p)
-                    .collect(),
-                corner_pairs
-                    .iter()
-                    .zip(inliers[n_ticks..].iter())
-                    .filter(|(_, &k)| k)
-                    .map(|(p, _)| *p)
-                    .collect(),
-            )
-        } else {
-            (tick_pairs.to_vec(), corner_pairs.to_vec())
-        };
+    let (ticks_kept, corners_kept): (Vec<(Pt, Pt)>, Vec<(Pt, Pt)>) = if n_inliers >= 8 {
+        let n_ticks = tick_pairs.len();
+        (
+            tick_pairs
+                .iter()
+                .zip(inliers[..n_ticks].iter())
+                .filter(|(_, &k)| k)
+                .map(|(p, _)| *p)
+                .collect(),
+            corner_pairs
+                .iter()
+                .zip(inliers[n_ticks..].iter())
+                .filter(|(_, &k)| k)
+                .map(|(p, _)| *p)
+                .collect(),
+        )
+    } else {
+        (tick_pairs.to_vec(), corner_pairs.to_vec())
+    };
     let mut weighted: Vec<(Pt, Pt)> = ticks_kept;
     for _ in 0..6 {
         weighted.extend_from_slice(&corners_kept);
@@ -2152,6 +2180,8 @@ fn fit_homography(
     }
 }
 
+/// A successful card detection: the fitted homography, the tick pairs
+/// it rests on, the projected frame quad, and the fit RMS.
 pub struct Detection {
     pub H: H3,
     pub tick_pairs: Vec<(Pt, Pt)>,
@@ -2212,8 +2242,8 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
     let (centre, ring_area_px) = ring_centroid(frame)
         .ok_or_else(|| "Cyan ring not found; card not detectable.".to_string())?;
     let ring_mm = card.ring_centre_mm;
-    let ring_area_mm2 = std::f64::consts::PI
-        * (card.ring_outer_mm.powi(2) - card.ring_inner_mm.powi(2));
+    let ring_area_mm2 =
+        std::f64::consts::PI * (card.ring_outer_mm.powi(2) - card.ring_inner_mm.powi(2));
     let scale0 = (ring_area_px / ring_area_mm2).sqrt();
     if mask.iter().filter(|&&v| v > 0).count() < 500 {
         return Err("Too little ink; card not detectable.".to_string());
@@ -2299,10 +2329,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
         }
         let anchor = add(centre, pt(params[0], params[1]));
         let H_sim = similarity(ring_mm, anchor, params[2], params[3].exp());
-        let mut vertices: Vec<Pt> = frame_src
-            .iter()
-            .map(|p| project1(&H_sim, *p))
-            .collect();
+        let mut vertices: Vec<Pt> = frame_src.iter().map(|p| project1(&H_sim, *p)).collect();
         let mut best_val = loose_score(&H_sim);
         for step in [16.0, 8.0, 4.0, 2.0] {
             let mut improved = true;
@@ -2332,7 +2359,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
     };
 
     let mut seed_observations: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
-    let mut observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
+    let observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
         let tm = tick_matches(frame, &mask, card, H, false, false);
         if tm.arms_hit >= 4 && tm.matched.len() >= 10 {
             Some((tm.matched, tm.corners))
@@ -2372,11 +2399,9 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
         }
     }
     if results.is_empty() {
-        return Err(
-            "Card fit did not converge to a trustworthy homography \
+        return Err("Card fit did not converge to a trustworthy homography \
              (coverage or residual gates failed)."
-                .to_string(),
-        );
+            .to_string());
     }
     results.sort_by(|a, b| {
         b.1.len()
@@ -2515,8 +2540,8 @@ fn object_extent(
     mask_obj: Option<&[u8]>,
     warnings: &mut Vec<String>,
 ) -> Result<(f64, f64, Pt), String> {
-    let H_inv = mat3_inv(H)
-        .ok_or_else(|| "Degenerate homography at the object location.".to_string())?;
+    let H_inv =
+        mat3_inv(H).ok_or_else(|| "Degenerate homography at the object location.".to_string())?;
     if let Some(mask) = mask_obj {
         let mut points = Vec::new();
         for y in 0..frame.height {
@@ -2533,12 +2558,7 @@ fn object_extent(
         return Ok(extent_from_points(&projected));
     }
     if let Some((x, y, bw, bh)) = bbox {
-        let corners = [
-            pt(x, y),
-            pt(x + bw, y),
-            pt(x + bw, y + bh),
-            pt(x, y + bh),
-        ];
+        let corners = [pt(x, y), pt(x + bw, y), pt(x + bw, y + bh), pt(x, y + bh)];
         warnings.push(
             "Extent from a caller-supplied image bbox: a bbox around a \
              rotated object overestimates; a mask is tighter."
@@ -2582,11 +2602,9 @@ fn object_extent(
     let closed = erode(&dilate(&opened, w, h, 9), w, h, 9);
     let contours = external_contours(&closed, w, h, false);
     if contours.is_empty() {
-        return Err(
-            "Auto extent found no object (colour segmentation); \
+        return Err("Auto extent found no object (colour segmentation); \
              supply a bbox or mask."
-                .to_string(),
-        );
+            .to_string());
     }
     let largest = contours
         .iter()
@@ -2646,9 +2664,7 @@ pub struct Estimate {
 impl Estimate {
     /// JSON in the Python dict's insertion order, indent 2.
     pub fn to_json_pretty(&self) -> String {
-        let num = |x: f64| -> String {
-            serde_json::to_string(&serde_json::json!(x)).unwrap()
-        };
+        let num = |x: f64| -> String { serde_json::to_string(&serde_json::json!(x)).unwrap() };
         let warnings: Vec<String> = self
             .warnings
             .iter()
@@ -2757,7 +2773,12 @@ pub fn estimate(
         return Err("Degenerate homography at the object location.".to_string());
     }
     let sigma_mm = det.rms / px_per_mm;
-    let frame_vals = [card.frame["TL"], card.frame["TR"], card.frame["BR"], card.frame["BL"]];
+    let frame_vals = [
+        card.frame["TL"],
+        card.frame["TR"],
+        card.frame["BR"],
+        card.frame["BL"],
+    ];
     let frame_centroid = pt(
         frame_vals.iter().map(|p| p[0]).sum::<f64>() / 4.0,
         frame_vals.iter().map(|p| p[1]).sum::<f64>() / 4.0,

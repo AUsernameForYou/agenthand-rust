@@ -164,9 +164,8 @@ fn resample_vertical(
             for c in 0..stride {
                 let mut ss: i32 = 1 << (PRECISION_BITS - 1);
                 for y in 0..ymax {
-                    let px = img.data
-                        [(y + ymin) as usize * img.width * stride + xx * stride + c]
-                        as i32;
+                    let px =
+                        img.data[(y + ymin) as usize * img.width * stride + xx * stride + c] as i32;
                     ss = ss.wrapping_add(px.wrapping_mul(kk[kbase + y as usize]));
                 }
                 out[row_out + xx * stride + c] = clip8(ss);
@@ -199,9 +198,7 @@ fn resample_inner(
 
     let mut coeffs_vert: Option<Coeffs> = None;
     if (need_horizontal && horizontal_first) || need_vertical {
-        coeffs_vert = Some(precompute_coeffs(
-            in_h as i32, bx[1], bx[3], out_h as i32,
-        ));
+        coeffs_vert = Some(precompute_coeffs(in_h as i32, bx[1], bx[3], out_h as i32));
     }
 
     let mut cur: Vec<u8> = data.to_vec();
@@ -234,14 +231,7 @@ fn resample_inner(
                 data: &cur,
             };
             let rows = (ybox_last - ybox_first) as usize;
-            cur = resample_horizontal(
-                &img,
-                ybox_first as usize,
-                rows,
-                out_w,
-                &coeffs_h,
-                &kk_h,
-            );
+            cur = resample_horizontal(&img, ybox_first as usize, rows, out_w, &coeffs_h, &kk_h);
             cur_w = out_w;
             cur_h = rows;
             shifted.kk = cv.kk.clone();
@@ -298,7 +288,7 @@ fn shift_for_div255(a: u32) -> u32 {
 /// c' = MULDIV255(c, a) per colour channel; alpha copied.
 fn premultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         let a = px[3] as u32;
         for c in 0..3 {
             out.push(shift_for_div255(px[c] as u32 * a + 128) as u8);
@@ -312,7 +302,7 @@ fn premultiply(pixels: &[u8]) -> Vec<u8> {
 /// alpha 0 or 255 copies the channel; else CLIP8(255*c/a).
 fn unpremultiply(pixels: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(pixels.len());
-    for px in pixels.chunks_exact(4) {
+    for px in pixels.as_chunks::<4>().0 {
         let a = px[3] as u32;
         for c in 0..3 {
             let v = px[c] as u32;

@@ -26,7 +26,7 @@ fn load_frame(path: &PathBuf) -> MeasureFrame {
 fn load_mask(path: &PathBuf) -> Vec<u8> {
     let bytes = std::fs::read(path).unwrap();
     let img = decode_image(&bytes).unwrap().into_rgba();
-    img.pixels.iter().step_by(4).map(|&r| r).collect()
+    img.pixels.iter().step_by(4).copied().collect()
 }
 
 /// Collapse every run of digits to a single '#', so error strings
@@ -52,8 +52,7 @@ fn mask_digits(s: &str) -> String {
 fn estimator_battery_matches_python() {
     let dir = fixture_dir();
     let expected: Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
     let scenes = expected.as_object().unwrap();
     assert_eq!(scenes.len(), 22, "fixture set drifted");
     let mut names: Vec<&String> = scenes.keys().collect();
@@ -75,9 +74,7 @@ fn estimator_battery_matches_python() {
                 b[3].as_f64().unwrap(),
             )
         });
-        let mask = scene["mask_file"]
-            .as_str()
-            .map(|f| load_mask(&dir.join(f)));
+        let mask = scene["mask_file"].as_str().map(|f| load_mask(&dir.join(f)));
         let result = estimate(&frame, &card, card_id, bbox, mask.as_deref());
         let outcome = scene["outcome"].as_str().unwrap();
         let truth = scene["truth_mm"].as_array().unwrap();
@@ -95,8 +92,8 @@ fn estimator_battery_matches_python() {
                 );
             }
             "ok" => {
-                let est = result
-                    .unwrap_or_else(|e| panic!("{name}: Python measured, Rust refused: {e}"));
+                let est =
+                    result.unwrap_or_else(|e| panic!("{name}: Python measured, Rust refused: {e}"));
                 let py = &scene["result"];
                 let py_ticks = py["ticks_matched"].as_u64().unwrap() as usize;
                 assert!(

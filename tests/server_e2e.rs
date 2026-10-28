@@ -73,10 +73,7 @@ fn tool_result(response: &Value) -> Value {
 
 #[test]
 fn stdio_server_end_to_end_offline() {
-    let data_dir = std::env::temp_dir().join(format!(
-        "agenthand-e2e-{}",
-        std::process::id()
-    ));
+    let data_dir = std::env::temp_dir().join(format!("agenthand-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     // Pre-seed a source + foreground in the server's data dir.
     let store = AssetStore::new(&data_dir);
@@ -91,7 +88,11 @@ fn stdio_server_end_to_end_offline() {
         }
     }
     let fg_handle = store
-        .put_image(&fg, KIND_FOREGROUND, Some(&AssetStore::parse_handle(&source).unwrap()))
+        .put_image(
+            &fg,
+            KIND_FOREGROUND,
+            Some(&AssetStore::parse_handle(&source).unwrap()),
+        )
         .unwrap();
 
     let mut server = Server::spawn(&data_dir);
@@ -143,7 +144,10 @@ fn stdio_server_end_to_end_offline() {
     assert_eq!(result["status"], "ok", "draw result: {result}");
     assert_eq!(result["fidelity_receipt"]["changed_opaque_pixels"], 0);
     assert_eq!(result["fidelity_receipt"]["opaque_pixels"], 12);
-    assert_eq!(result["fidelity_receipt"]["plate_source"], "local_placeholder");
+    assert_eq!(
+        result["fidelity_receipt"]["plate_source"],
+        "local_placeholder"
+    );
     assert_eq!(result["cost_usd"], 0.0);
     // The preview image block rides along.
     let content = resp["result"]["content"].as_array().unwrap();

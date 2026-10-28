@@ -1,9 +1,10 @@
-# agenthand — Rust port (PARALLEL EXPERIMENT)
+# agenthand — Rust build
 
-Status as of 2026-10-28. This repo is an experiment next to the
-shipped Python product in `~/workspace/agenthand`, which is
-untouched and remains the product. The port earns "parity" only
-through the gate below; this file says exactly where it stands.
+Status as of 2026-10-28. As of the 0.2.0 release this is the
+primary build of agenthand; the Python package in
+`~/workspace/agenthand` remains available as a fallback install.
+Parity with the Python reference is earned only through the gate
+below; this file says exactly where it stands.
 
 **Completion lane (2026-10-28): the remaining Python-only pieces
 are ported.** PNG eXIf orientation on ingest (4192357), receipt

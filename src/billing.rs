@@ -12,6 +12,8 @@ use fs2::FileExt;
 use serde_json::json;
 use std::io::Write;
 
+/// One billed call's outcome: its ids, projected vs actual cost, and
+/// the provider usage the cost rests on.
 pub struct BillingSummary {
     pub call_id: String,
     pub projected_usd: f64,
@@ -37,8 +39,7 @@ impl BillingSummary {
 
 fn lock_file() -> Result<std::fs::File, String> {
     let data_dir = config::get_data_dir();
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|e| format!("cannot create data dir: {e}"))?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("cannot create data dir: {e}"))?;
     let fh = std::fs::OpenOptions::new()
         .create(true)
         .write(true)

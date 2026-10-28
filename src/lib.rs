@@ -1,14 +1,38 @@
-//! agenthand — Rust port (parallel experiment).
+//! agenthand — the Rust build of the agenthand MCP server.
 //!
-//! The Python build in `~/workspace/agenthand` is the shipped
-//! product; this crate is a port under evaluation. It earns parity
-//! only through the replay-package gate (see `parity` CLI / tests).
+//! agenthand gives an AI agent three tools for helping a person sell a
+//! physical item: `identify` (what is this, and how would you list it),
+//! `cut_out` (the item alone, as a transparent PNG), and `draw` (the
+//! item staged into a generated scene, composited deterministically so
+//! the product pixels are never regenerated — the Fidelity Lock). A
+//! Python package of the same name remains available as a fallback
+//! install; this crate is the primary build, and it holds parity with
+//! the Python reference through the frozen replay gate (see the
+//! `parity` CLI and `tests/parity.rs`).
+//!
+//! Module map:
+//! - `server` — the MCP stdio server and the three tool handlers.
+//! - `meta` — the Meta Model API client (identify and draw contracts).
+//! - `sam`, `segmentation` — SAM 3.1 mask decoding and mask quality
+//!   control.
+//! - `composite` — the Fidelity Lock compositor and receipt
+//!   verification.
+//! - `image`, `resample`, `ingest`, `assets` — image primitives,
+//!   ingest limits, and the on-disk asset store behind `asset://`
+//!   handles.
+//! - `billing`, `ledger`, `sqlledger`, `pricing`, `config` — the
+//!   spend cap and its two ledger stores (JSONL and SQLite, one
+//!   accounting semantics).
+//! - `measure` — the prototype scale-card dimension estimator (not a
+//!   fourth tool).
+//! - `heic` — the from-scratch HEIC decoder (in progress; see
+//!   STATUS.md).
 
 pub mod assets;
 pub mod billing;
-pub mod heic;
 pub mod composite;
 pub mod config;
+pub mod heic;
 pub mod image;
 pub mod ingest;
 pub mod ledger;
@@ -18,8 +42,8 @@ pub mod pricing;
 pub mod resample;
 pub mod sam;
 pub mod segmentation;
-pub mod sqlledger;
 pub mod server;
+pub mod sqlledger;
 
 /// Python's `round(x, 6)`: round-half-even at the 6th decimal.
 pub fn round6(x: f64) -> f64 {

@@ -15,7 +15,9 @@ use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_SOURCE};
 use crate::image::{decode_image, encode_png_rgba, DecodedImage, RgbaImage};
 use base64::Engine;
 
+/// Default ingest size limit for a source image, in bytes.
 pub const DEFAULT_MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+/// Default ingest pixel-count limit for a source image.
 pub const DEFAULT_MAX_PIXELS: u64 = 40_000_000;
 const FETCH_TIMEOUT_SECONDS: u64 = 15;
 
@@ -68,8 +70,8 @@ fn png_exif_orientation(data: &[u8]) -> Option<u16> {
     }
     let mut pos = 8usize;
     while pos + 8 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let kind = &data[pos + 4..pos + 8];
         let start = pos + 8;
         let end = start.checked_add(len)?;
@@ -134,11 +136,7 @@ fn apply_orientation(img: &RgbaImage, orientation: u16) -> RgbaImage {
         return img.clone();
     }
     let (w, h) = (img.width as usize, img.height as usize);
-    let (out_w, out_h) = if orientation >= 5 {
-        (h, w)
-    } else {
-        (w, h)
-    };
+    let (out_w, out_h) = if orientation >= 5 { (h, w) } else { (w, h) };
     let mut out = vec![0u8; img.pixels.len()];
     for oy in 0..out_h {
         for ox in 0..out_w {
@@ -174,8 +172,8 @@ pub fn normalize_image_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
     } else {
         png_exif_orientation(data)
     };
-    let decoded = decode_image(data)
-        .map_err(|e| format!("Input does not decode as an image: {e}"))?;
+    let decoded =
+        decode_image(data).map_err(|e| format!("Input does not decode as an image: {e}"))?;
     let mut rgba = match decoded {
         DecodedImage::Rgba(img) => img,
         DecodedImage::Gray(g) => g.to_rgba(),
@@ -201,8 +199,7 @@ fn decode_data_uri(source: &str) -> Result<Vec<u8>, String> {
     })?;
     if !header.contains(";base64") || !header.starts_with("data:image/") {
         return Err(
-            "Only base64 image data URIs are accepted (data:image/<type>;base64,...)."
-                .to_string(),
+            "Only base64 image data URIs are accepted (data:image/<type>;base64,...).".to_string(),
         );
     }
     base64::engine::general_purpose::STANDARD
@@ -221,9 +218,7 @@ fn fetch_url(source: &str) -> Result<Vec<u8>, String> {
         .header("User-Agent", "agenthand-ingest/0.1")
         .send()
         .map_err(|e| format!("fetch failed: {e}"))?;
-    let bytes = response
-        .bytes()
-        .map_err(|e| format!("fetch failed: {e}"))?;
+    let bytes = response.bytes().map_err(|e| format!("fetch failed: {e}"))?;
     if bytes.len() > limit {
         return Err(format!(
             "Fetched image exceeds the {limit}-byte ingest cap."
@@ -250,7 +245,7 @@ pub fn ingest(source: &str, store: &AssetStore) -> Result<String, String> {
     } else {
         return Err(format!(
             "Image source must be an asset:// handle, an http(s) URL, or a base64 data URI; got {:?}...",
-            &source.chars().take(40).collect::<String>()
+            source.chars().take(40).collect::<String>()
         ));
     };
     if data.len() > max_image_bytes() {

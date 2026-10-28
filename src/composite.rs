@@ -13,12 +13,14 @@
 //!   alongside the pixel hashes.
 
 use crate::assets::{
-    AssetRecord, AssetStore, HANDLE_PREFIX, KIND_COMPOSITE, KIND_FOREGROUND, KIND_MASK,
-    KIND_PLATE, KIND_SOURCE,
+    AssetRecord, AssetStore, HANDLE_PREFIX, KIND_COMPOSITE, KIND_FOREGROUND, KIND_MASK, KIND_PLATE,
+    KIND_SOURCE,
 };
 use crate::image::{describe_color_profile, GrayImage, RgbaImage};
 use serde_json::{json, Map, Value};
 
+/// A foreground pixel counts as opaque product only at this alpha
+/// (255: fully opaque), in receipts and fidelity checks alike.
 pub const OPAQUE_ALPHA_THRESHOLD: u8 = 255;
 
 /// Pillow's fast divide-by-255: `(((a >> 8) + a) >> 8)`.
@@ -111,7 +113,7 @@ fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<Stri
 /// distance is measured to the image border instead.
 fn distance_to_class(alpha: &[u8], width: usize, height: usize, target: u8) -> Vec<i64> {
     let total = width * height;
-    if !alpha.iter().any(|&a| a == target) {
+    if !alpha.contains(&target) {
         let mut out = vec![0i64; total];
         for y in 0..height {
             for x in 0..width {
@@ -311,38 +313,33 @@ pub fn draw_product(
             }
         };
 
-    let (plate, plate_source, plate_asset, plate_sha256, plate_pixel_sha256) =
-        match plate_handle {
-            Some(handle) => {
-                let plate_record = store.get_record(handle)?;
-                if plate_record.kind != KIND_PLATE {
-                    return Err(format!(
-                        "Background plate {handle:?} is kind {:?}, not {KIND_PLATE}.",
-                        plate_record.kind
-                    ));
-                }
-                let plate = store.read_image(handle)?;
-                (
-                    plate,
-                    "asset",
-                    Some(handle.to_string()),
-                    Some(plate_record.sha256.clone()),
-                    plate_record.pixel_sha256.clone(),
-                )
+    let (plate, plate_source, plate_asset, plate_sha256, plate_pixel_sha256) = match plate_handle {
+        Some(handle) => {
+            let plate_record = store.get_record(handle)?;
+            if plate_record.kind != KIND_PLATE {
+                return Err(format!(
+                    "Background plate {handle:?} is kind {:?}, not {KIND_PLATE}.",
+                    plate_record.kind
+                ));
             }
-            None => {
-                let plate =
-                    generate_background_plate(scene_prompt, foreground.width, foreground.height);
-                (plate, "local_placeholder", None, None, None)
-            }
-        };
+            let plate = store.read_image(handle)?;
+            (
+                plate,
+                "asset",
+                Some(handle.to_string()),
+                Some(plate_record.sha256.clone()),
+                plate_record.pixel_sha256.clone(),
+            )
+        }
+        None => {
+            let plate =
+                generate_background_plate(scene_prompt, foreground.width, foreground.height);
+            (plate, "local_placeholder", None, None, None)
+        }
+    };
 
     let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
-    let composite_handle = store.put_image(
-        &composite,
-        KIND_COMPOSITE,
-        Some(&record.asset_id),
-    )?;
+    let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
     let composite_record = store.get_record(&composite_handle)?;
 
     // Counts measured on the delivered file, decoded back from the store.
@@ -430,11 +427,11 @@ pub fn verify_receipt_from_disk(
     };
     let mut checks: Map<String, Value> = Map::new();
     let mut problems: Vec<String> = Vec::new();
-    let mut set_check = |checks: &mut Map<String, Value>,
-                         problems: &mut Vec<String>,
-                         name: &str,
-                         ok: bool,
-                         detail: &str| {
+    let set_check = |checks: &mut Map<String, Value>,
+                     problems: &mut Vec<String>,
+                     name: &str,
+                     ok: bool,
+                     detail: &str| {
         checks.insert(name.to_string(), Value::Bool(ok));
         if !ok {
             problems.push(if detail.is_empty() {
@@ -541,13 +538,7 @@ pub fn verify_receipt_from_disk(
             // check available is the mask file's integrity against
             // its own asset record.
             match store.verify_integrity(mask_handle) {
-                Ok(()) => set_check(
-                    &mut checks,
-                    &mut problems,
-                    "mask_asset_integrity",
-                    true,
-                    "",
-                ),
+                Ok(()) => set_check(&mut checks, &mut problems, "mask_asset_integrity", true, ""),
                 Err(e) => set_check(
                     &mut checks,
                     &mut problems,
@@ -565,8 +556,7 @@ pub fn verify_receipt_from_disk(
         &mut checks,
         &mut problems,
         "foreground_pixel_hash",
-        foreground.pixel_sha256()
-            == receipt["foreground_pixel_sha256"].as_str().unwrap_or(""),
+        foreground.pixel_sha256() == receipt["foreground_pixel_sha256"].as_str().unwrap_or(""),
         "decoded foreground pixels do not match the receipt's pinned hash",
     );
     set_check(
@@ -591,13 +581,22 @@ pub fn verify_receipt_from_disk(
         );
     } else {
         let counts = measure(&foreground, &composite_image);
-        recomputed.insert("changed_opaque_pixels".into(), json!(counts.changed_opaque_pixels));
+        recomputed.insert(
+            "changed_opaque_pixels".into(),
+            json!(counts.changed_opaque_pixels),
+        );
         recomputed.insert("opaque_pixels".into(), json!(counts.opaque_pixels));
         recomputed.insert("edge_band_pixels".into(), json!(counts.edge_band_pixels));
-        recomputed.insert("transparent_pixels".into(), json!(counts.transparent_pixels));
+        recomputed.insert(
+            "transparent_pixels".into(),
+            json!(counts.transparent_pixels),
+        );
         recomputed.insert("mask_pixels_total".into(), json!(counts.mask_pixels_total));
         recomputed.insert("opaque_fraction".into(), json!(counts.opaque_fraction));
-        recomputed.insert("edge_band_max_width_px".into(), json!(counts.edge_band_max_width_px));
+        recomputed.insert(
+            "edge_band_max_width_px".into(),
+            json!(counts.edge_band_max_width_px),
+        );
         for field in [
             "changed_opaque_pixels",
             "opaque_pixels",
@@ -664,14 +663,8 @@ pub fn verify_receipt_from_disk(
     let source_image = store.read_image(&source_handle)?;
     let source_profile = source_image.color_profile_sha256();
     let output_profile = composite_image.color_profile_sha256();
-    recomputed.insert(
-        "color_profile_source_sha256".into(),
-        json!(source_profile),
-    );
-    recomputed.insert(
-        "color_profile_output_sha256".into(),
-        json!(output_profile),
-    );
+    recomputed.insert("color_profile_source_sha256".into(), json!(source_profile));
+    recomputed.insert("color_profile_output_sha256".into(), json!(output_profile));
     set_check(
         &mut checks,
         &mut problems,
@@ -725,10 +718,12 @@ pub fn verify_files(
         crate::image::DecodedImage::Gray(g) => g.pixels.clone(),
         crate::image::DecodedImage::Rgba(r) => r
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|px| {
-                ((px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000)
-                    >> 16) as u8
+                ((px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000) >> 16)
+                    as u8
             })
             .collect(),
     };

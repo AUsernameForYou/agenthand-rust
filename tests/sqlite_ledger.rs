@@ -12,7 +12,7 @@ use agenthand::billing::billed_call;
 use agenthand::ledger::{self, Receipt};
 use agenthand::pricing::Usage;
 use agenthand::sqlledger;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -63,7 +63,10 @@ fn sqlite_total_matches_jsonl_on_tricky_ledger() {
     let jsonl = dir.join("ledger.jsonl");
     std::fs::write(&jsonl, TRICKY_LEDGER).unwrap();
     let jsonl_total = ledger::ledger_total_usd(&jsonl).unwrap();
-    assert!((jsonl_total - 0.075).abs() < 1e-9, "jsonl total {jsonl_total}");
+    assert!(
+        (jsonl_total - 0.075).abs() < 1e-9,
+        "jsonl total {jsonl_total}"
+    );
 
     let sqlite = dir.join("ledger.sqlite3");
     let (rows, sqlite_total) = sqlledger::import_jsonl(&jsonl, &sqlite).unwrap();
@@ -237,7 +240,7 @@ fn run_item(i: usize, latency: Duration) -> Result<(), String> {
     .map(|_| ())
 }
 
-fn store_total(dir: &PathBuf, sqlite: bool) -> f64 {
+fn store_total(dir: &Path, sqlite: bool) -> f64 {
     if sqlite {
         sqlledger::ledger_total_usd(&dir.join("ledger.sqlite3")).unwrap()
     } else {
@@ -245,7 +248,7 @@ fn store_total(dir: &PathBuf, sqlite: bool) -> f64 {
     }
 }
 
-fn store_rows(dir: &PathBuf, sqlite: bool) -> usize {
+fn store_rows(dir: &Path, sqlite: bool) -> usize {
     if sqlite {
         sqlledger::count_receipts(&dir.join("ledger.sqlite3")).unwrap()
     } else {
@@ -268,10 +271,7 @@ fn cap_holds_under_parallel_items_in_both_stores() {
     for sqlite in [false, true] {
         let dir = tmpdir(if sqlite { "capsqlite" } else { "capjsonl" });
         std::env::set_var("AGENTHAND_DATA_DIR", &dir);
-        std::env::set_var(
-            "AGENTHAND_LEDGER",
-            if sqlite { "sqlite" } else { "jsonl" },
-        );
+        std::env::set_var("AGENTHAND_LEDGER", if sqlite { "sqlite" } else { "jsonl" });
         std::env::set_var("AGENTHAND_TOTAL_SPEND_CAP_USD", "0.0125");
 
         let handles: Vec<_> = (0..8)
@@ -317,10 +317,7 @@ fn wall_clock_table() {
         for parallel in [false, true] {
             let dir = tmpdir("wallclock");
             std::env::set_var("AGENTHAND_DATA_DIR", &dir);
-            std::env::set_var(
-                "AGENTHAND_LEDGER",
-                if sqlite { "sqlite" } else { "jsonl" },
-            );
+            std::env::set_var("AGENTHAND_LEDGER", if sqlite { "sqlite" } else { "jsonl" });
             let start = Instant::now();
             if parallel {
                 let handles: Vec<_> = (0..8)
