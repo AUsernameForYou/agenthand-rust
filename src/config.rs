@@ -87,6 +87,17 @@ pub fn get_ledger_path() -> PathBuf {
 ///   and importable into SQLite via `sqlledger::import_jsonl`.
 /// An unrecognized value is an error: a store we cannot identify
 /// must stop spend, not silently pick one.
+///
+/// Precedence between the two ledger knobs (consolidation, tracker
+/// event 166): they are orthogonal. `AGENTHAND_LEDGER` selects the
+/// store; `AGENTHAND_LEDGER_PATH` (see `get_ledger_path`) overrides
+/// the path of the JSONL store only — it does not relocate the
+/// SQLite store, whose path comes from the data dir or an explicit
+/// `sqlite:<path>`. The room runner rides on the path override with
+/// its selected store: it pins `AGENTHAND_LEDGER=jsonl` plus
+/// `AGENTHAND_LEDGER_PATH=<room>/ledger.jsonl` for the run's
+/// duration, so a room run's isolated ledger is unaffected by the
+/// server's shipped SQLite default.
 pub enum LedgerStore {
     Jsonl(PathBuf),
     Sqlite(PathBuf),
