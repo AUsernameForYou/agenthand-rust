@@ -1,6 +1,7 @@
-//! SQLite-backed billing ledger (rusqlite, bundled SQLite) — a spike
-//! alternative store for `ledger.rs` with byte-for-byte identical
-//! ACCOUNTING semantics:
+//! SQLite-backed billing ledger (rusqlite, bundled SQLite) — the
+//! second store behind the same interface as `ledger.rs`, selected
+//! via `AGENTHAND_LEDGER` (see `config::get_ledger_store`), with
+//! byte-for-byte identical ACCOUNTING semantics:
 //!
 //! - reserve-then-settle: a "pending" receipt at the projected cost
 //!   before the call, a "settled" receipt with the same call_id and

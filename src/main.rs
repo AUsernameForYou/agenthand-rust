@@ -1,4 +1,4 @@
-//! agenthand (Rust port) entry points:
+//! agenthand (Rust build) entry points:
 //!
 //! - `agenthand` / `agenthand serve` — the MCP stdio server.
 //! - `agenthand parity <replay-package-dir>` — the parity gate: run
