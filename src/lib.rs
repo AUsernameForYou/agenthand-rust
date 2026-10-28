@@ -16,6 +16,7 @@ pub mod measure;
 pub mod meta;
 pub mod pricing;
 pub mod resample;
+pub mod roomrun;
 pub mod sam;
 pub mod segmentation;
 pub mod server;

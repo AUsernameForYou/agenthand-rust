@@ -66,6 +66,14 @@ fn shellexpand_home(path: &str) -> String {
 }
 
 pub fn get_ledger_path() -> PathBuf {
+    // Mirror of the Python config: AGENTHAND_LEDGER_PATH, when set and
+    // non-empty, wins outright (the room runner points it at the room's
+    // own ledger for the duration of a run); otherwise the ledger lives
+    // in the data dir.
+    let raw = env_trimmed("AGENTHAND_LEDGER_PATH");
+    if !raw.is_empty() {
+        return PathBuf::from(shellexpand_home(&raw));
+    }
     get_data_dir().join("ledger.jsonl")
 }
 
