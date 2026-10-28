@@ -428,10 +428,10 @@ pub fn verify_receipt_from_disk(
     let mut checks: Map<String, Value> = Map::new();
     let mut problems: Vec<String> = Vec::new();
     let set_check = |checks: &mut Map<String, Value>,
-                         problems: &mut Vec<String>,
-                         name: &str,
-                         ok: bool,
-                         detail: &str| {
+                     problems: &mut Vec<String>,
+                     name: &str,
+                     ok: bool,
+                     detail: &str| {
         checks.insert(name.to_string(), Value::Bool(ok));
         if !ok {
             problems.push(if detail.is_empty() {
@@ -718,7 +718,9 @@ pub fn verify_files(
         crate::image::DecodedImage::Gray(g) => g.pixels.clone(),
         crate::image::DecodedImage::Rgba(r) => r
             .pixels
-            .as_chunks::<4>().0.iter()
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|px| {
                 ((px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000) >> 16)
                     as u8
