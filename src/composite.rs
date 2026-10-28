@@ -21,6 +21,13 @@ use serde_json::{json, Map, Value};
 
 pub const OPAQUE_ALPHA_THRESHOLD: u8 = 255;
 
+/// Receipt schema marker, stamped by `draw_product` (the Python
+/// reference's `RECEIPT_SCHEMA_VERSION`). Receipts without it are
+/// the historical v1 shape (the frozen 2026-10-26 replay package
+/// is the live example) and are graded under the compatibility
+/// policy in `receipt_schema_problems`.
+pub const RECEIPT_SCHEMA_VERSION: i64 = 2;
+
 /// Pillow's fast divide-by-255: `(((a >> 8) + a) >> 8)`.
 fn shift_for_div_255(a: u32) -> u32 {
     ((a >> 8) + a) >> 8
@@ -354,6 +361,7 @@ pub fn draw_product(
         source_record.color_profile_sha256 == composite_record.color_profile_sha256;
 
     let receipt = json!({
+        "receipt_schema": RECEIPT_SCHEMA_VERSION,
         "source_asset": HANDLE_PREFIX.to_string() + &source_record.asset_id,
         "source_sha256": source_record.sha256,
         "source_pixel_sha256": source_record.pixel_sha256,
@@ -401,6 +409,71 @@ pub fn draw_product(
     Ok((composite_handle, receipt))
 }
 
+/// Fields that exist only in the current (schema 2) receipt shape:
+/// the Python `_RECEIPT_FIELDS_V2` set minus `mask_asset` (v1
+/// receipts name the mask asset too; they just do not pin its
+/// hashes).
+const V2_ONLY_FIELDS: [&str; 9] = [
+    "color_profile_foreground_sha256",
+    "mask_sha256",
+    "mask_pixel_sha256",
+    "mask_source",
+    "opaque_alpha_threshold",
+    "pixel_tolerance",
+    "count_sample",
+    "product_layer_scaled",
+    "output_format",
+];
+
+/// The schema-marker policy of the Python verifier's
+/// `_validate_receipt`, as the front door of
+/// `verify_receipt_from_disk`: a receipt stamped with the current
+/// schema version is graded as current; an unmarked receipt is the
+/// v1 shape and is graded on the fields it carries; anything else
+/// fails closed. The downgrade guard is the point: dropping or
+/// lowering the marker of a current receipt must not buy it the
+/// legacy policy, so a receipt carrying current-schema fields
+/// under a missing or invalid marker is refused before any pixel
+/// is recounted.
+///
+/// Returns the schema problems (empty = the marker state is
+/// acceptable). Message wording tracks the Python verifier's; the
+/// offending value is rendered as JSON where Python uses repr.
+fn receipt_schema_problems(receipt: &Value) -> Vec<String> {
+    let mut problems = Vec::new();
+    // Python: receipt.get("receipt_schema") — a missing key and an
+    // explicit null are the same state (unmarked).
+    let schema = match receipt.get("receipt_schema") {
+        Some(Value::Null) | None => None,
+        Some(v) => Some(v),
+    };
+    // Python: type(schema) is int and schema == RECEIPT_SCHEMA_VERSION.
+    // A JSON float (2.0), string ("2"), or bool is NOT the marker.
+    let strict = matches!(
+        schema,
+        Some(Value::Number(n)) if n.as_i64() == Some(RECEIPT_SCHEMA_VERSION)
+    );
+    if let Some(v) = schema {
+        if !strict {
+            problems.push(format!(
+                "unsupported receipt_schema {}; this verifier grades \
+                 schema {} receipts and unmarked v1 receipts",
+                serde_json::to_string(v).unwrap_or_default(),
+                RECEIPT_SCHEMA_VERSION
+            ));
+        }
+    }
+    if !strict && V2_ONLY_FIELDS.iter().any(|f| receipt.get(f).is_some()) {
+        problems.push(
+            "receipt carries current-schema fields but no valid \
+             receipt_schema marker; refusing to grade it under the \
+             legacy v1 policy"
+                .to_string(),
+        );
+    }
+    problems
+}
+
 /// Independently re-verify a draw receipt from the stored FILES
 /// (port of `verify_receipt_from_disk`). Returns a report object:
 /// ok / checks / problems / recomputed.
@@ -428,6 +501,28 @@ pub fn verify_receipt_from_disk(
             &loaded
         }
     };
+    // 0. The schema marker, before anything is read from the
+    //    receipt (the Python verifier's _validate_receipt front
+    //    door, marker policy): a current receipt stripped of its
+    //    marker fails here, structurally, instead of being graded
+    //    under the legacy v1 policy. As in the Python report, the
+    //    terms check is not reached on this path (receipt_terms
+    //    stays true); receipt_shape carries the failure.
+    let schema_problems = receipt_schema_problems(receipt);
+    if !schema_problems.is_empty() {
+        let mut checks: Map<String, Value> = Map::new();
+        checks.insert("receipt_shape".to_string(), Value::Bool(false));
+        checks.insert("receipt_terms".to_string(), Value::Bool(true));
+        return Ok(json!({
+            "ok": false,
+            "checks": checks,
+            "problems": [format!("receipt_shape: {}", schema_problems.join("; "))],
+            "recomputed": {},
+            "composite_asset": composite_handle,
+            "foreground_asset": receipt["foreground_asset"].as_str(),
+            "source_asset": receipt["source_asset"].as_str(),
+        }));
+    }
     let mut checks: Map<String, Value> = Map::new();
     let mut problems: Vec<String> = Vec::new();
     let mut set_check = |checks: &mut Map<String, Value>,
