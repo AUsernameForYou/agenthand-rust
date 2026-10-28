@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod billing;
+pub mod heic;
 pub mod composite;
 pub mod config;
 pub mod image;

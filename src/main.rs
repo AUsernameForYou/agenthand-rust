@@ -10,6 +10,13 @@
 //!   [--bbox x,y,w,h]` — the scale-card size estimator (port of
 //!   `python -m agenthand.measure`); JSON on stdout, errors as
 //!   `{"error": ...}` on stderr with exit 1.
+//! - `agenthand heic-extract <file> [--out <dir>] [--hash-only]` —
+//!   the rust-100 M1 HEIF container inspector/extractor: parses the
+//!   box structure, inventories every item, and extracts `hvc1` item
+//!   bitstreams (iloc methods 0/1). `--hash-only` writes nothing and
+//!   reports sha256 + byte counts only (the mode used for
+//!   `corpus/real/`). Grid composition is NOT implemented (pending
+//!   scope widening; see the rust-100 milestone docs).
 
 use agenthand::assets::AssetStore;
 use agenthand::composite;
@@ -40,6 +47,7 @@ fn main() -> ExitCode {
             }
         }
         Some("measure") => run_measure(&args[2..]),
+        Some("heic-extract") => run_heic_extract(&args[2..]),
         Some("verify") => {
             let (Some(source), Some(final_), Some(mask)) =
                 (args.get(2), args.get(3), args.get(4))
@@ -66,7 +74,9 @@ fn main() -> ExitCode {
             }
         }
         Some(other) => {
-            eprintln!("unknown subcommand {other:?} (expected: serve | parity | verify)");
+            eprintln!(
+                "unknown subcommand {other:?} (expected: serve | parity | verify | measure | heic-extract)"
+            );
             ExitCode::from(2)
         }
     }
@@ -311,5 +321,243 @@ fn run_measure(args: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => fail(e),
+    }
+}
+
+/// rust-100 M1: HEIF container inspection + `hvc1` item extraction.
+///
+/// Prints a JSON inventory (brands, primary item, per-item census,
+/// hvcC summaries, grid header when the primary is a grid). With
+/// `--out <dir>` (and without `--hash-only`), extracted `hvc1`
+/// bitstreams are written as `<stem>_item<id>.h265` plus the
+/// inventory as `<stem>.heic.json`. `--hash-only` never writes any
+/// file: sha256 + byte counts are computed in memory — the required
+/// mode for `corpus/real/` (no decoded renders, no extracted
+/// bitstreams of real files persisted; see MILESTONE-M1.md §privacy).
+fn run_heic_extract(args: &[String]) -> ExitCode {
+    use agenthand::heic::container;
+    let mut file_arg: Option<String> = None;
+    let mut out_dir: Option<String> = None;
+    let mut hash_only = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => {
+                i += 1;
+                out_dir = args.get(i).cloned();
+            }
+            "--hash-only" => hash_only = true,
+            other => {
+                if file_arg.is_none() {
+                    file_arg = Some(other.to_string());
+                } else {
+                    eprintln!("heic-extract: unexpected argument {other:?}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        i += 1;
+    }
+    let Some(path) = file_arg else {
+        eprintln!("usage: agenthand heic-extract <file> [--out <dir>] [--hash-only]");
+        return ExitCode::from(2);
+    };
+    let data = match std::fs::read(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("heic-extract: cannot read {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let f = match container::parse(&data) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("heic-extract: {path}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let stem = Path::new(&path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "heic".to_string());
+
+    let mut extracted = Vec::new();
+    let mut failures = Vec::new();
+    let write_payloads = out_dir.is_some() && !hash_only;
+    if write_payloads {
+        if let Err(e) = std::fs::create_dir_all(out_dir.as_ref().unwrap()) {
+            eprintln!("heic-extract: cannot create --out dir: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    for item in &f.items {
+        if item.item_type != "hvc1" {
+            continue;
+        }
+        match container::extract_item_data_for(&data, item) {
+            Ok(bytes) => {
+                let hvcc = f.item_hvcc(item);
+                let nal_summary = hvcc
+                    .map(|h| container::walk_nals(&bytes, h.length_size))
+                    .transpose()
+                    .map(|nals| {
+                        let mut m = std::collections::BTreeMap::new();
+                        for (t, _) in nals.unwrap_or_default() {
+                            *m.entry(t).or_insert(0usize) += 1;
+                        }
+                        m
+                    })
+                    .unwrap_or_default();
+                let mut entry = json!({
+                    "item_id": item.item_id,
+                    "bytes": bytes.len(),
+                    "sha256": sha256_hex(&bytes),
+                    "nal_counts_by_type": nal_summary,
+                });
+                if write_payloads {
+                    let out_path = format!(
+                        "{}/{}_item{}.h265",
+                        out_dir.as_ref().unwrap(),
+                        stem,
+                        item.item_id
+                    );
+                    match std::fs::write(&out_path, &bytes) {
+                        Ok(()) => entry["written"] = json!(out_path),
+                        Err(e) => {
+                            eprintln!("heic-extract: cannot write {out_path}: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                    if let Some(h) = hvcc {
+                        match container::to_annexb(h, &bytes) {
+                            Ok(ab) => {
+                                let ab_path = format!(
+                                    "{}/{}_item{}.annexb.h265",
+                                    out_dir.as_ref().unwrap(),
+                                    stem,
+                                    item.item_id
+                                );
+                                match std::fs::write(&ab_path, &ab) {
+                                    Ok(()) => entry["written_annexb"] = json!(ab_path),
+                                    Err(e) => {
+                                        eprintln!(
+                                            "heic-extract: cannot write {ab_path}: {e}"
+                                        );
+                                        return ExitCode::FAILURE;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("heic-extract: annexb conversion: {e}");
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                }
+                extracted.push(entry);
+            }
+            Err(e) => failures.push(json!({
+                "item_id": item.item_id,
+                "error": e.to_string(),
+            })),
+        }
+    }
+
+    let primary = f.primary_item();
+    let mut primary_json = json!({
+        "item_id": f.primary_item_id,
+        "item_type": primary.map(|p| p.item_type.clone()),
+        "ispe": f.primary_item().and_then(|p| f.item_ispe(p)),
+    });
+    if let Some(p) = primary {
+        if p.item_type == "grid" {
+            match container::extract_item_data_for(&data, p)
+                .and_then(|d| container::parse_grid_header(&d))
+            {
+                Ok(g) => {
+                    primary_json["grid"] = json!({
+                        "rows": g.rows,
+                        "columns": g.columns,
+                        "output_width": g.output_width,
+                        "output_height": g.output_height,
+                        "tile_item_ids": f.primary_dimg(),
+                    });
+                }
+                Err(e) => {
+                    primary_json["grid_error"] = json!(e.to_string());
+                }
+            }
+            primary_json["grid_composition"] = json!(
+                "IN SCOPE (Daniel decision 52, 2026-10-28): composition geometry \
+                 implemented in heic::grid and unit-tested on synthetic planes; \
+                 end-to-end grid decode lands at the M3.5 junction once M2/M3 \
+                 tile decode exists"
+            );
+        }
+    }
+    // Non-hvc1 items recorded with their roles (aux / derived / meta).
+    let recorded: Vec<Value> = f
+        .items
+        .iter()
+        .filter(|it| it.item_type != "hvc1")
+        .map(|it| {
+            json!({
+                "item_id": it.item_id,
+                "item_type": it.item_type,
+                "ispe": f.item_ispe(it),
+                "aux_type": f.item_aux_type(it),
+                "construction_method": it.construction_method,
+                "extent_bytes": it.total_extent_bytes(),
+                "references": it.references,
+            })
+        })
+        .collect();
+    let hvcc_summaries: Vec<Value> = f
+        .items
+        .iter()
+        .filter_map(|it| {
+            f.item_hvcc(it).map(|h| {
+                json!({
+                    "item_id": it.item_id,
+                    "profile_idc": h.general_profile_idc,
+                    "level_idc": h.general_level_idc,
+                    "chroma_format_idc": h.chroma_format_idc,
+                    "bit_depth_luma": h.bit_depth_luma_minus8 + 8,
+                    "bit_depth_chroma": h.bit_depth_chroma_minus8 + 8,
+                    "length_size": h.length_size,
+                    "arrays": h.arrays.iter().map(|(t, n, b)| json!({"nal_type": t, "count": n, "bytes": b})).collect::<Vec<_>>(),
+                })
+            })
+        })
+        .collect();
+    let report = json!({
+        "file": path,
+        "file_bytes": data.len(),
+        "major_brand": f.major_brand,
+        "compatible_brands": f.compatible_brands,
+        "primary": primary_json,
+        "item_census": f.census(),
+        "item_count": f.items.len(),
+        "extracted_hvc1_items": extracted,
+        "extraction_failures": failures,
+        "non_hvc1_items": recorded,
+        "hvcc": hvcc_summaries,
+        "mode": if hash_only { "hash-only (nothing written)" } else { "extract" },
+    });
+    let text = serde_json::to_string_pretty(&report).unwrap_or_default();
+    if write_payloads {
+        let out_path = format!("{}/{}.heic.json", out_dir.as_ref().unwrap(), stem);
+        if let Err(e) = std::fs::write(&out_path, &text) {
+            eprintln!("heic-extract: cannot write {out_path}: {e}");
+            return ExitCode::FAILURE;
+        }
+        println!("heic-extract: inventory written to {out_path}");
+    } else {
+        println!("{text}");
+    }
+    if failures.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
