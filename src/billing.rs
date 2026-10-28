@@ -79,19 +79,29 @@ where
             "projected cost: amount {projected_usd} is not a finite non-negative number."
         ));
     }
-    let ledger_path = config::get_ledger_path();
     let cap_usd = config::get_total_spend_cap_usd()?;
     let call_id = call_id.to_string();
+    let store = config::get_ledger_store()?;
 
-    // Reserve: check + append pending, atomically under the file lock.
+    // Reserve: check + append pending, atomically — under the file
+    // lock for the JSONL store, inside one IMMEDIATE transaction for
+    // the SQLite store. Either way the billable call below runs
+    // WITHOUT the gate held.
     {
-        let _lock = lock_file()?;
-        ledger::check_spend_cap(&ledger_path, projected_usd, cap_usd)?;
         let mut receipt = Receipt::new(tool, model, projected_usd, PHASE_PENDING);
         receipt.status = status.to_string();
         receipt.note = note.to_string();
         receipt.call_id = Some(call_id.clone());
-        ledger::append_receipt(&ledger_path, &receipt)?;
+        match &store {
+            config::LedgerStore::Jsonl(ledger_path) => {
+                let _lock = lock_file()?;
+                ledger::check_spend_cap(ledger_path, projected_usd, cap_usd)?;
+                ledger::append_receipt(ledger_path, &receipt)?;
+            }
+            config::LedgerStore::Sqlite(ledger_path) => {
+                crate::sqlledger::reserve(ledger_path, &receipt, cap_usd)?;
+            }
+        }
     }
 
     // Call. If this errors, the reservation stays counted; no settle.
@@ -104,7 +114,6 @@ where
 
     // Settle with the actual cost and the usage counts.
     {
-        let _lock = lock_file()?;
         let mut receipt = Receipt::new(tool, model, actual_usd, PHASE_SETTLED);
         receipt.status = status.to_string();
         receipt.note = note.to_string();
@@ -113,9 +122,17 @@ where
         receipt.output_tokens = usage.output_tokens;
         receipt.cached_input_tokens = usage.cached_input_tokens;
         receipt.images = usage.images;
-        ledger::append_receipt(&ledger_path, &receipt)?;
-        // Keep the lock file from looking stale to other tools.
-        let _ = std::io::stdout().flush();
+        match &store {
+            config::LedgerStore::Jsonl(ledger_path) => {
+                let _lock = lock_file()?;
+                ledger::append_receipt(ledger_path, &receipt)?;
+                // Keep the lock file from looking stale to other tools.
+                let _ = std::io::stdout().flush();
+            }
+            config::LedgerStore::Sqlite(ledger_path) => {
+                crate::sqlledger::append_receipt(ledger_path, &receipt)?;
+            }
+        }
     }
 
     Ok(BillingSummary {

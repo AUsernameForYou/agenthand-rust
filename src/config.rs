@@ -69,6 +69,49 @@ pub fn get_ledger_path() -> PathBuf {
     get_data_dir().join("ledger.jsonl")
 }
 
+/// Which ledger store `billing::billed_call` writes to, selected by
+/// `AGENTHAND_LEDGER`:
+/// - unset / `jsonl` / `jsonl:<path>` — the JSONL ledger (default);
+/// - `sqlite` — `ledger.sqlite3` in the data dir;
+/// - `sqlite:<path>` — the SQLite ledger at that path.
+/// An unrecognized value is an error: a store we cannot identify
+/// must stop spend, not silently pick one.
+pub enum LedgerStore {
+    Jsonl(PathBuf),
+    Sqlite(PathBuf),
+}
+
+pub fn get_ledger_store() -> Result<LedgerStore, String> {
+    let raw = env_trimmed("AGENTHAND_LEDGER");
+    if raw.is_empty() || raw == "jsonl" {
+        return Ok(LedgerStore::Jsonl(get_ledger_path()));
+    }
+    if let Some(path) = raw.strip_prefix("jsonl:") {
+        if path.trim().is_empty() {
+            return Err(
+                "AGENTHAND_LEDGER=jsonl: has an empty path; refusing to spend with an unknown ledger store."
+                    .to_string(),
+            );
+        }
+        return Ok(LedgerStore::Jsonl(PathBuf::from(shellexpand_home(path))));
+    }
+    if raw == "sqlite" {
+        return Ok(LedgerStore::Sqlite(get_data_dir().join("ledger.sqlite3")));
+    }
+    if let Some(path) = raw.strip_prefix("sqlite:") {
+        if path.trim().is_empty() {
+            return Err(
+                "AGENTHAND_LEDGER=sqlite: has an empty path; refusing to spend with an unknown ledger store."
+                    .to_string(),
+            );
+        }
+        return Ok(LedgerStore::Sqlite(PathBuf::from(shellexpand_home(path))));
+    }
+    Err(format!(
+        "AGENTHAND_LEDGER={raw:?} is not understood (expected jsonl, jsonl:<path>, sqlite, or sqlite:<path>); refusing to spend with an unknown ledger store."
+    ))
+}
+
 /// The working spend cap. The env var may lower the cap; values above
 /// the hard ceiling clamp to it; unparseable/non-finite/negative
 /// values are an error (a cap we cannot interpret stops spend).
