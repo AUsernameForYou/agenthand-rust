@@ -92,9 +92,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 fn validate_amount(value: f64, where_: &str) -> Result<f64, String> {
     if !value.is_finite() {
-        return Err(format!(
-            "{where_}: amount {value} is not finite."
-        ));
+        return Err(format!("{where_}: amount {value} is not finite."));
     }
     if value < 0.0 {
         return Err(format!("{where_}: amount {value} is negative."));
@@ -109,8 +107,7 @@ pub fn append_receipt(ledger_path: &Path, receipt: &Receipt) -> Result<(), Strin
         &format!("receipt for {}", receipt.tool),
     )?;
     if let Some(parent) = ledger_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("cannot create ledger dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create ledger dir: {e}"))?;
     }
     let line = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
     let mut fh = std::fs::OpenOptions::new()
@@ -130,8 +127,8 @@ pub fn ledger_total_usd(ledger_path: &Path) -> Result<f64, String> {
     if !ledger_path.exists() {
         return Ok(0.0);
     }
-    let text = std::fs::read_to_string(ledger_path)
-        .map_err(|e| format!("cannot read ledger: {e}"))?;
+    let text =
+        std::fs::read_to_string(ledger_path).map_err(|e| format!("cannot read ledger: {e}"))?;
     let mut standalone = 0.0f64;
     let mut calls: HashMap<String, f64> = HashMap::new();
     let mut settled: HashSet<String> = HashSet::new();
@@ -147,9 +144,9 @@ pub fn ledger_total_usd(ledger_path: &Path) -> Result<f64, String> {
         let amount_raw = record.get("usd_estimate").ok_or_else(|| {
             format!("{where_} has no usd_estimate; refusing to spend with unknown spend state.")
         })?;
-        let amount = amount_raw.as_f64().ok_or_else(|| {
-            format!("{where_}: amount {amount_raw} is not a number.")
-        })?;
+        let amount = amount_raw
+            .as_f64()
+            .ok_or_else(|| format!("{where_}: amount {amount_raw} is not a number."))?;
         let amount = validate_amount(amount, &where_)?;
         let call_id = record
             .get("call_id")

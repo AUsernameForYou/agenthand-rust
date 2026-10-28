@@ -70,7 +70,9 @@ pub fn estimate_cost_usd(model: &str, usage: &Usage) -> Result<f64, String> {
         ("images", usage.images),
     ] {
         if value < 0 {
-            return Err(format!("{name} must be a non-negative integer, got {value}"));
+            return Err(format!(
+                "{name} must be a non-negative integer, got {value}"
+            ));
         }
     }
     if usage.cached_input_tokens > usage.input_tokens {

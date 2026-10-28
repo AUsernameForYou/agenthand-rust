@@ -49,8 +49,7 @@ fn main() -> ExitCode {
         Some("measure") => run_measure(&args[2..]),
         Some("heic-extract") => run_heic_extract(&args[2..]),
         Some("verify") => {
-            let (Some(source), Some(final_), Some(mask)) =
-                (args.get(2), args.get(3), args.get(4))
+            let (Some(source), Some(final_), Some(mask)) = (args.get(2), args.get(3), args.get(4))
             else {
                 eprintln!("usage: agenthand verify <source> <final> <mask>");
                 return ExitCode::from(2);
@@ -124,7 +123,12 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     // predates those receipt fields), so each hash is checked against
     // the receipt where it carries the key, else the sidecar.
     for (label, handle, file_key, pixel_key) in [
-        ("source", &source_handle, "source_sha256", "source_pixel_sha256"),
+        (
+            "source",
+            &source_handle,
+            "source_sha256",
+            "source_pixel_sha256",
+        ),
         (
             "foreground",
             &foreground_handle,
@@ -133,7 +137,12 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
         ),
         ("mask", &mask_handle, "mask_sha256", "mask_pixel_sha256"),
         ("plate", &plate_handle, "plate_sha256", "plate_pixel_sha256"),
-        ("output", &output_handle, "output_sha256", "output_pixel_sha256"),
+        (
+            "output",
+            &output_handle,
+            "output_sha256",
+            "output_pixel_sha256",
+        ),
     ] {
         let record = store.get_record(handle)?;
         let bytes = store.read_bytes(handle)?;
@@ -164,11 +173,27 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     let plate = store.read_image(&plate_handle)?;
     let (recomposed, counts, transformations) = composite::composite_images(&foreground, &plate);
     let count_checks: [(&str, u64, &str); 6] = [
-        ("changed_opaque_pixels", counts.changed_opaque_pixels, "changed_opaque_pixels"),
+        (
+            "changed_opaque_pixels",
+            counts.changed_opaque_pixels,
+            "changed_opaque_pixels",
+        ),
         ("opaque_pixels", counts.opaque_pixels, "opaque_pixels"),
-        ("edge_band_pixels", counts.edge_band_pixels, "edge_band_pixels"),
-        ("transparent_pixels", counts.transparent_pixels, "transparent_pixels"),
-        ("mask_pixels_total", counts.mask_pixels_total, "mask_pixels_total"),
+        (
+            "edge_band_pixels",
+            counts.edge_band_pixels,
+            "edge_band_pixels",
+        ),
+        (
+            "transparent_pixels",
+            counts.transparent_pixels,
+            "transparent_pixels",
+        ),
+        (
+            "mask_pixels_total",
+            counts.mask_pixels_total,
+            "mask_pixels_total",
+        ),
         (
             "edge_band_max_width_px",
             counts.edge_band_max_width_px as u64,
@@ -198,14 +223,12 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     )?;
     checks.push((
         "draw_changed_opaque_pixels".to_string(),
-        new_receipt["changed_opaque_pixels"].as_u64()
-            == receipt["changed_opaque_pixels"].as_u64(),
+        new_receipt["changed_opaque_pixels"].as_u64() == receipt["changed_opaque_pixels"].as_u64(),
         new_receipt["changed_opaque_pixels"].to_string(),
     ));
     checks.push((
         "draw_output_pixel_sha256".to_string(),
-        new_receipt["output_pixel_sha256"].as_str()
-            == receipt["output_pixel_sha256"].as_str(),
+        new_receipt["output_pixel_sha256"].as_str() == receipt["output_pixel_sha256"].as_str(),
         new_receipt["output_pixel_sha256"]
             .as_str()
             .unwrap_or("")
@@ -440,9 +463,7 @@ fn run_heic_extract(args: &[String]) -> ExitCode {
                                 match std::fs::write(&ab_path, &ab) {
                                     Ok(()) => entry["written_annexb"] = json!(ab_path),
                                     Err(e) => {
-                                        eprintln!(
-                                            "heic-extract: cannot write {ab_path}: {e}"
-                                        );
+                                        eprintln!("heic-extract: cannot write {ab_path}: {e}");
                                         return ExitCode::FAILURE;
                                     }
                                 }

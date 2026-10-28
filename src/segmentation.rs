@@ -90,7 +90,11 @@ pub fn assess_mask(mask: &GrayImage) -> MaskAssessment {
     let width = mask.width as usize;
     let height = mask.height as usize;
     let frame_pixels = (width * height) as f64;
-    let binary: Vec<u8> = mask.pixels.iter().map(|&v| if v != 0 { 1 } else { 0 }).collect();
+    let binary: Vec<u8> = mask
+        .pixels
+        .iter()
+        .map(|&v| if v != 0 { 1 } else { 0 })
+        .collect();
     let mask_pixels: u64 = binary.iter().map(|&v| v as u64).sum();
     let coverage = if frame_pixels > 0.0 {
         mask_pixels as f64 / frame_pixels
@@ -318,13 +322,12 @@ pub fn run_attempts(
     let mut images = 0i64;
     let mut last_code = "NO_MATCH";
     for phrase in phrases {
-        let (output_text, _usage) =
-            meta::segment_image(client, key, png_bytes, phrase, model)
-                .map_err(|e| CutOutError {
-                    code: "BAD_MODEL_RESPONSE".to_string(),
-                    message: e,
-                    attempts: attempts.clone(),
-                })?;
+        let (output_text, _usage) = meta::segment_image(client, key, png_bytes, phrase, model)
+            .map_err(|e| CutOutError {
+                code: "BAD_MODEL_RESPONSE".to_string(),
+                message: e,
+                attempts: attempts.clone(),
+            })?;
         images += 1;
         let mut trace = json!({"phrase": phrase, "records": 0});
         let masks = match parse_sam_masks(&output_text, frame_width as usize, frame_height as usize)

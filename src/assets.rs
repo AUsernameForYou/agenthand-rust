@@ -116,8 +116,7 @@ impl AssetStore {
             .join(format!("{}.json.tmp-{}", record.asset_id, uuid_hex()));
         let text = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
         std::fs::write(&tmp, text).map_err(|e| format!("cannot write sidecar: {e}"))?;
-        std::fs::rename(&tmp, &sidecar)
-            .map_err(|e| format!("cannot commit sidecar: {e}"))?;
+        std::fs::rename(&tmp, &sidecar).map_err(|e| format!("cannot commit sidecar: {e}"))?;
         Ok(())
     }
 
@@ -260,8 +259,10 @@ impl AssetStore {
                 // PIL: convert("L") uses ITU-R 601-2 luma.
                 let mut pixels = Vec::with_capacity((rgba.width * rgba.height) as usize);
                 for px in rgba.pixels.chunks_exact(4) {
-                    let l = (px[0] as u32 * 19595 + px[1] as u32 * 38470
-                        + px[2] as u32 * 7471 + 0x8000)
+                    let l = (px[0] as u32 * 19595
+                        + px[1] as u32 * 38470
+                        + px[2] as u32 * 7471
+                        + 0x8000)
                         >> 16;
                     pixels.push(l as u8);
                 }
@@ -281,10 +282,7 @@ impl AssetStore {
         let mut record = self.get_record(handle)?;
         loop {
             if !seen.insert(record.asset_id.clone()) {
-                return Err(format!(
-                    "Cycle in asset lineage at {:?}.",
-                    record.asset_id
-                ));
+                return Err(format!("Cycle in asset lineage at {:?}.", record.asset_id));
             }
             let next = record.source_asset_id.clone();
             chain.push(record);

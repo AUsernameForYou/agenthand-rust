@@ -19,10 +19,8 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_store() -> (AssetStore, std::path::PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "agenthand-rust-receipt-{}-{n}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("agenthand-rust-receipt-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     (AssetStore::new(&dir), dir)
 }
@@ -102,7 +100,12 @@ fn verify_loads_the_persisted_receipt_when_none_supplied() {
     let (store, _dir, _photo, fg) = seeded_store();
     let (handle, _receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     let report = composite::verify_receipt_from_disk(&store, &handle, None).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
 }
 
 #[test]
@@ -118,13 +121,11 @@ fn verify_without_any_receipt_is_an_error() {
 #[test]
 fn a_receipt_does_not_verify_a_different_runs_composite() {
     let (store, _dir, _photo, fg) = seeded_store();
-    let (handle_a, receipt_a) =
-        composite::draw_product(&store, &fg, "a regal room", None).unwrap();
+    let (handle_a, receipt_a) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     let (handle_b, _receipt_b) =
         composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     assert_ne!(handle_a, handle_b);
-    let report =
-        composite::verify_receipt_from_disk(&store, &handle_b, Some(&receipt_a)).unwrap();
+    let report = composite::verify_receipt_from_disk(&store, &handle_b, Some(&receipt_a)).unwrap();
     assert_eq!(report["ok"], json!(false));
     assert_eq!(
         report["checks"]["output_hash_matches_receipt"],
@@ -135,22 +136,19 @@ fn a_receipt_does_not_verify_a_different_runs_composite() {
 #[test]
 fn a_receipt_claiming_a_change_fails_the_verdict_checks() {
     let (store, _dir, _photo, fg) = seeded_store();
-    let (handle, mut receipt) =
-        composite::draw_product(&store, &fg, "a regal room", None).unwrap();
+    let (handle, mut receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     // An "honest" receipt that reports a changed pixel: the recount
     // checks were never the whole verdict — zero_changed_pixels
     // must fail even where a recount would agree.
     receipt["changed_opaque_pixels"] = json!(1);
-    let report =
-        composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
     assert_eq!(report["ok"], json!(false));
     assert_eq!(report["checks"]["zero_changed_pixels"], json!(false));
 
     let (_h, mut receipt2) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     receipt2["opaque_pixels"] = json!(0);
     let handle2 = receipt2["output_asset"].as_str().unwrap().to_string();
-    let report2 =
-        composite::verify_receipt_from_disk(&store, &handle2, Some(&receipt2)).unwrap();
+    let report2 = composite::verify_receipt_from_disk(&store, &handle2, Some(&receipt2)).unwrap();
     assert_eq!(report2["checks"]["positive_coverage"], json!(false));
 }
 
@@ -183,10 +181,14 @@ fn legacy_receipt_without_mask_hashes_uses_mask_integrity() {
     // Strip the mask hash pins: the pre-pinning receipt shape.
     receipt["mask_sha256"] = Value::Null;
     receipt["mask_pixel_sha256"] = Value::Null;
-    let report =
-        composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
     assert_eq!(report["checks"]["mask_asset_integrity"], json!(true));
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
 }
 
 #[test]

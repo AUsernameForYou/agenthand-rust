@@ -270,7 +270,11 @@ fn crc32(data: &[u8]) -> u32 {
         for n in 0..256u32 {
             let mut c = n;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB88320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             TABLE[n as usize] = c;
         }
@@ -349,7 +353,14 @@ fn filter_row(kind: u8, row: &[u8], prev: &[u8], bpp: usize) -> Vec<u8> {
 
 /// Encode filtered scanlines: pick per-row the filter minimizing the sum
 /// of absolute signed filter outputs (the classic libpng heuristic).
-fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], icc: Option<&[u8]>) -> Vec<u8> {
+fn encode_png(
+    width: u32,
+    height: u32,
+    color_type: u8,
+    bpp: usize,
+    rows: &[u8],
+    icc: Option<&[u8]>,
+) -> Vec<u8> {
     let row_len = width as usize * bpp;
     assert_eq!(rows.len(), row_len * height as usize);
     let mut raw = Vec::with_capacity((row_len + 1) * height as usize);
@@ -375,7 +386,8 @@ fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], 
     }
     let compressed = {
         use std::io::Write;
-        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(&raw).expect("zlib write");
         encoder.finish().expect("zlib finish")
     };
@@ -409,12 +421,26 @@ fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], 
 
 /// Encode an RGBA image as PNG bytes.
 pub fn encode_png_rgba(img: &RgbaImage) -> Vec<u8> {
-    encode_png(img.width, img.height, 6, 4, &img.pixels, img.icc_profile.as_deref())
+    encode_png(
+        img.width,
+        img.height,
+        6,
+        4,
+        &img.pixels,
+        img.icc_profile.as_deref(),
+    )
 }
 
 /// Encode a grayscale image as PNG bytes.
 pub fn encode_png_gray(img: &GrayImage) -> Vec<u8> {
-    encode_png(img.width, img.height, 0, 1, &img.pixels, img.icc_profile.as_deref())
+    encode_png(
+        img.width,
+        img.height,
+        0,
+        1,
+        &img.pixels,
+        img.icc_profile.as_deref(),
+    )
 }
 
 /// Human-readable colour-space label for receipts, mirroring

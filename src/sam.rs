@@ -30,9 +30,7 @@ const MAX_SAFE: u64 = (1 << 53) - 1;
 
 fn alphabet() -> Vec<u8> {
     let excluded = [b'"', b'\\', b',', b';', b'<', b'>', b'|'];
-    (0x21u8..0x7F)
-        .filter(|c| !excluded.contains(c))
-        .collect()
+    (0x21u8..0x7F).filter(|c| !excluded.contains(c)).collect()
 }
 
 fn digit_table() -> [i32; 128] {
@@ -122,7 +120,8 @@ fn unpack(payload: &str) -> Result<Vec<u8>, String> {
     }
     let length = length as usize;
     let remainder = length % 4;
-    let expected = PREFIX_LENGTH + (length / 4) * 5 + if remainder == 0 { 0 } else { remainder + 1 };
+    let expected =
+        PREFIX_LENGTH + (length / 4) * 5 + if remainder == 0 { 0 } else { remainder + 1 };
     if bytes.len() != expected {
         return Err("Mask payload length does not match its prefix.".to_string());
     }
@@ -267,9 +266,7 @@ impl<'a> RangeDecoder<'a> {
     }
 
     fn decode(&mut self, cumulative: u32, frequency: u32) -> Result<(), String> {
-        self.low = self
-            .low
-            .wrapping_add(self.scaled.wrapping_mul(cumulative));
+        self.low = self.low.wrapping_add(self.scaled.wrapping_mul(cumulative));
         self.range = self.scaled.wrapping_mul(frequency);
         loop {
             if self.low ^ self.low.wrapping_add(self.range) < TOP {
@@ -565,10 +562,9 @@ fn decode_lossless_raster(payload: &str, width: usize, height: usize) -> Result<
             let first_offset = (previous as usize) << 8;
             let excluded_zero =
                 second[0] as i32 + order_one[first_offset] as i32 + order_zero[0] as i32;
-            let total = second[SYMBOLS] as i32
-                + order_one_totals[previous as usize]
-                + order_zero_total
-                - excluded_zero;
+            let total =
+                second[SYMBOLS] as i32 + order_one_totals[previous as usize] + order_zero_total
+                    - excluded_zero;
             let target = decoder.frequency(total as u32)?;
             let mut cumulative: i32 = 0;
             let mut sym: usize = 1;
@@ -676,7 +672,7 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
             let raster = decode_raster(&mask.payload, width, height)?;
             if encode_raster(&raster, width, height)? != mask.payload {
                 return Err(
-                    "Mask payload is not canonical or has invalid finalization.".to_string(),
+                    "Mask payload is not canonical or has invalid finalization.".to_string()
                 );
             }
             Ok(raster)
@@ -702,10 +698,17 @@ pub struct DecodedMask {
 }
 
 fn is_js_whitespace(c: char) -> bool {
-    matches!(c,
-        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}'
-        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
-        | '\u{205f}' | '\u{3000}' | '\u{feff}')
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
 }
 
 fn trim_js(s: &str) -> &str {
@@ -791,11 +794,10 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
         .iter()
         .map(|k| get(&box_fields, k))
         .collect();
-    let dims: Vec<Option<String>> = ["w", "h"]
+    let dims: Vec<Option<String>> = ["w", "h"].iter().map(|k| get(&box_fields, k)).collect();
+    if coords
         .iter()
-        .map(|k| get(&box_fields, k))
-        .collect();
-    if coords.iter().any(|v| v.as_deref().map(|s| !is_signed_int(s)).unwrap_or(true))
+        .any(|v| v.as_deref().map(|s| !is_signed_int(s)).unwrap_or(true))
         || dims
             .iter()
             .any(|v| v.as_deref().map(|s| !is_unsigned_int(s)).unwrap_or(true))

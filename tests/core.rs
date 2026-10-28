@@ -10,10 +10,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn temp_store() -> (AssetStore, std::path::PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "agenthand-rust-test-{}-{n}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("agenthand-rust-test-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     (AssetStore::new(&dir), dir)
 }
@@ -85,7 +82,12 @@ fn one_pixel_negative_control_reports_exactly_one() {
     let (mut out, counts, _t) = composite::composite_images(&edge_foreground(), &solid_plate());
     assert_eq!(counts.changed_opaque_pixels, 0);
     let before = out.pixel(1, 1);
-    set_px(&mut out, 1, 1, [before[0] ^ 0xFF, before[1], before[2], before[3]]);
+    set_px(
+        &mut out,
+        1,
+        1,
+        [before[0] ^ 0xFF, before[1], before[2], before[3]],
+    );
     let recount = composite::measure(&edge_foreground(), &out);
     assert_eq!(recount.changed_opaque_pixels, 1);
     assert_eq!(recount.opaque_pixels, 12);
@@ -160,7 +162,11 @@ fn receipt_carries_the_full_fidelity_fields() {
     let source = RgbaImage::solid(6, 4, [0, 0, 0, 255]);
     let source_handle = store.put_image(&source, KIND_SOURCE, None).unwrap();
     let fg_handle = store
-        .put_image(&edge_foreground(), KIND_FOREGROUND, Some(&bare_id(&source_handle)))
+        .put_image(
+            &edge_foreground(),
+            KIND_FOREGROUND,
+            Some(&bare_id(&source_handle)),
+        )
         .unwrap();
     let plate_handle = store.put_image(&solid_plate(), KIND_PLATE, None).unwrap();
 
@@ -182,7 +188,10 @@ fn receipt_carries_the_full_fidelity_fields() {
     assert_eq!(receipt["foreground_asset"], fg_handle);
     assert_eq!(receipt["mask_asset"], serde_json::Value::Null);
     assert_eq!(receipt["mask_source"], "foreground_alpha");
-    assert!(receipt["claim"].as_str().unwrap().contains("reached the composite unchanged"));
+    assert!(receipt["claim"]
+        .as_str()
+        .unwrap()
+        .contains("reached the composite unchanged"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -198,9 +207,15 @@ fn draw_uses_mask_asset_when_chained_through_lineage() {
         pixels: vec![255; 24],
         icc_profile: None,
     };
-    let mask_handle = store.put_gray_image(&mask, KIND_MASK, Some(&bare_id(&source))).unwrap();
+    let mask_handle = store
+        .put_gray_image(&mask, KIND_MASK, Some(&bare_id(&source)))
+        .unwrap();
     let fg_handle = store
-        .put_image(&edge_foreground(), KIND_FOREGROUND, Some(&bare_id(&mask_handle)))
+        .put_image(
+            &edge_foreground(),
+            KIND_FOREGROUND,
+            Some(&bare_id(&mask_handle)),
+        )
         .unwrap();
     let plate_handle = store.put_image(&solid_plate(), KIND_PLATE, None).unwrap();
     let (_h, receipt) =
@@ -226,7 +241,10 @@ fn draw_rejects_a_tampered_foreground() {
     bytes[n - 20] ^= 0xFF;
     std::fs::write(&path, bytes).unwrap();
     let err = composite::draw_product(&store, &fg_handle, "x", None).unwrap_err();
-    assert!(err.contains("file hash mismatch"), "unexpected error: {err}");
+    assert!(
+        err.contains("file hash mismatch"),
+        "unexpected error: {err}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -235,14 +253,18 @@ fn draw_rejects_a_non_foreground_asset() {
     let (store, dir) = temp_store();
     let plate_handle = store.put_image(&solid_plate(), KIND_PLATE, None).unwrap();
     let err = composite::draw_product(&store, &plate_handle, "x", None).unwrap_err();
-    assert!(err.contains("draw requires a foreground_png asset"), "unexpected error: {err}");
+    assert!(
+        err.contains("draw requires a foreground_png asset"),
+        "unexpected error: {err}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn plate_is_fitted_to_the_product_size() {
     let big_plate = RgbaImage::solid(12, 8, [0, 0, 255, 255]);
-    let (out, counts, transformations) = composite::composite_images(&edge_foreground(), &big_plate);
+    let (out, counts, transformations) =
+        composite::composite_images(&edge_foreground(), &big_plate);
     assert_eq!((out.width, out.height), (6, 4));
     assert_eq!(counts.changed_opaque_pixels, 0);
     assert_eq!(
@@ -274,7 +296,10 @@ fn icc_profile_survives_and_its_hash_is_on_the_receipt() {
     assert_eq!(receipt["color_profile_source_sha256"], expected);
     assert_eq!(receipt["color_profile_output_sha256"], expected);
     let record = store.get_record(&handle).unwrap();
-    assert_eq!(record.color_profile_sha256.as_deref(), Some(expected.as_str()));
+    assert_eq!(
+        record.color_profile_sha256.as_deref(),
+        Some(expected.as_str())
+    );
     // And the delivered file itself carries the profile bytes.
     let delivered = store.read_image(&handle).unwrap();
     assert_eq!(delivered.icc_profile.as_deref(), Some(profile.as_slice()));
@@ -283,10 +308,7 @@ fn icc_profile_survives_and_its_hash_is_on_the_receipt() {
 
 #[test]
 fn verify_files_flags_a_tampered_pixel() {
-    let dir = std::env::temp_dir().join(format!(
-        "agenthand-verify-test-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("agenthand-verify-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let source = RgbaImage::solid(4, 2, [10, 20, 30, 255]);
@@ -300,24 +322,18 @@ fn verify_files_flags_a_tampered_pixel() {
     std::fs::write(dir.join("s.png"), encode_png_rgba(&source)).unwrap();
     std::fs::write(dir.join("m.png"), encode_png_gray(&mask_gray)).unwrap();
     std::fs::write(dir.join("f.png"), encode_png_rgba(&final_)).unwrap();
-    let report = composite::verify_files(
-        &dir.join("s.png"),
-        &dir.join("f.png"),
-        &dir.join("m.png"),
-    )
-    .unwrap();
+    let report =
+        composite::verify_files(&dir.join("s.png"), &dir.join("f.png"), &dir.join("m.png"))
+            .unwrap();
     assert_eq!(report["ok"], true);
     assert_eq!(report["checked_pixels"], 2);
     assert_eq!(report["changed_pixels"], 0);
 
     set_px(&mut final_, 0, 0, [11, 20, 30, 255]);
     std::fs::write(dir.join("f.png"), encode_png_rgba(&final_)).unwrap();
-    let report = composite::verify_files(
-        &dir.join("s.png"),
-        &dir.join("f.png"),
-        &dir.join("m.png"),
-    )
-    .unwrap();
+    let report =
+        composite::verify_files(&dir.join("s.png"), &dir.join("f.png"), &dir.join("m.png"))
+            .unwrap();
     assert_eq!(report["ok"], false);
     assert_eq!(report["changed_pixels"], 1);
     let _ = std::fs::remove_dir_all(&dir);

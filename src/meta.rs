@@ -78,8 +78,7 @@ fn post_json(
             text.chars().take(500).collect::<String>()
         ));
     }
-    serde_json::from_str(&text)
-        .map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +151,17 @@ impl std::fmt::Display for IdentifyError {
 // -- phrase hygiene (port of the deterministic sanitizer) -------------------
 
 const FRAME_HEAD_NOUNS: [&str; 11] = [
-    "screen", "display", "monitor", "photo", "photograph", "image", "picture", "background",
-    "scene", "frame", "screenshot",
+    "screen",
+    "display",
+    "monitor",
+    "photo",
+    "photograph",
+    "image",
+    "picture",
+    "background",
+    "scene",
+    "frame",
+    "screenshot",
 ];
 
 fn phrase_tokens(phrase: &str) -> Vec<String> {
@@ -208,15 +216,25 @@ fn rewrite_frame_phrase(phrase: &str) -> Option<String> {
 }
 
 const DESCRIPTION_CUT_TOKENS: [&str; 15] = [
-    "on", "in", "against", "with", "beside", "near", "showing", "displaying", "featuring",
-    "sits", "sitting", "placed", "lying", "standing", "resting",
+    "on",
+    "in",
+    "against",
+    "with",
+    "beside",
+    "near",
+    "showing",
+    "displaying",
+    "featuring",
+    "sits",
+    "sitting",
+    "placed",
+    "lying",
+    "standing",
+    "resting",
 ];
 
 fn phrase_from_description(description: &str) -> Option<String> {
-    let head_text = description
-        .split(['.', ',', ';', ':'])
-        .next()
-        .unwrap_or("");
+    let head_text = description.split(['.', ',', ';', ':']).next().unwrap_or("");
     let mut tokens = phrase_tokens(head_text);
     while !tokens.is_empty() && ["the", "a", "an"].contains(&tokens[0].as_str()) {
         tokens.remove(0);
@@ -227,8 +245,7 @@ fn phrase_from_description(description: &str) -> Option<String> {
             break;
         }
         if FRAME_HEAD_NOUNS.contains(&token.as_str())
-            || (token.ends_with('s')
-                && FRAME_HEAD_NOUNS.contains(&&token[..token.len() - 1]))
+            || (token.ends_with('s') && FRAME_HEAD_NOUNS.contains(&&token[..token.len() - 1]))
         {
             continue;
         }
@@ -293,9 +310,16 @@ pub fn parse_identify_payload(content: &str) -> Result<Value, IdentifyError> {
         }
     };
     if !payload.is_object() {
-        return Err(IdentifyError::new("Identify response is not a JSON object."));
+        return Err(IdentifyError::new(
+            "Identify response is not a JSON object.",
+        ));
     }
-    for field in ["description", "concept", "suggested_title", "condition_notes"] {
+    for field in [
+        "description",
+        "concept",
+        "suggested_title",
+        "condition_notes",
+    ] {
         match payload.get(field).and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => {}
             _ => {
@@ -419,8 +443,8 @@ pub fn vision_identify(
             ]
         }]
     });
-    let response = post_json(client, key, "/chat/completions", &body)
-        .map_err(|e| IdentifyError::new(&e))?;
+    let response =
+        post_json(client, key, "/chat/completions", &body).map_err(|e| IdentifyError::new(&e))?;
     let mut usage = usage_of_chat(&response);
     let content = response
         .pointer("/choices/0/message/content")
@@ -535,7 +559,11 @@ pub fn estimate_image_input_tokens(width: Option<u32>, height: Option<u32>) -> i
 }
 
 /// Worst-case projected cost of one identify call; feeds the spend-cap gate.
-pub fn project_identify_cost_usd(model: &str, width: Option<u32>, height: Option<u32>) -> Result<f64, String> {
+pub fn project_identify_cost_usd(
+    model: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<f64, String> {
     let input_tokens = estimate_image_input_tokens(width, height) + IDENTIFY_PROMPT_TOKENS;
     let one_call = pricing::estimate_cost_usd(
         model,
@@ -621,7 +649,10 @@ pub fn segment_image(
         ..Default::default()
     };
     if let Some(raw) = response.get("usage") {
-        usage.input_tokens = raw.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        usage.input_tokens = raw
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         usage.output_tokens = raw
             .get("output_tokens")
             .and_then(|v| v.as_i64())
@@ -730,18 +761,21 @@ fn plate_bytes_from_response(
                     code: "IMAGE_CALL_FAILED".to_string(),
                     message: format!("Fetching the generated plate image failed: {e}"),
                 })?;
-                raw = Some(resp.bytes().map_err(|e| ImageError {
-                    code: "IMAGE_CALL_FAILED".to_string(),
-                    message: format!("Fetching the generated plate image failed: {e}"),
-                })?.to_vec());
+                raw = Some(
+                    resp.bytes()
+                        .map_err(|e| ImageError {
+                            code: "IMAGE_CALL_FAILED".to_string(),
+                            message: format!("Fetching the generated plate image failed: {e}"),
+                        })?
+                        .to_vec(),
+                );
             }
         }
     }
     let Some(raw) = raw else {
         return Err(ImageError {
             code: "BAD_IMAGE_RESPONSE".to_string(),
-            message: "The image model returned an item with neither b64_json nor url."
-                .to_string(),
+            message: "The image model returned an item with neither b64_json nor url.".to_string(),
         });
     };
     // Normalize to RGBA PNG bytes.
@@ -793,7 +827,10 @@ pub fn request_plate_image(
         ..Default::default()
     };
     if let Some(raw) = response.get("usage") {
-        usage.input_tokens = raw.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+        usage.input_tokens = raw
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         usage.output_tokens = raw
             .get("output_tokens")
             .and_then(|v| v.as_i64())

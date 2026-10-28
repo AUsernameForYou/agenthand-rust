@@ -51,8 +51,7 @@ fn run_identify(store: &AssetStore, handle: &str) -> Result<Value, String> {
     let record = store.get_record(handle)?;
     store.verify_integrity(handle)?;
     let png_bytes = store.read_bytes(handle)?;
-    let projected =
-        meta::project_identify_cost_usd(IDENTIFY_MODEL, record.width, record.height)?;
+    let projected = meta::project_identify_cost_usd(IDENTIFY_MODEL, record.width, record.height)?;
     let client = meta::build_client()?;
 
     let mut failed_attempts = 0usize;
@@ -68,17 +67,15 @@ fn run_identify(store: &AssetStore, handle: &str) -> Result<Value, String> {
             "ok",
             "",
             &call_id,
-            || {
-                match meta::vision_identify(&client, &key, &png_bytes, IDENTIFY_MODEL, &call_id) {
-                    Ok((plan, usage)) => {
-                        *plan_cell.borrow_mut() = Some(plan);
-                        Ok(usage)
-                    }
-                    Err(e) => {
-                        let message = e.message.clone();
-                        *err_cell.borrow_mut() = Some(e);
-                        Err(message)
-                    }
+            || match meta::vision_identify(&client, &key, &png_bytes, IDENTIFY_MODEL, &call_id) {
+                Ok((plan, usage)) => {
+                    *plan_cell.borrow_mut() = Some(plan);
+                    Ok(usage)
+                }
+                Err(e) => {
+                    let message = e.message.clone();
+                    *err_cell.borrow_mut() = Some(e);
+                    Err(message)
                 }
             },
         );
@@ -206,10 +203,7 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         concept_source = "identify_internal";
     }
 
-    let error = |code: &str,
-                 message: &str,
-                 extra: Value|
-     -> Value {
+    let error = |code: &str, message: &str, extra: Value| -> Value {
         let mut e = json!({
             "status": "error",
             "tool": "cut_out",
@@ -250,12 +244,7 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
     };
 
     let mut phrases = vec![concept_text];
-    phrases.extend(
-        alternates
-            .iter()
-            .take(meta::SAM_MAX_ATTEMPTS - 1)
-            .cloned(),
-    );
+    phrases.extend(alternates.iter().take(meta::SAM_MAX_ATTEMPTS - 1).cloned());
     let projected = meta::project_cut_out_cost_usd(CUT_OUT_MODEL, phrases.len())?;
     let client = meta::build_client()?;
     let png_bytes = store.read_bytes(&handle)?;
@@ -269,26 +258,24 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         "ok",
         "",
         &call_id,
-        || {
-            match segmentation::run_attempts(
-                &client,
-                &key,
-                &png_bytes,
-                &phrases,
-                CUT_OUT_MODEL,
-                source_image.width,
-                source_image.height,
-            ) {
-                Ok(outcome) => {
-                    let usage = outcome.usage;
-                    *outcome_cell.borrow_mut() = Some(outcome);
-                    Ok(usage)
-                }
-                Err(e) => {
-                    let message = e.message.clone();
-                    *err_cell.borrow_mut() = Some(e);
-                    Err(message)
-                }
+        || match segmentation::run_attempts(
+            &client,
+            &key,
+            &png_bytes,
+            &phrases,
+            CUT_OUT_MODEL,
+            source_image.width,
+            source_image.height,
+        ) {
+            Ok(outcome) => {
+                let usage = outcome.usage;
+                *outcome_cell.borrow_mut() = Some(outcome);
+                Ok(usage)
+            }
+            Err(e) => {
+                let message = e.message.clone();
+                *err_cell.borrow_mut() = Some(e);
+                Err(message)
             }
         },
     );
@@ -323,11 +310,7 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
     let foreground_record = store.get_record(&foreground_handle)?;
     let mask_record = store.get_record(&mask_handle)?;
     let overlay = segmentation::mask_overlay_image(&source_image, &outcome.mask_image)?;
-    let overlay_handle = store.put_image(
-        &overlay,
-        KIND_OVERLAY,
-        Some(&source_record.asset_id),
-    )?;
+    let overlay_handle = store.put_image(&overlay, KIND_OVERLAY, Some(&source_record.asset_id))?;
     let mask_review = segmentation::review_mask(&outcome.mask_image);
 
     Ok(json!({
@@ -401,12 +384,11 @@ fn generate_background_plate(
         code: "IMAGE_CALL_FAILED".to_string(),
         message: e,
     })?;
-    let projected = meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL).map_err(|e| {
-        meta::ImageError {
+    let projected =
+        meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL).map_err(|e| meta::ImageError {
             code: "IMAGE_CALL_FAILED".to_string(),
             message: e,
-        }
-    })?;
+        })?;
     let handle_cell: RefCell<Option<String>> = RefCell::new(None);
     let err_cell: RefCell<Option<meta::ImageError>> = RefCell::new(None);
     let call_id = new_call_id();
@@ -417,37 +399,32 @@ fn generate_background_plate(
         "ok",
         "",
         &call_id,
-        || {
-            match meta::request_plate_image(
-                &client,
-                &key,
-                prompt,
-                width,
-                height,
-                DRAW_BACKGROUND_MODEL,
-            ) {
-                Ok((png_bytes, usage)) => {
-                    match store.put_bytes(&png_bytes, crate::assets::KIND_PLATE, ".png", None) {
-                        Ok(handle) => {
-                            *handle_cell.borrow_mut() = Some(handle);
-                            Ok(usage)
-                        }
-                        Err(e) => Err(e),
+        || match meta::request_plate_image(
+            &client,
+            &key,
+            prompt,
+            width,
+            height,
+            DRAW_BACKGROUND_MODEL,
+        ) {
+            Ok((png_bytes, usage)) => {
+                match store.put_bytes(&png_bytes, crate::assets::KIND_PLATE, ".png", None) {
+                    Ok(handle) => {
+                        *handle_cell.borrow_mut() = Some(handle);
+                        Ok(usage)
                     }
+                    Err(e) => Err(e),
                 }
-                Err(e) => {
-                    let message = e.message.clone();
-                    *err_cell.borrow_mut() = Some(e);
-                    Err(message)
-                }
+            }
+            Err(e) => {
+                let message = e.message.clone();
+                *err_cell.borrow_mut() = Some(e);
+                Err(message)
             }
         },
     );
     match result {
-        Ok(billing) => Ok((
-            handle_cell.into_inner().expect("plate handle set"),
-            billing,
-        )),
+        Ok(billing) => Ok((handle_cell.into_inner().expect("plate handle set"), billing)),
         Err(message) => Err(err_cell.into_inner().unwrap_or(meta::ImageError {
             code: "IMAGE_CALL_FAILED".to_string(),
             message,
@@ -524,8 +501,8 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
                     .to_string(),
             );
         }
-        let message = failures.join("; ")
-            + "; refusing to present this composite under the Fidelity Lock.";
+        let message =
+            failures.join("; ") + "; refusing to present this composite under the Fidelity Lock.";
         // Python's _error puts these extras inside the error object.
         let e = error(
             "FIDELITY_VIOLATION",

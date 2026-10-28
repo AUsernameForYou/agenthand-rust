@@ -44,10 +44,7 @@ fn load_dotenv() {
 
 fn env_trimmed(name: &str) -> String {
     load_dotenv();
-    std::env::var(name)
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    std::env::var(name).unwrap_or_default().trim().to_string()
 }
 
 /// The data dir holding assets and the ledger.

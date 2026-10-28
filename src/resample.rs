@@ -164,9 +164,8 @@ fn resample_vertical(
             for c in 0..stride {
                 let mut ss: i32 = 1 << (PRECISION_BITS - 1);
                 for y in 0..ymax {
-                    let px = img.data
-                        [(y + ymin) as usize * img.width * stride + xx * stride + c]
-                        as i32;
+                    let px =
+                        img.data[(y + ymin) as usize * img.width * stride + xx * stride + c] as i32;
                     ss = ss.wrapping_add(px.wrapping_mul(kk[kbase + y as usize]));
                 }
                 out[row_out + xx * stride + c] = clip8(ss);
@@ -199,9 +198,7 @@ fn resample_inner(
 
     let mut coeffs_vert: Option<Coeffs> = None;
     if (need_horizontal && horizontal_first) || need_vertical {
-        coeffs_vert = Some(precompute_coeffs(
-            in_h as i32, bx[1], bx[3], out_h as i32,
-        ));
+        coeffs_vert = Some(precompute_coeffs(in_h as i32, bx[1], bx[3], out_h as i32));
     }
 
     let mut cur: Vec<u8> = data.to_vec();
@@ -234,14 +231,7 @@ fn resample_inner(
                 data: &cur,
             };
             let rows = (ybox_last - ybox_first) as usize;
-            cur = resample_horizontal(
-                &img,
-                ybox_first as usize,
-                rows,
-                out_w,
-                &coeffs_h,
-                &kk_h,
-            );
+            cur = resample_horizontal(&img, ybox_first as usize, rows, out_w, &coeffs_h, &kk_h);
             cur_w = out_w;
             cur_h = rows;
             shifted.kk = cv.kk.clone();
