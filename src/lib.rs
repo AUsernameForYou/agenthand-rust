@@ -18,6 +18,7 @@ pub mod pricing;
 pub mod resample;
 pub mod sam;
 pub mod segmentation;
+pub mod sqlledger;
 pub mod server;
 
 /// Python's `round(x, 6)`: round-half-even at the 6th decimal.
