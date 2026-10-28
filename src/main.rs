@@ -6,6 +6,10 @@
 //!   every number and pixel hash against the frozen receipt.
 //! - `agenthand verify <source> <final> <mask>` — the standalone
 //!   file checker (port of `agenthand-verify`); exit 0/1.
+//! - `agenthand measure <image> <card> [--profile <path>]
+//!   [--bbox x,y,w,h]` — the scale-card size estimator (port of
+//!   `python -m agenthand.measure`); JSON on stdout, errors as
+//!   `{"error": ...}` on stderr with exit 1.
 
 use agenthand::assets::AssetStore;
 use agenthand::composite;
@@ -35,6 +39,7 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("measure") => run_measure(&args[2..]),
         Some("verify") => {
             let (Some(source), Some(final_), Some(mask)) =
                 (args.get(2), args.get(3), args.get(4))
@@ -218,4 +223,93 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
     let _ = std::fs::remove_dir_all(&scratch);
     Ok(pass)
+}
+
+/// Port of `python -m agenthand.measure`: estimate a flat object's
+/// size from a photo with an agenthand scale card in the same plane.
+fn run_measure(args: &[String]) -> ExitCode {
+    let mut positional: Vec<&String> = Vec::new();
+    let mut profile: Option<String> = None;
+    let mut bbox: Option<(f64, f64, f64, f64)> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--profile" => {
+                i += 1;
+                profile = args.get(i).cloned();
+            }
+            "--bbox" => {
+                i += 1;
+                let Some(raw) = args.get(i) else {
+                    eprintln!("usage: agenthand measure <image> <card> [--profile <path>] [--bbox x,y,w,h]");
+                    return ExitCode::from(2);
+                };
+                let parts: Vec<f64> = raw
+                    .split(',')
+                    .filter_map(|v| v.trim().parse::<f64>().ok())
+                    .collect();
+                if parts.len() != 4 {
+                    eprintln!("--bbox must be x,y,w,h");
+                    return ExitCode::from(2);
+                }
+                bbox = Some((parts[0], parts[1], parts[2], parts[3]));
+            }
+            other if other.starts_with("--") => {
+                eprintln!("unknown option: {other}");
+                return ExitCode::from(2);
+            }
+            _ => positional.push(&args[i]),
+        }
+        i += 1;
+    }
+    if positional.len() != 2 {
+        eprintln!("usage: agenthand measure <image> <card> [--profile <path>] [--bbox x,y,w,h]");
+        return ExitCode::from(2);
+    }
+    let (source, card_id) = (positional[0].as_str(), positional[1].as_str());
+    let profile_path = profile.map(std::path::PathBuf::from).unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        Path::new(&home).join("workspace/meta-hackathon/scale-card/print/layout-profile.json")
+    });
+    let fail = |msg: String| -> ExitCode {
+        eprintln!("{}", json!({ "error": msg }));
+        ExitCode::FAILURE
+    };
+    // Resolve the source like Python `_load_image` (asset:// via
+    // the store), decode with ingest orientation handling (the
+    // cv2.imread route applies EXIF/eXIf orientation too).
+    let store = AssetStore::new(&agenthand::config::get_data_dir());
+    let path: std::path::PathBuf = if let Some(handle) = source.strip_prefix("asset://") {
+        let full = format!("asset://{handle}");
+        match store.resolve(&full) {
+            Ok(p) => p,
+            Err(e) => return fail(e),
+        }
+    } else {
+        Path::new(source).to_path_buf()
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return fail(format!("Could not decode image: {}", path.display())),
+    };
+    let normalized = match agenthand::ingest::normalize_image_bytes(&bytes) {
+        Ok(b) => b,
+        Err(_) => return fail(format!("Could not decode image: {}", path.display())),
+    };
+    let img = match decode_image(&normalized) {
+        Ok(img) => img.into_rgba(),
+        Err(_) => return fail(format!("Could not decode image: {}", path.display())),
+    };
+    let card = match agenthand::measure::load_card_profile(&profile_path, card_id) {
+        Ok(c) => c,
+        Err(e) => return fail(e),
+    };
+    let frame = agenthand::measure::MeasureFrame::from_rgba(&img);
+    match agenthand::measure::estimate(&frame, &card, card_id, bbox, None) {
+        Ok(est) => {
+            println!("{}", est.to_json_pretty());
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(e),
+    }
 }

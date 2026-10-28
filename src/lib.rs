@@ -11,6 +11,7 @@ pub mod config;
 pub mod image;
 pub mod ingest;
 pub mod ledger;
+pub mod measure;
 pub mod meta;
 pub mod pricing;
 pub mod resample;

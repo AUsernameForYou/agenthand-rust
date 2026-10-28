@@ -1,0 +1,1849 @@
+{
+ "profile": "agenthand scale card (card-final) v1",
+ "note": "The card is the locked logo lockup centred on the card, width-governed, plus 24 white tick cuts in the bracket arms. No other printed geometry. All values pipeline-side; the card face carries no dimensions.",
+ "cards": {
+  "AH-57": {
+   "card_id": "AH-57",
+   "version": 1,
+   "card_width_mm": 127.0,
+   "card_height_mm": 177.8,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.105833,
+    "offset_x_mm": 0.0,
+    "offset_y_mm": 42.33,
+    "printed_width_mm": 127.0,
+    "printed_height_mm": 93.13
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      11.64,
+      53.98
+     ],
+     "TR": [
+      115.36,
+      53.98
+     ],
+     "BL": [
+      11.64,
+      123.83
+     ],
+     "BR": [
+      115.36,
+      123.83
+     ]
+    },
+    "stroke_width_mm": 4.87,
+    "arm_centreline_length_mm": 26.46
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      18.26,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      24.87,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      31.49,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      11.64,
+      60.59
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      11.64,
+      67.2
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      11.64,
+      73.82
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      108.74,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      102.13,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      95.51,
+      53.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      115.36,
+      60.59
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      115.36,
+      67.2
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      115.36,
+      73.82
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      11.64,
+      117.21
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      11.64,
+      110.6
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      11.64,
+      103.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      18.26,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      24.87,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      31.49,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      115.36,
+      117.21
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      115.36,
+      110.6
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      115.36,
+      103.98
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      108.74,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      102.13,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      95.51,
+      123.83
+     ],
+     "cut_along_arm_mm": 1.27,
+     "cut_across_mm": 4.87
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     63.51,
+     69.5
+    ],
+    "outer_radius_mm": 20.21,
+    "inner_radius_mm": 12.59,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 8.47,
+    "y": 50.8,
+    "width": 110.07,
+    "height": 76.2
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   }
+  },
+  "AH-8511": {
+   "card_id": "AH-8511",
+   "version": 1,
+   "card_width_mm": 215.9,
+   "card_height_mm": 279.4,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.179917,
+    "offset_x_mm": 0.0,
+    "offset_y_mm": 60.54,
+    "printed_width_mm": 215.9,
+    "printed_height_mm": 158.33
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      19.79,
+      80.33
+     ],
+     "TR": [
+      196.11,
+      80.33
+     ],
+     "BL": [
+      19.79,
+      199.07
+     ],
+     "BR": [
+      196.11,
+      199.07
+     ]
+    },
+    "stroke_width_mm": 8.28,
+    "arm_centreline_length_mm": 44.98
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      31.04,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      42.28,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      53.53,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.79,
+      91.57
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      19.79,
+      102.82
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      19.79,
+      114.06
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      184.86,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      173.62,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      162.37,
+      80.33
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      196.11,
+      91.57
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      196.11,
+      102.82
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      196.11,
+      114.06
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.79,
+      187.83
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      19.79,
+      176.58
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      19.79,
+      165.34
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      31.04,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      42.28,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      53.53,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      196.11,
+      187.83
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      196.11,
+      176.58
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      196.11,
+      165.34
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      184.86,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      173.62,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      162.37,
+      199.07
+     ],
+     "cut_along_arm_mm": 2.16,
+     "cut_across_mm": 8.28
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     107.96,
+     106.72
+    ],
+    "outer_radius_mm": 34.36,
+    "inner_radius_mm": 21.41,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 14.39,
+    "y": 74.93,
+    "width": 187.11,
+    "height": 129.54
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   }
+  },
+  "AH-46": {
+   "card_id": "AH-46",
+   "version": 2,
+   "supersedes": "AH-46 v1 (portrait 101.6 x 152.4) \u2014 Daniel, 2026-10-27: the cut must match the landscape shape of the lockup outline.",
+   "card_width_mm": 152.4,
+   "card_height_mm": 101.6,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.115455,
+    "offset_x_mm": 6.93,
+    "offset_y_mm": 0.0,
+    "printed_width_mm": 138.55,
+    "printed_height_mm": 101.6
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      19.63,
+      12.7
+     ],
+     "TR": [
+      132.77,
+      12.7
+     ],
+     "BL": [
+      19.63,
+      88.9
+     ],
+     "BR": [
+      132.77,
+      88.9
+     ]
+    },
+    "stroke_width_mm": 5.31,
+    "arm_centreline_length_mm": 28.86
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      26.84,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      34.06,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      41.28,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.63,
+      19.92
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      19.63,
+      27.13
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      19.63,
+      34.35
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      125.56,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      118.34,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      111.12,
+      12.7
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      132.77,
+      19.92
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      132.77,
+      27.13
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      132.77,
+      34.35
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.63,
+      81.68
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      19.63,
+      74.47
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      19.63,
+      67.25
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      26.84,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      34.06,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      41.28,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      132.77,
+      81.68
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      132.77,
+      74.47
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      132.77,
+      67.25
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      125.56,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      118.34,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      111.12,
+      88.9
+     ],
+     "cut_along_arm_mm": 1.39,
+     "cut_across_mm": 5.31
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     76.2,
+     29.63
+    ],
+    "outer_radius_mm": 22.05,
+    "inner_radius_mm": 13.74,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 16.16,
+    "y": 9.24,
+    "width": 120.07,
+    "height": 83.13
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   }
+  },
+  "AH-BIG": {
+   "card_id": "AH-BIG",
+   "version": 3,
+   "supersedes": {
+    "version": 2,
+    "card_width_mm": 248.341,
+    "card_height_mm": 191.9,
+    "note": "AH-BIG v2 was a 248.341 x 191.9 mm (9.78 x 7.56 in) trim \u2014 the largest trim of the locked 1.294 aspect fitting a US Letter landscape page with >= 12 mm margins (AH-FAMILY v3). Superseded 2026-10-27 by the neat-numbers v4 sizing: Daniel ruled card heights and widths are neat numbers, so the trim is now exactly 10 x 7.5 in. AH-BIG v1 (11 x 8.5 in, 279.4 x 215.9 mm) stays on record under v2's supersedes."
+   },
+   "card_width_mm": 254.0,
+   "card_height_mm": 190.5,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.192425,
+    "offset_x_mm": 11.55,
+    "offset_y_mm": 10.583,
+    "printed_width_mm": 230.917,
+    "printed_height_mm": 169.333
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      32.717,
+      31.75
+     ],
+     "TR": [
+      221.283,
+      31.75
+     ],
+     "BL": [
+      32.717,
+      158.75
+     ],
+     "BR": [
+      221.283,
+      158.75
+     ]
+    },
+    "stroke_width_mm": 8.85,
+    "arm_centreline_length_mm": 48.1
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      44.733,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      56.767,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      68.8,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      32.717,
+      43.783
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      32.717,
+      55.8
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      32.717,
+      67.833
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      209.267,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      197.233,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      185.2,
+      31.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      221.283,
+      43.783
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      221.283,
+      55.8
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      221.283,
+      67.833
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      32.717,
+      146.717
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      32.717,
+      134.7
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      32.717,
+      122.667
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      44.733,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      56.767,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      68.8,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      221.283,
+      146.717
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      221.283,
+      134.7
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      221.283,
+      122.667
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      209.267,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      197.233,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      185.2,
+      158.75
+     ],
+     "cut_along_arm_mm": 2.317,
+     "cut_across_mm": 8.85
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     127.0,
+     59.967
+    ],
+    "outer_radius_mm": 36.75,
+    "inner_radius_mm": 22.9,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 26.933,
+    "y": 25.983,
+    "width": 200.117,
+    "height": 138.55
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   },
+   "uniform_scale_from_AH-46": 1.66667,
+   "art_offset_mm": [
+    0.0,
+    10.583
+   ],
+   "note": "Distance card (fence / lawn / across the yard), v3 of this entry (family-sheet v4, neat numbers). A uniform scale of AH-46 x1.66667 centred in an exactly 10 x 7.5 in (254.0 x 190.5 mm) trim \u2014 on its US Letter landscape page the margins are exactly 0.5 in on every side. This is the geometry the estimator size battery now measures (fixture AH-BIG in tests/fixtures/scaled-card-profiles.json). Prints alone on page 1 of AH-FAMILY-v4.pdf and is cut out and laminated like every other card."
+  },
+  "AH-35": {
+   "card_id": "AH-35",
+   "version": 2,
+   "supersedes": {
+    "version": 1,
+    "card_width_mm": 88.9,
+    "card_height_mm": 59.182,
+    "note": "AH-35 v1 was an 88.9 x 59.182 mm (3.5 x 2.33 in) trim \u2014 the estimator size-test fixture of that day. Superseded 2026-10-27 by the neat-numbers v4 sizing: exactly 3 x 2 in."
+   },
+   "card_width_mm": 76.2,
+   "card_height_mm": 50.8,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.057728,
+    "offset_x_mm": 3.465,
+    "offset_y_mm": 0.0,
+    "printed_width_mm": 69.275,
+    "printed_height_mm": 50.8
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      9.815,
+      6.35
+     ],
+     "TR": [
+      66.385,
+      6.35
+     ],
+     "BL": [
+      9.815,
+      44.45
+     ],
+     "BR": [
+      66.385,
+      44.45
+     ]
+    },
+    "stroke_width_mm": 2.655,
+    "arm_centreline_length_mm": 14.43
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      13.42,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      17.03,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      20.64,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      9.815,
+      9.96
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      9.815,
+      13.565
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      9.815,
+      17.175
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      62.78,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      59.17,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      55.56,
+      6.35
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      66.385,
+      9.96
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      66.385,
+      13.565
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      66.385,
+      17.175
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      9.815,
+      40.84
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      9.815,
+      37.235
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      9.815,
+      33.625
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      13.42,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      17.03,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      20.64,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      66.385,
+      40.84
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      66.385,
+      37.235
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      66.385,
+      33.625
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      62.78,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      59.17,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      55.56,
+      44.45
+     ],
+     "cut_along_arm_mm": 0.695,
+     "cut_across_mm": 2.655
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     38.1,
+     14.815
+    ],
+    "outer_radius_mm": 11.025,
+    "inner_radius_mm": 6.87,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 8.08,
+    "y": 4.62,
+    "width": 60.035,
+    "height": 41.565
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   },
+   "uniform_scale_from_AH-46": 0.5,
+   "art_offset_mm": [
+    0.0,
+    0.0
+   ],
+   "note": "Mini card for close-ups, v2 of this entry (family-sheet v4, neat numbers). A uniform scale of AH-46 x0.5 centred in an exactly 3 x 2 in (76.2 x 50.8 mm) trim. Works only shot close: the estimator needs the card ~150 px across in the photo and refuses below ~130 px (ESTIMATOR.md). Prints on page 2 of AH-FAMILY-v4.pdf with the postcard."
+  },
+  "AH-42": {
+   "card_id": "AH-42",
+   "version": 1,
+   "card_width_mm": 107.95,
+   "card_height_mm": 71.882,
+   "origin": "top-left corner of the card, x right, y down, millimetres",
+   "image": {
+    "canvas_units": [
+     1200,
+     880
+    ],
+    "scale_mm_per_unit": 0.081684,
+    "offset_x_mm": 4.966,
+    "offset_y_mm": 0.0,
+    "printed_width_mm": 98.024,
+    "printed_height_mm": 71.882
+   },
+   "bracket_frame": {
+    "corner_vertices_centreline_mm": {
+     "TL": [
+      13.952,
+      8.985
+     ],
+     "TR": [
+      93.998,
+      8.985
+     ],
+     "BL": [
+      13.952,
+      62.897
+     ],
+     "BR": [
+      93.998,
+      62.897
+     ]
+    },
+    "stroke_width_mm": 3.757,
+    "arm_centreline_length_mm": 20.418
+   },
+   "ticks": [
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.053,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      24.161,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      29.269,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      13.952,
+      14.093
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      13.952,
+      19.194
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      13.952,
+      24.303
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      88.897,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      83.789,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      78.681,
+      8.985
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      93.998,
+      14.093
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      93.998,
+      19.194
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "TR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      93.998,
+      24.303
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      13.952,
+      57.789
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      13.952,
+      52.688
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      13.952,
+      47.579
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      19.053,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      24.161,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BL-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      29.269,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      93.998,
+      57.789
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      93.998,
+      52.688
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-V",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      93.998,
+      47.579
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.25,
+     "centre_mm": [
+      88.897,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.5,
+     "centre_mm": [
+      83.789,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    },
+    {
+     "arm": "BR-H",
+     "fraction_from_vertex": 0.75,
+     "centre_mm": [
+      78.681,
+      62.897
+     ],
+     "cut_along_arm_mm": 0.983,
+     "cut_across_mm": 3.757
+    }
+   ],
+   "ring": {
+    "centre_mm": [
+     53.975,
+     20.963
+    ],
+    "outer_radius_mm": 15.6,
+    "inner_radius_mm": 9.721,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+   },
+   "lockup_block_mm": {
+    "x": 11.497,
+    "y": 6.537,
+    "width": 84.95,
+    "height": 58.814
+   },
+   "spot_colours": {
+    "ink": "#111111",
+    "cyan": "#00AFE1",
+    "paper": "#ffffff"
+   },
+   "uniform_scale_from_AH-46": 0.7075,
+   "art_offset_mm": [
+    0.063,
+    0.0
+   ],
+   "note": "Arm's-length card. Geometry is the estimator size-test fixture 'AH-42' verbatim: a uniform scale of AH-46 x0.7075 centred in the 4.25 x 2.83 in trim. NOT PRINTED (2026-10-27, Daniel): dropped from the family sheet at v4 \u2014 its working range overlaps the postcard AH-46 and it earns no distinct slot. The entry and the estimator fixtures stay on file as a tested size."
+  }
+ }
+}

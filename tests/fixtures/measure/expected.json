@@ -34,7 +34,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 412.9765625
+    "renderer_card_px": 412.9765625,
+    "profile": "layout-profile.json"
   },
   "ah46_far2x": {
     "file": "ah46_far2x.png",
@@ -71,7 +72,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 201.0829315185547
+    "renderer_card_px": 201.0829315185547,
+    "profile": "layout-profile.json"
   },
   "ah42_close": {
     "file": "ah42_close.png",
@@ -108,7 +110,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 291.4986572265625
+    "renderer_card_px": 291.4986572265625,
+    "profile": "scaled-card-profiles.json"
   },
   "ah42_mid": {
     "file": "ah42_mid.png",
@@ -145,7 +148,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 190.25038146972656
+    "renderer_card_px": 190.25038146972656,
+    "profile": "scaled-card-profiles.json"
   },
   "ah42_far2x": {
     "file": "ah42_far2x.png",
@@ -183,7 +187,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 142.03199768066406
+    "renderer_card_px": 142.03199768066406,
+    "profile": "scaled-card-profiles.json"
   },
   "ah42_probe225": {
     "file": "ah42_probe225.png",
@@ -197,7 +202,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 126.05772399902344
+    "renderer_card_px": 126.05772399902344,
+    "profile": "scaled-card-profiles.json"
   },
   "ah42_degraded_mid": {
     "file": "ah42_degraded_mid.png",
@@ -234,7 +240,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 188.80718994140625
+    "renderer_card_px": 188.80718994140625,
+    "profile": "scaled-card-profiles.json"
   },
   "ah35_close": {
     "file": "ah35_close.png",
@@ -271,7 +278,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 205.25006103515625
+    "renderer_card_px": 205.25006103515625,
+    "profile": "scaled-card-profiles.json"
   },
   "ah35_probe175": {
     "file": "ah35_probe175.png",
@@ -285,7 +293,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 114.54248046875
+    "renderer_card_px": 114.54248046875,
+    "profile": "scaled-card-profiles.json"
   },
   "ah35_far2x": {
     "file": "ah35_far2x.png",
@@ -299,7 +308,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 100.05654907226562
+    "renderer_card_px": 100.05654907226562,
+    "profile": "scaled-card-profiles.json"
   },
   "ah35_degraded_mid": {
     "file": "ah35_degraded_mid.png",
@@ -313,7 +323,8 @@
     "seeds": {
       "_sheet_seed": false
     },
-    "renderer_card_px": 132.8507537841797
+    "renderer_card_px": 132.8507537841797,
+    "profile": "scaled-card-profiles.json"
   },
   "ahbig_2x": {
     "file": "ahbig_2x.png",
@@ -350,7 +361,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 336.84710693359375
+    "renderer_card_px": 336.84710693359375,
+    "profile": "scaled-card-profiles.json"
   },
   "ahbig_3x": {
     "file": "ahbig_3x.png",
@@ -387,7 +399,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 222.94119262695312
+    "renderer_card_px": 222.94119262695312,
+    "profile": "scaled-card-profiles.json"
   },
   "ahbig_4x": {
     "file": "ahbig_4x.png",
@@ -425,7 +438,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "renderer_card_px": 165.11785888671875
+    "renderer_card_px": 165.11785888671875,
+    "profile": "scaled-card-profiles.json"
   },
   "ahbig_degraded_3x": {
     "file": "ahbig_degraded_3x.png",
@@ -462,7 +476,8 @@
     "seeds": {
       "_sheet_seed": false
     },
-    "renderer_card_px": 221.09713745117188
+    "renderer_card_px": 221.09713745117188,
+    "profile": "scaled-card-profiles.json"
   },
   "tm_clean2": {
     "file": "tm_clean2.png",
@@ -498,7 +513,8 @@
     },
     "seeds": {
       "_sheet_seed": true
-    }
+    },
+    "profile": "layout-profile.json"
   },
   "tm_clean3": {
     "file": "tm_clean3.png",
@@ -534,7 +550,8 @@
     },
     "seeds": {
       "_sheet_seed": true
-    }
+    },
+    "profile": "layout-profile.json"
   },
   "tm_deg1": {
     "file": "tm_deg1.png",
@@ -571,7 +588,8 @@
     "seeds": {
       "_sheet_seed": false,
       "_hough_quad_seed": true
-    }
+    },
+    "profile": "layout-profile.json"
   },
   "tm_deg2": {
     "file": "tm_deg2.png",
@@ -608,7 +626,8 @@
     "seeds": {
       "_sheet_seed": false,
       "_hough_quad_seed": true
-    }
+    },
+    "profile": "layout-profile.json"
   },
   "tm_mask_path": {
     "file": "ah46_close.png",
@@ -644,7 +663,8 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "mask_file": "tm_mask.png"
+    "mask_file": "tm_mask.png",
+    "profile": "layout-profile.json"
   },
   "tm_bbox_path": {
     "file": "ah46_close.png",
@@ -686,7 +706,8 @@
       398.8602600097656,
       515.31201171875,
       368.2721252441406
-    ]
+    ],
+    "profile": "layout-profile.json"
   },
   "tm_blank": {
     "file": "tm_blank.png",
@@ -697,6 +718,7 @@
     ],
     "outcome": "refused",
     "error": "Cyan ring not found; card not detectable.",
-    "seeds": {}
+    "seeds": {},
+    "profile": "layout-profile.json"
   }
 }

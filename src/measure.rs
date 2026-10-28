@@ -1,0 +1,2806 @@
+//! Prototype dimension estimator — port of the Python `measure.py`.
+//!
+//! EXPERIMENT ONLY, exactly as in the Python build: not a fourth MCP
+//! tool, not wired into the server. A flat object lying in the same
+//! plane as a printed agenthand card is photographed; this module
+//! estimates the object's height and width from the card's tick
+//! geometry via a seeded tick/corner homography.
+//!
+//! The port follows the Python algorithm step for step (same seeds,
+//! same verification gates, same range propagation, same refusal
+//! messages) with the OpenCV primitives it uses re-implemented here:
+//! median blur + Gaussian adaptive threshold for the ink mask, HSV
+//! ring anchoring, external contours for the sheet seed, Canny +
+//! Hough lines for the fallback seed, a normalized-DLT homography
+//! solver, and a deterministic RANSAC (OpenCV's is RNG-driven, so
+//! inlier selection can differ on borderline points; the weighted
+//! least-squares fit over the survivors is the same).
+//!
+//! `getRectSubPix` sampling is bilinear with round-half-up back to
+//! 8-bit, verified against OpenCV. The pixels-across gate is the
+//! Python one: below MIN_CARD_PX the module refuses outright, the
+//! 130–170 px caution band widens the range by a systematic term,
+//! and cards with a narrower demonstrated envelope (the AH-35 mini:
+//! close-ups at ~190 px across or more) refuse outside it.
+
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+pub const METHOD: &str = "card-homography v0 (seeded tick/corner homography, prototype)";
+
+pub const MIN_CARD_PX: f64 = 130.0;
+pub const COMFORT_CARD_PX: f64 = 170.0;
+const SMALL_CARD_SYS_MAX: f64 = 0.055;
+
+/// Per-card envelope floors: the universal floor is not enough for
+/// every card. The 3x2 mini (AH-35) is measurably noisier than the
+/// size it replaced; the one envelope the battery demonstrates as
+/// dependable is close-ups at ~200 px across in clean light, so
+/// AH-35 refuses below 190 px.
+fn card_envelope_min_px(card_id: &str) -> Option<f64> {
+    match card_id {
+        "AH-35" => Some(190.0),
+        _ => None,
+    }
+}
+
+pub fn default_profile_path() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    home.join("workspace/meta-hackathon/scale-card/print/layout-profile.json")
+}
+
+type Pt = [f64; 2];
+type H3 = [f64; 9];
+
+fn pt(x: f64, y: f64) -> Pt {
+    [x, y]
+}
+fn add(a: Pt, b: Pt) -> Pt {
+    [a[0] + b[0], a[1] + b[1]]
+}
+fn sub(a: Pt, b: Pt) -> Pt {
+    [a[0] - b[0], a[1] - b[1]]
+}
+fn scale(a: Pt, s: f64) -> Pt {
+    [a[0] * s, a[1] * s]
+}
+fn dot(a: Pt, b: Pt) -> f64 {
+    a[0] * b[0] + a[1] * b[1]
+}
+fn norm(a: Pt) -> f64 {
+    dot(a, a).sqrt()
+}
+
+// ---------------------------------------------------------------------------
+// Python-compatible rounding / statistics helpers
+
+/// Python `round(x, ndigits)`: round-half-even on the exact value.
+fn py_round(x: f64, ndigits: i32) -> f64 {
+    let s = 10f64.powi(ndigits);
+    let v = x * s;
+    let f = v.floor();
+    let diff = v - f;
+    let r = if diff > 0.5 {
+        f + 1.0
+    } else if diff < 0.5 {
+        f
+    } else if (f as i64) % 2 == 0 {
+        f
+    } else {
+        f + 1.0
+    };
+    r / s
+}
+
+/// numpy linspace (endpoint included).
+fn linspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
+    if n == 1 {
+        return vec![start];
+    }
+    let step = (stop - start) / (n - 1) as f64;
+    let mut out: Vec<f64> = (0..n).map(|i| start + step * i as f64).collect();
+    if let Some(last) = out.last_mut() {
+        *last = stop;
+    }
+    out
+}
+
+/// numpy percentile, default linear interpolation.
+fn percentile(values: &[f64], p: f64) -> f64 {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = sorted.len();
+    if n == 1 {
+        return sorted[0];
+    }
+    let rank = p / 100.0 * (n - 1) as f64;
+    let lo = rank.floor() as usize;
+    let frac = rank - lo as f64;
+    if lo + 1 < n {
+        sorted[lo] + frac * (sorted[lo + 1] - sorted[lo])
+    } else {
+        sorted[lo]
+    }
+}
+
+fn argmin_first(values: &[f64]) -> usize {
+    let mut best = 0;
+    for i in 1..values.len() {
+        if values[i] < values[best] {
+            best = i;
+        }
+    }
+    best
+}
+
+fn argmax_first(values: &[f64]) -> usize {
+    let mut best = 0;
+    for i in 1..values.len() {
+        if values[i] > values[best] {
+            best = i;
+        }
+    }
+    best
+}
+
+// ---------------------------------------------------------------------------
+// Homography (normalized DLT, the cv2.findHomography method-0 model)
+
+fn project(H: &H3, points: &[Pt]) -> Vec<Pt> {
+    points
+        .iter()
+        .map(|&[x, y]| {
+            let w = H[6] * x + H[7] * y + H[8];
+            [
+                (H[0] * x + H[1] * y + H[2]) / w,
+                (H[3] * x + H[4] * y + H[5]) / w,
+            ]
+        })
+        .collect()
+}
+
+fn project1(H: &H3, p: Pt) -> Pt {
+    project(H, &[p])[0]
+}
+
+fn mat3_mul(a: &H3, b: &H3) -> H3 {
+    let mut out = [0.0; 9];
+    for r in 0..3 {
+        for c in 0..3 {
+            out[r * 3 + c] =
+                a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+        }
+    }
+    out
+}
+
+fn mat3_inv(m: &H3) -> Option<H3> {
+    let (a, b, c) = (m[0], m[1], m[2]);
+    let (d, e, f) = (m[3], m[4], m[5]);
+    let (g, h, i) = (m[6], m[7], m[8]);
+    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if det == 0.0 || !det.is_finite() {
+        return None;
+    }
+    let s = 1.0 / det;
+    Some([
+        (e * i - f * h) * s,
+        (c * h - b * i) * s,
+        (b * f - c * e) * s,
+        (f * g - d * i) * s,
+        (a * i - c * g) * s,
+        (c * d - a * f) * s,
+        (d * h - e * g) * s,
+        (b * g - a * h) * s,
+        (a * e - b * d) * s,
+    ])
+}
+
+/// Full eigendecomposition of a symmetric 9x9 matrix (cyclic
+/// Jacobi, the method cv::eigen uses): (eigenvalues, eigenvectors
+/// as columns of the returned matrix), unsorted.
+fn jacobi_eigen_9(a_in: &[[f64; 9]; 9]) -> ([f64; 9], [[f64; 9]; 9]) {
+    let mut a = *a_in;
+    let mut v = [[0.0; 9]; 9];
+    for i in 0..9 {
+        v[i][i] = 1.0;
+    }
+    for _sweep in 0..100 {
+        let mut off = 0.0;
+        for p in 0..9 {
+            for q in (p + 1)..9 {
+                off += a[p][q] * a[p][q];
+            }
+        }
+        if off.sqrt() < 1e-14 {
+            break;
+        }
+        for p in 0..8 {
+            for q in (p + 1)..9 {
+                let apq = a[p][q];
+                if apq == 0.0 {
+                    continue;
+                }
+                let app = a[p][p];
+                let aqq = a[q][q];
+                let phi = 0.5 * (aqq - app) / apq;
+                let t = if phi >= 0.0 {
+                    1.0 / (phi + (1.0 + phi * phi).sqrt())
+                } else {
+                    -1.0 / (-phi + (1.0 + phi * phi).sqrt())
+                };
+                let c = 1.0 / (1.0 + t * t).sqrt();
+                let s = t * c;
+                for k in 0..9 {
+                    let akp = a[k][p];
+                    let akq = a[k][q];
+                    a[k][p] = c * akp - s * akq;
+                    a[k][q] = s * akp + c * akq;
+                }
+                for k in 0..9 {
+                    let apk = a[p][k];
+                    let aqk = a[q][k];
+                    a[p][k] = c * apk - s * aqk;
+                    a[q][k] = s * apk + c * aqk;
+                }
+                for k in 0..9 {
+                    let vkp = v[k][p];
+                    let vkq = v[k][q];
+                    v[k][p] = c * vkp - s * vkq;
+                    v[k][q] = s * vkp + c * vkq;
+                }
+            }
+        }
+    }
+    let mut vals = [0.0; 9];
+    for i in 0..9 {
+        vals[i] = a[i][i];
+    }
+    (vals, v)
+}
+
+const FLT_EPSILON: f64 = 1.192_092_895_507_812_5e-7;
+const DBL_EPSILON: f64 = 2.220_446_049_250_313e-16;
+const DBL_MIN: f64 = 2.225_073_858_507_201_4e-308;
+
+/// cv::scaleFor (double overload): 1/x when |x| > FLT_EPSILON.
+fn scale_for(x: f64) -> f64 {
+    if x.abs() > FLT_EPSILON {
+        1.0 / x
+    } else {
+        1.0
+    }
+}
+
+fn normalize_h(H: &mut H3) {
+    let s = scale_for(H[8]);
+    for v in H.iter_mut() {
+        *v *= s;
+    }
+}
+
+/// Round pair coordinates to float32: cv2.findHomography converts
+/// its inputs to CV_32F before any kernel, error test, or LM step.
+fn to_f32_pairs(pairs: &[(Pt, Pt)]) -> Vec<(Pt, Pt)> {
+    pairs
+        .iter()
+        .map(|(a, b)| {
+            (
+                pt(a[0] as f32 as f64, a[1] as f32 as f64),
+                pt(b[0] as f32 as f64, b[1] as f32 as f64),
+            )
+        })
+        .collect()
+}
+
+/// OpenCV's HomographyEstimatorCallback::runKernel: DLT with
+/// per-axis L1 normalization (shift to centroid, scale so the mean
+/// L1 deviation per axis is 1), smallest eigenvector of A^T A,
+/// result normalized by scaleFor(H[2][2]).
+fn dlt_kernel(pairs: &[(Pt, Pt)]) -> Option<H3> {
+    let count = pairs.len();
+    if count == 0 {
+        return None;
+    }
+    let n = count as f64;
+    let (mut cmx, mut cmy, mut c_mx, mut c_my) = (0.0, 0.0, 0.0, 0.0);
+    for (big_m, m) in pairs {
+        cmx += m[0];
+        cmy += m[1];
+        c_mx += big_m[0];
+        c_my += big_m[1];
+    }
+    cmx /= n;
+    cmy /= n;
+    c_mx /= n;
+    c_my /= n;
+    let (mut smx, mut smy, mut s_mx, mut s_my) = (0.0, 0.0, 0.0, 0.0);
+    for (big_m, m) in pairs {
+        smx += (m[0] - cmx).abs();
+        smy += (m[1] - cmy).abs();
+        s_mx += (big_m[0] - c_mx).abs();
+        s_my += (big_m[1] - c_my).abs();
+    }
+    if smx.abs() < DBL_EPSILON
+        || smy.abs() < DBL_EPSILON
+        || s_mx.abs() < DBL_EPSILON
+        || s_my.abs() < DBL_EPSILON
+    {
+        return None;
+    }
+    smx = n / smx;
+    smy = n / smy;
+    s_mx = n / s_mx;
+    s_my = n / s_my;
+    let mut ltl = [[0.0; 9]; 9];
+    for (big_m, m) in pairs {
+        let x = (m[0] - cmx) * smx;
+        let y = (m[1] - cmy) * smy;
+        let xx = (big_m[0] - c_mx) * s_mx;
+        let yy = (big_m[1] - c_my) * s_my;
+        let lx = [xx, yy, 1.0, 0.0, 0.0, 0.0, -x * xx, -x * yy, -x];
+        let ly = [0.0, 0.0, 0.0, xx, yy, 1.0, -y * xx, -y * yy, -y];
+        for j in 0..9 {
+            for k in j..9 {
+                ltl[j][k] += lx[j] * lx[k] + ly[j] * ly[k];
+            }
+        }
+    }
+    for j in 0..9 {
+        for k in (j + 1)..9 {
+            ltl[k][j] = ltl[j][k];
+        }
+    }
+    let (vals, vecs) = jacobi_eigen_9(&ltl);
+    let mut idx = 0;
+    for i in 1..9 {
+        if vals[i] < vals[idx] {
+            idx = i;
+        }
+    }
+    let h0: H3 = [
+        vecs[0][idx],
+        vecs[1][idx],
+        vecs[2][idx],
+        vecs[3][idx],
+        vecs[4][idx],
+        vecs[5][idx],
+        vecs[6][idx],
+        vecs[7][idx],
+        vecs[8][idx],
+    ];
+    let inv_hnorm: H3 = [1.0 / smx, 0.0, cmx, 0.0, 1.0 / smy, cmy, 0.0, 0.0, 1.0];
+    let hnorm2: H3 = [s_mx, 0.0, -c_mx * s_mx, 0.0, s_my, -c_my * s_my, 0.0, 0.0, 1.0];
+    let mut H = mat3_mul(&inv_hnorm, &mat3_mul(&h0, &hnorm2));
+    normalize_h(&mut H);
+    if H.iter().any(|v| !v.is_finite()) {
+        return None;
+    }
+    Some(H)
+}
+
+/// HomographyRefineCallback: reprojection errors, and the
+/// Jacobian rows when requested (2 rows per point, 9 params).
+fn refine_compute(pairs: &[(Pt, Pt)], h: &[f64; 9], want_jac: bool) -> (Vec<f64>, Vec<[f64; 9]>) {
+    let mut err = Vec::with_capacity(pairs.len() * 2);
+    let mut jac: Vec<[f64; 9]> = Vec::new();
+    for (big_m, m) in pairs {
+        let (mx, my) = (big_m[0], big_m[1]);
+        let ww_raw = h[6] * mx + h[7] * my + h[8];
+        let ww = if ww_raw.abs() > DBL_EPSILON {
+            1.0 / ww_raw
+        } else {
+            0.0
+        };
+        let xi = (h[0] * mx + h[1] * my + h[2]) * ww;
+        let yi = (h[3] * mx + h[4] * my + h[5]) * ww;
+        err.push(xi - m[0]);
+        err.push(yi - m[1]);
+        if want_jac {
+            jac.push([
+                mx * ww,
+                my * ww,
+                ww,
+                0.0,
+                0.0,
+                0.0,
+                -mx * ww * xi,
+                -my * ww * xi,
+                -ww * xi,
+            ]);
+            jac.push([
+                0.0,
+                0.0,
+                0.0,
+                mx * ww,
+                my * ww,
+                ww,
+                -mx * ww * yi,
+                -my * ww * yi,
+                -ww * yi,
+            ]);
+        }
+    }
+    (err, jac)
+}
+
+fn jt_j(jac: &[[f64; 9]]) -> [[f64; 9]; 9] {
+    let mut a = [[0.0; 9]; 9];
+    for row in jac {
+        for i in 0..9 {
+            for j in 0..9 {
+                a[i][j] += row[i] * row[j];
+            }
+        }
+    }
+    a
+}
+
+fn jt_r(jac: &[[f64; 9]], r: &[f64]) -> [f64; 9] {
+    let mut v = [0.0; 9];
+    for (row, &ri) in jac.iter().zip(r.iter()) {
+        for i in 0..9 {
+            v[i] += row[i] * ri;
+        }
+    }
+    v
+}
+
+/// Pseudo-inverse of a symmetric 9x9 the way cv::solve /
+/// cv::invert with DECOMP_EIG compute it: eigendecomposition,
+/// eigenvalues at or below (sum of eigenvalues) * 2 * DBL_EPSILON
+/// treated as zero (SVD::backSubst threshold).
+fn eig_pinv(a: &[[f64; 9]; 9]) -> [[f64; 9]; 9] {
+    let (vals, vecs) = jacobi_eigen_9(a);
+    let threshold: f64 = vals.iter().sum::<f64>() * 2.0 * DBL_EPSILON;
+    let mut out = [[0.0; 9]; 9];
+    for i in 0..9 {
+        if vals[i].abs() <= threshold {
+            continue;
+        }
+        let inv = 1.0 / vals[i];
+        for r in 0..9 {
+            for c in 0..9 {
+                out[r][c] += inv * vecs[r][i] * vecs[c][i];
+            }
+        }
+    }
+    out
+}
+
+fn eig_solve(a: &[[f64; 9]; 9], b: &[f64; 9]) -> [f64; 9] {
+    let p = eig_pinv(a);
+    let mut out = [0.0; 9];
+    for r in 0..9 {
+        for c in 0..9 {
+            out[r] += p[r][c] * b[c];
+        }
+    }
+    out
+}
+
+/// cv::LMSolver (levmarq.cpp) with maxIters = 10 and
+/// eps = FLT_EPSILON, driving the homography refine callback —
+/// the refinement cv2.findHomography applies for npoints > 4.
+fn lm_refine(pairs: &[(Pt, Pt)], h: &mut H3) {
+    let mut x: [f64; 9] = *h;
+    let (mut r, mut jac) = refine_compute(pairs, &x, true);
+    let mut s: f64 = r.iter().map(|val| val * val).sum();
+    let mut a = jt_j(&jac);
+    let mut v = jt_r(&jac, &r);
+    // Marquardt D: the INITIAL A diagonal, never refreshed.
+    let d_diag: [f64; 9] = [
+        a[0][0], a[1][1], a[2][2], a[3][3], a[4][4], a[5][5], a[6][6], a[7][7], a[8][8],
+    ];
+    let (mut lambda, mut lc) = (1.0f64, 0.75f64);
+    let mut iter = 0;
+    loop {
+        let mut ap = a;
+        for i in 0..9 {
+            ap[i][i] += lambda * d_diag[i];
+        }
+        let d = eig_solve(&ap, &v);
+        let mut xd = [0.0; 9];
+        for i in 0..9 {
+            xd[i] = x[i] - d[i];
+        }
+        let (rd, _) = refine_compute(pairs, &xd, false);
+        let sd: f64 = rd.iter().map(|val| val * val).sum();
+        let mut ds = 0.0;
+        for i in 0..9 {
+            let ad: f64 = (0..9).map(|j| a[i][j] * d[j]).sum::<f64>();
+            ds += d[i] * (2.0 * v[i] - ad);
+        }
+        let rr = (s - sd) / (if ds.abs() > DBL_EPSILON { ds } else { 1.0 });
+        if rr > 0.75 {
+            lambda *= 0.5;
+            if lambda < lc {
+                lambda = 0.0;
+            }
+        } else if rr < 0.25 {
+            let t: f64 = (0..9).map(|i| d[i] * v[i]).sum();
+            let mut nu = (sd - s) / (if t.abs() > DBL_EPSILON { t } else { 1.0 }) + 2.0;
+            nu = nu.clamp(2.0, 10.0);
+            if lambda == 0.0 {
+                let apinv = eig_pinv(&a);
+                let mut maxval = DBL_EPSILON;
+                for i in 0..9 {
+                    maxval = maxval.max(apinv[i][i].abs());
+                }
+                lambda = 1.0 / maxval;
+                lc = lambda;
+                nu *= 0.5;
+            }
+            lambda *= nu;
+        }
+        if sd < s {
+            s = sd;
+            x = xd;
+            let (r2, jac2) = refine_compute(pairs, &x, true);
+            r = r2;
+            jac = jac2;
+            a = jt_j(&jac);
+            v = jt_r(&jac, &r);
+        }
+        iter += 1;
+        let d_inf = d.iter().fold(0.0f64, |m, val| m.max(val.abs()));
+        let r_inf = r.iter().fold(0.0f64, |m, val| m.max(val.abs()));
+        let proceed = iter < 10 && d_inf >= FLT_EPSILON && r_inf >= FLT_EPSILON;
+        if !proceed {
+            break;
+        }
+    }
+    *h = x;
+}
+
+/// cv2.findHomography(src, dst, 0): the DLT kernel, plus the LM
+/// refinement when npoints > 4.
+fn solve_homography(src: &[Pt], dst: &[Pt]) -> Option<H3> {
+    if src.len() < 4 || src.len() != dst.len() {
+        return None;
+    }
+    let raw: Vec<(Pt, Pt)> = src.iter().copied().zip(dst.iter().copied()).collect();
+    let pairs = to_f32_pairs(&raw);
+    let mut H = dlt_kernel(&pairs)?;
+    if pairs.len() > 4 {
+        lm_refine(&pairs, &mut H);
+        normalize_h(&mut H);
+    }
+    Some(H)
+}
+
+// ---------------------------------------------------------------------------
+// Card profile
+
+#[derive(Clone, Debug)]
+pub struct CardProfile {
+    pub card_width_mm: f64,
+    pub card_height_mm: f64,
+    /// Frame corners (centreline), keyed TL/TR/BL/BR.
+    pub frame: HashMap<String, Pt>,
+    pub arm_len_mm: f64,
+    pub stroke_mm: f64,
+    pub ticks: Vec<Tick>,
+    pub ring_centre_mm: Pt,
+    pub ring_inner_mm: f64,
+    pub ring_outer_mm: f64,
+}
+
+#[derive(Clone, Debug)]
+struct Tick {
+    arm: String,
+    centre_mm: Pt,
+    fraction_from_vertex: f64,
+}
+
+#[derive(Clone, Debug)]
+struct Arm {
+    #[allow(dead_code)]
+    name: String,
+    start_mm: Pt,
+    end_mm: Pt,
+    ticks_mm: Vec<Pt>,
+}
+
+/// Arm name -> (vertex key, direction in card-mm space).
+fn arm_geometry(name: &str) -> Option<(&'static str, Pt)> {
+    Some(match name {
+        "TL-H" => ("TL", [1.0, 0.0]),
+        "TL-V" => ("TL", [0.0, 1.0]),
+        "TR-H" => ("TR", [-1.0, 0.0]),
+        "TR-V" => ("TR", [0.0, 1.0]),
+        "BL-V" => ("BL", [0.0, -1.0]),
+        "BL-H" => ("BL", [1.0, 0.0]),
+        "BR-V" => ("BR", [0.0, -1.0]),
+        "BR-H" => ("BR", [-1.0, 0.0]),
+        _ => return None,
+    })
+}
+
+pub fn load_card_profile(profile_path: &Path, card_id: &str) -> Result<CardProfile, String> {
+    let text = std::fs::read_to_string(profile_path)
+        .map_err(|e| format!("Could not read profile {}: {e}", profile_path.display()))?;
+    let data: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Profile {} is not JSON: {e}", profile_path.display()))?;
+    let cards = data["cards"].as_object().cloned().unwrap_or_default();
+    let card = cards.get(card_id).ok_or_else(|| {
+        let mut ids: Vec<&String> = cards.keys().collect();
+        ids.sort();
+        format!(
+            "Card {card_id:?} not in profile {} (has: {})",
+            profile_path.display(),
+            ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        )
+    })?;
+    let get_pt = |v: &Value| -> Pt { pt(v[0].as_f64().unwrap_or(0.0), v[1].as_f64().unwrap_or(0.0)) };
+    let mut frame = HashMap::new();
+    for key in ["TL", "TR", "BL", "BR"] {
+        frame.insert(
+            key.to_string(),
+            get_pt(&card["bracket_frame"]["corner_vertices_centreline_mm"][key]),
+        );
+    }
+    let ticks = card["ticks"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|t| Tick {
+                    arm: t["arm"].as_str().unwrap_or_default().to_string(),
+                    centre_mm: get_pt(&t["centre_mm"]),
+                    fraction_from_vertex: t["fraction_from_vertex"].as_f64().unwrap_or(0.0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(CardProfile {
+        card_width_mm: card["card_width_mm"].as_f64().unwrap_or(0.0),
+        card_height_mm: card["card_height_mm"].as_f64().unwrap_or(0.0),
+        frame,
+        arm_len_mm: card["bracket_frame"]["arm_centreline_length_mm"]
+            .as_f64()
+            .unwrap_or(0.0),
+        stroke_mm: card["bracket_frame"]["stroke_width_mm"]
+            .as_f64()
+            .unwrap_or(0.0),
+        ticks,
+        ring_centre_mm: get_pt(&card["ring"]["centre_mm"]),
+        ring_inner_mm: card["ring"]["inner_radius_mm"].as_f64().unwrap_or(0.0),
+        ring_outer_mm: card["ring"]["outer_radius_mm"].as_f64().unwrap_or(0.0),
+    })
+}
+
+/// Bracket arms with their start vertex, direction, and tick list —
+/// arms in name order, ticks ordered by fraction_from_vertex.
+fn arms(card: &CardProfile) -> Vec<Arm> {
+    let mut by_arm: HashMap<String, Vec<&Tick>> = HashMap::new();
+    for tick in &card.ticks {
+        by_arm.entry(tick.arm.clone()).or_default().push(tick);
+    }
+    let mut names: Vec<String> = by_arm.keys().cloned().collect();
+    names.sort();
+    let mut out = Vec::new();
+    for name in names {
+        let Some((vertex_key, direction)) = arm_geometry(&name) else {
+            continue;
+        };
+        let start = card.frame[vertex_key];
+        let mut ticks: Vec<&Tick> = by_arm.remove(&name).unwrap_or_default();
+        ticks.sort_by(|a, b| {
+            a.fraction_from_vertex
+                .partial_cmp(&b.fraction_from_vertex)
+                .unwrap()
+        });
+        out.push(Arm {
+            name,
+            start_mm: start,
+            end_mm: add(start, scale(direction, card.arm_len_mm)),
+            ticks_mm: ticks.iter().map(|t| t.centre_mm).collect(),
+        });
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Image frame + sampling
+
+/// A decoded photo in the layouts the estimator samples: OpenCV
+/// grayscale and RGB triplets (the Python module loads BGR via cv2;
+/// every formula here is applied per-channel-role, so the storage
+/// order does not change results).
+pub struct MeasureFrame {
+    pub width: usize,
+    pub height: usize,
+    pub gray: Vec<u8>,
+    pub rgb: Vec<u8>,
+}
+
+impl MeasureFrame {
+    pub fn from_rgba(img: &crate::image::RgbaImage) -> MeasureFrame {
+        let n = (img.width * img.height) as usize;
+        let mut gray = vec![0u8; n];
+        let mut rgb = vec![0u8; n * 3];
+        for i in 0..n {
+            let (r, g, b) = (
+                img.pixels[i * 4] as u32,
+                img.pixels[i * 4 + 1] as u32,
+                img.pixels[i * 4 + 2] as u32,
+            );
+            // cv2.COLOR_BGR2GRAY fixed point: Y = (4899 R + 9617 G
+            // + 1868 B + 8192) >> 14.
+            gray[i] = ((4899 * r + 9617 * g + 1868 * b + 8192) >> 14) as u8;
+            rgb[i * 3] = r as u8;
+            rgb[i * 3 + 1] = g as u8;
+            rgb[i * 3 + 2] = b as u8;
+        }
+        MeasureFrame {
+            width: img.width as usize,
+            height: img.height as usize,
+            gray,
+            rgb,
+        }
+    }
+
+    /// (H in OpenCV 0-179 scale, S, V) of one pixel.
+    fn hsv(&self, idx: usize) -> (f64, f64, f64) {
+        let r = self.rgb[idx * 3] as f64;
+        let g = self.rgb[idx * 3 + 1] as f64;
+        let b = self.rgb[idx * 3 + 2] as f64;
+        let v = r.max(g).max(b);
+        let m = r.min(g).min(b);
+        let diff = v - m;
+        let s = if v == 0.0 {
+            0.0
+        } else {
+            (255.0 * diff / v).round()
+        };
+        let h = if diff == 0.0 {
+            0.0
+        } else {
+            let deg = if v == r {
+                60.0 * (g - b) / diff
+            } else if v == g {
+                120.0 + 60.0 * (b - r) / diff
+            } else {
+                240.0 + 60.0 * (r - g) / diff
+            };
+            let deg = if deg < 0.0 { deg + 360.0 } else { deg };
+            (deg / 2.0).round()
+        };
+        (h, s, v)
+    }
+}
+
+/// cv2.getRectSubPix on an 8-bit image: exact bilinear sample,
+/// rounded half-up back to an integer value (verified against
+/// OpenCV), border replicated.
+fn sample_u8(img: &[u8], w: usize, h: usize, x: f64, y: f64) -> f64 {
+    let x0 = x.floor();
+    let y0 = y.floor();
+    let dx = x - x0;
+    let dy = y - y0;
+    let (xi, yi) = (x0 as i64, y0 as i64);
+    let get = |xx: i64, yy: i64| -> f64 {
+        let cx = xx.clamp(0, w as i64 - 1) as usize;
+        let cy = yy.clamp(0, h as i64 - 1) as usize;
+        img[cy * w + cx] as f64
+    };
+    let v = (1.0 - dx) * (1.0 - dy) * get(xi, yi)
+        + dx * (1.0 - dy) * get(xi + 1, yi)
+        + (1.0 - dx) * dy * get(xi, yi + 1)
+        + dx * dy * get(xi + 1, yi + 1);
+    (v + 0.5).floor()
+}
+
+fn sample_along(img: &[u8], w: usize, h: usize, p: Pt, q: Pt, n: usize) -> (Vec<f64>, Vec<Pt>) {
+    let xs = linspace(p[0], q[0], n);
+    let ys = linspace(p[1], q[1], n);
+    let mut values = Vec::with_capacity(n);
+    let mut points = Vec::with_capacity(n);
+    for i in 0..n {
+        values.push(sample_u8(img, w, h, xs[i], ys[i]));
+        points.push(pt(xs[i], ys[i]));
+    }
+    (values, points)
+}
+
+fn bright_runs(values: &[f64]) -> Vec<(usize, usize)> {
+    let low = percentile(values, 10.0);
+    let high = percentile(values, 90.0);
+    let threshold = (low + high) / 2.0;
+    let mut runs = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, &v) in values.iter().enumerate() {
+        if v > threshold && start.is_none() {
+            start = Some(i);
+        } else if v <= threshold && start.is_some() {
+            runs.push((start.unwrap(), i - 1));
+            start = None;
+        }
+    }
+    if let Some(s) = start {
+        runs.push((s, values.len() - 1));
+    }
+    runs
+}
+
+/// Bright tick-cut centres along one arm, matched to expectations
+/// (port of `_arm_tick_centres`). A bright run counts only if its
+/// centre's path parameter lands within tolerance of an expected
+/// tick's parameter.
+#[allow(clippy::too_many_arguments)]
+fn arm_tick_centres(
+    frame: &MeasureFrame,
+    start_img: Pt,
+    end_img: Pt,
+    expected_img: &[Pt],
+    tol: f64,
+    max_run_frac: f64,
+) -> Option<Vec<Pt>> {
+    let (values, points) = sample_along(&frame.gray, frame.width, frame.height, start_img, end_img, 240);
+    // np.convolve(values, ones(5)/5, 'same'): zero-padded moving
+    // average (kernel symmetric, so flip direction is immaterial).
+    let n = values.len();
+    let mut smooth = vec![0.0; n];
+    for i in 0..n {
+        let mut acc = 0.0;
+        for k in -2i64..=2 {
+            let j = i as i64 + k;
+            if j >= 0 && (j as usize) < n {
+                acc += values[j as usize];
+            }
+        }
+        smooth[i] = acc / 5.0;
+    }
+    let runs = bright_runs(&smooth);
+    let low = percentile(&smooth, 10.0);
+    let max_len = ((max_run_frac * n as f64) as usize).max(6);
+    let plausible: Vec<(usize, usize)> = runs
+        .into_iter()
+        .filter(|(a, b)| {
+            let len = b - a + 1;
+            len >= 2 && len <= max_len
+        })
+        .collect();
+    let axis = sub(end_img, start_img);
+    let denom = dot(axis, axis);
+    if denom <= 0.0 {
+        return None;
+    }
+    let param = |p: Pt| -> f64 { dot(sub(p, start_img), axis) / denom };
+    let mut run_centres: Vec<(f64, Pt)> = Vec::new();
+    for (a, b) in plausible {
+        let mut wsum = 0.0;
+        let mut cx = 0.0;
+        let mut cy = 0.0;
+        for i in a..=b {
+            let wgt = (smooth[i] - low).max(0.0);
+            wsum += wgt;
+            cx += points[i][0] * wgt;
+            cy += points[i][1] * wgt;
+        }
+        if wsum <= 0.0 {
+            continue;
+        }
+        let centre = pt(cx / wsum, cy / wsum);
+        run_centres.push((param(centre), centre));
+    }
+    let mut centres = Vec::new();
+    let mut used: Vec<bool> = vec![false; run_centres.len()];
+    for expected_pt in expected_img {
+        let target = param(*expected_pt);
+        let mut best: Option<usize> = None;
+        let mut best_d = tol;
+        for (i, (p, _)) in run_centres.iter().enumerate() {
+            if used[i] {
+                continue;
+            }
+            let d = (p - target).abs();
+            if d < best_d {
+                best = Some(i);
+                best_d = d;
+            }
+        }
+        let best = best?;
+        used[best] = true;
+        centres.push(run_centres[best].1);
+    }
+    Some(centres)
+}
+
+/// Centreline points of one arm, measured from the ink mask
+/// (port of `_arm_centreline_points`).
+fn arm_centreline_points(
+    mask: &[u8],
+    w: usize,
+    h: usize,
+    start_img: Pt,
+    end_img: Pt,
+    half_width: f64,
+) -> Option<Vec<Pt>> {
+    let axis = sub(end_img, start_img);
+    let length = norm(axis);
+    if length <= 0.0 {
+        return None;
+    }
+    let direction = scale(axis, 1.0 / length);
+    let normal = pt(-direction[1], direction[0]);
+    let mut points = Vec::new();
+    for t in linspace(0.08, 0.92, 22) {
+        let base = add(start_img, scale(axis, t));
+        let ts = linspace(-half_width, half_width, 33);
+        let mut values = Vec::with_capacity(33);
+        let mut sum = 0.0;
+        for &off in &ts {
+            let p = add(base, scale(normal, off));
+            let v = sample_u8(mask, w, h, p[0], p[1]);
+            values.push(v);
+            sum += v;
+        }
+        if sum < 0.25 * 255.0 * 33.0 * 0.3 {
+            continue;
+        }
+        let mut weighted = 0.0;
+        for (off, v) in ts.iter().zip(values.iter()) {
+            weighted += off * v;
+        }
+        let offset = weighted / sum;
+        points.push(add(base, scale(normal, offset)));
+    }
+    if points.len() < 6 {
+        return None;
+    }
+    Some(points)
+}
+
+/// (centroid, principal direction) of a point set — the SVD line
+/// fit; direction sign is irrelevant to every consumer.
+fn fit_line(points: &[Pt]) -> (Pt, Pt) {
+    let n = points.len() as f64;
+    let cx = points.iter().map(|p| p[0]).sum::<f64>() / n;
+    let cy = points.iter().map(|p| p[1]).sum::<f64>() / n;
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (dx, dy) = (p[0] - cx, p[1] - cy);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    // Eigenvector of [[sxx, sxy], [sxy, syy]] for the larger
+    // eigenvalue.
+    let theta = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let dir = pt(theta.cos(), theta.sin());
+    // atan2 param form gives the major axis directly only when the
+    // covariance is not axis-flipped; verify and fall back to the
+    // analytic eigenvector if it points along the minor axis.
+    let q = |d: Pt| -> f64 {
+        points
+            .iter()
+            .map(|p| {
+                let dx = p[0] - cx;
+                let dy = p[1] - cy;
+                (dx * d[0] + dy * d[1]).powi(2)
+            })
+            .sum()
+    };
+    let alt = pt(-dir[1], dir[0]);
+    let dir = if q(alt) > q(dir) { alt } else { dir };
+    (pt(cx, cy), dir)
+}
+
+fn line_intersection(p1: Pt, d1: Pt, p2: Pt, d2: Pt) -> Option<Pt> {
+    // Solve p1 + t*d1 = p2 + s*d2 via the 2x2 system [d1, -d2].
+    let det = d1[0] * (-d2[1]) - d1[1] * (-d2[0]);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let rhs = sub(p2, p1);
+    let t = (rhs[0] * (-d2[1]) - rhs[1] * (-d2[0])) / det;
+    Some(add(p1, scale(d1, t)))
+}
+
+struct TickMatches {
+    matched: Vec<(Pt, Pt)>,
+    arms_hit: usize,
+    corners: Vec<(Pt, Pt)>,
+}
+
+const EDGE_ARMS: [(&str, [&str; 2]); 4] = [
+    ("top", ["TL-H", "TR-H"]),
+    ("bottom", ["BL-H", "BR-H"]),
+    ("left", ["TL-V", "BL-V"]),
+    ("right", ["TR-V", "BR-V"]),
+];
+
+/// (tick pairs, arms hit, corner pairs) under H — port of
+/// `_tick_matches`. Edge lines are only measured when `with_lines`.
+fn tick_matches(
+    frame: &MeasureFrame,
+    mask: &[u8],
+    card: &CardProfile,
+    H: &H3,
+    strict: bool,
+    with_lines: bool,
+) -> TickMatches {
+    let (tol, max_run_frac) = if strict { (0.11, 0.12) } else { (0.20, 0.30) };
+    let mut arms_hit = 0usize;
+    let mut arm_points: HashMap<String, Vec<Pt>> = HashMap::new();
+    let mut arm_lines: HashMap<String, (Pt, Pt)> = HashMap::new();
+    let mut pending: Vec<(Arm, Vec<Pt>)> = Vec::new();
+    for arm in arms(card) {
+        let start_img = project1(H, arm.start_mm);
+        let end_img = project1(H, arm.end_mm);
+        let direction = sub(end_img, start_img);
+        let arm_len_img = norm(direction);
+        let half_width = 0.75 * card.stroke_mm * (arm_len_img / card.arm_len_mm);
+        if with_lines {
+            if let Some(pts) =
+                arm_centreline_points(mask, frame.width, frame.height, start_img, end_img, half_width)
+            {
+                arm_lines.insert(arm.name.clone(), fit_line(&pts));
+                arm_points.insert(arm.name.clone(), pts);
+            }
+        }
+        let (mask_values, _) = sample_along(mask, frame.width, frame.height, start_img, end_img, 120);
+        let frac_on = mask_values.iter().filter(|&&v| v > 0.0).count() as f64
+            / mask_values.len() as f64;
+        if frac_on < 0.55 {
+            continue;
+        }
+        let expected_img: Vec<Pt> = arm
+            .ticks_mm
+            .iter()
+            .map(|t| project1(H, *t))
+            .collect();
+        let centres = match arm_tick_centres(frame, start_img, end_img, &expected_img, tol, max_run_frac) {
+            Some(c) => c,
+            None => continue,
+        };
+        arms_hit += 1;
+        pending.push((arm, centres));
+    }
+    let mut matched: Vec<(Pt, Pt)> = Vec::new();
+    for (arm, centres) in &pending {
+        let line = arm_lines.get(&arm.name);
+        for (mm_pt, img_pt) in arm.ticks_mm.iter().zip(centres.iter()) {
+            let mut img_pt = *img_pt;
+            if let Some((line_pt, line_dir)) = line {
+                // Keep the accurate along-path coordinate; take the
+                // lateral coordinate from the measured centreline.
+                let along = dot(sub(img_pt, *line_pt), *line_dir);
+                img_pt = add(*line_pt, scale(*line_dir, along));
+            }
+            matched.push((*mm_pt, img_pt));
+        }
+    }
+    // Frame edges from merged arm centreline points; corners from
+    // intersecting them.
+    let mut corners: Vec<(Pt, Pt)> = Vec::new();
+    if with_lines {
+        let mut edges: HashMap<&str, (Pt, Pt)> = HashMap::new();
+        for (edge, arm_names) in EDGE_ARMS.iter() {
+            let mut merged: Vec<Pt> = Vec::new();
+            for name in arm_names {
+                if let Some(pts) = arm_points.get(*name) {
+                    merged.extend_from_slice(pts);
+                }
+            }
+            if merged.len() >= 8 {
+                edges.insert(edge, fit_line(&merged));
+            }
+        }
+        for (vertex, e_a, e_b) in [
+            ("TL", "top", "left"),
+            ("TR", "top", "right"),
+            ("BL", "bottom", "left"),
+            ("BR", "bottom", "right"),
+        ] {
+            if let (Some(a), Some(b)) = (edges.get(e_a), edges.get(e_b)) {
+                if let Some(corner) = line_intersection(a.0, a.1, b.0, b.1) {
+                    corners.push((card.frame[vertex], corner));
+                }
+            }
+        }
+    }
+    TickMatches {
+        matched,
+        arms_hit,
+        corners,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ink mask + ring anchor (the OpenCV front end)
+
+/// cv2.medianBlur(gray, 3) followed by cv2.adaptiveThreshold
+/// (GAUSSIAN, blockSize 51, C 12, BINARY_INV): the card's ink mask.
+fn ink_mask(frame: &MeasureFrame) -> Vec<u8> {
+    let (w, h) = (frame.width, frame.height);
+    // Median 3x3, border replicated.
+    let mut blurred = vec![0u8; w * h];
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let mut vals = [0u8; 9];
+            let mut k = 0;
+            for dy in -1..=1i64 {
+                for dx in -1..=1i64 {
+                    let cx = (x + dx).clamp(0, w as i64 - 1) as usize;
+                    let cy = (y + dy).clamp(0, h as i64 - 1) as usize;
+                    vals[k] = frame.gray[cy * w + cx];
+                    k += 1;
+                }
+            }
+            vals.sort_unstable();
+            blurred[y as usize * w + x as usize] = vals[4];
+        }
+    }
+    // Gaussian kernel, blockSize 51: sigma = 0.3*((51-1)*0.5 - 1) + 0.8 = 8.
+    let sigma = 8.0f64;
+    let mut kernel = [0.0f64; 51];
+    let mut ksum = 0.0;
+    for i in 0..51 {
+        let d = i as f64 - 25.0;
+        kernel[i] = (-(d * d) / (2.0 * sigma * sigma)).exp();
+        ksum += kernel[i];
+    }
+    for v in kernel.iter_mut() {
+        *v /= ksum;
+    }
+    // Separable weighted mean, border replicated, in f64.
+    let mut tmp = vec![0.0f64; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (i, &kw) in kernel.iter().enumerate() {
+                let cx = (x as i64 + i as i64 - 25).clamp(0, w as i64 - 1) as usize;
+                acc += kw * blurred[y * w + cx] as f64;
+            }
+            tmp[y * w + x] = acc;
+        }
+    }
+    let mut mask = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (i, &kw) in kernel.iter().enumerate() {
+                let cy = (y as i64 + i as i64 - 25).clamp(0, h as i64 - 1) as usize;
+                acc += kw * tmp[cy * w + x];
+            }
+            // OpenCV's adaptiveThreshold rounds the Gaussian mean
+            // to 8U first, then subtracts C with saturation, then
+            // compares in integers (BINARY_INV: fg iff src <= T).
+            // Comparing against the unrounded f64 mean erodes the
+            // mask by a pixel on soft edges — enough to shear the
+            // sheet seed on small cards.
+            let thresh = ((acc.round() as i32) - 12).max(0);
+            mask[y * w + x] = if (blurred[y * w + x] as i32) <= thresh { 255 } else { 0 };
+        }
+    }
+    mask
+}
+
+/// (centroid, pixel area) of the lockup's cyan ring — port of
+/// `_ring_centroid` (HSV inRange (88,70,70)-(104,255,255), moments).
+fn ring_centroid(frame: &MeasureFrame) -> Option<(Pt, f64)> {
+    let mut count = 0f64;
+    let mut sx = 0f64;
+    let mut sy = 0f64;
+    for y in 0..frame.height {
+        for x in 0..frame.width {
+            let idx = y * frame.width + x;
+            let (hh, ss, vv) = frame.hsv(idx);
+            if (88.0..=104.0).contains(&hh) && ss >= 70.0 && vv >= 70.0 {
+                count += 1.0;
+                sx += x as f64;
+                sy += y as f64;
+            }
+        }
+    }
+    // moments m00 sums pixel VALUES (255 per cyan pixel); the
+    // Python gate is m00 < 200.
+    if count * 255.0 < 200.0 {
+        return None;
+    }
+    Some((pt(sx / count, sy / count), count))
+}
+
+// ---------------------------------------------------------------------------
+// Contours (cv2.findContours RETR_EXTERNAL + CHAIN_APPROX_SIMPLE)
+
+const DIRS8: [(i64, i64); 8] = [
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+];
+
+/// Moore-neighbour trace of one component's outer boundary,
+/// starting at its topmost-leftmost pixel.
+fn trace_outer(mask: &[u8], w: usize, h: usize, start: (i64, i64)) -> Vec<Pt> {
+    let fg = |x: i64, y: i64| -> bool {
+        x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && mask[y as usize * w + x as usize] > 0
+    };
+    let mut chain: Vec<Pt> = vec![pt(start.0 as f64, start.1 as f64)];
+    let mut p = start;
+    // The pixel above the start is background (start is topmost);
+    // it is the initial backtrack.
+    let mut backtrack = (start.0, start.1 - 1);
+    // Jacob's stopping criterion: the trace is done when, standing
+    // on the start pixel again, the next step would repeat the very
+    // first step. (Comparing backtracks on re-entry never fires:
+    // the trace re-enters the start from a different side than the
+    // initial backtrack, and cycles forever.)
+    let mut first_dir: Option<usize> = None;
+    // A boundary trace visits each boundary pixel a bounded number
+    // of times; the cap is a defensive backstop only.
+    let max_steps = 2 * (w * h) + 64;
+    for _ in 0..max_steps {
+        // Direction index of the backtrack relative to p.
+        let bd = (backtrack.0 - p.0, backtrack.1 - p.1);
+        let b_idx = DIRS8.iter().position(|&d| d == bd).unwrap_or(6);
+        let mut moved = false;
+        for k in 1..=8usize {
+            let d_idx = (b_idx + k) % 8;
+            let d = DIRS8[d_idx];
+            let q = (p.0 + d.0, p.1 + d.1);
+            if fg(q.0, q.1) {
+                if p == start && first_dir == Some(d_idx) {
+                    return chain;
+                }
+                if first_dir.is_none() {
+                    first_dir = Some(d_idx);
+                }
+                let prev_d = DIRS8[(b_idx + k - 1) % 8];
+                backtrack = (p.0 + prev_d.0, p.1 + prev_d.1);
+                chain.push(pt(q.0 as f64, q.1 as f64));
+                p = q;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            break; // isolated pixel
+        }
+    }
+    chain
+}
+
+/// Compress a closed boundary chain the way CHAIN_APPROX_SIMPLE
+/// does: keep a point only where the step direction changes.
+fn approx_simple(chain: &[Pt]) -> Vec<Pt> {
+    let n = chain.len();
+    if n <= 2 {
+        return chain.to_vec();
+    }
+    let dir_of = |a: Pt, b: Pt| -> (i64, i64) {
+        // NB: f64::signum returns 1.0 for +0.0, which would give
+        // axis-aligned steps a phantom direction; spell it out.
+        let sign = |d: f64| -> i64 {
+            if d > 0.0 {
+                1
+            } else if d < 0.0 {
+                -1
+            } else {
+                0
+            }
+        };
+        (sign(b[0] - a[0]), sign(b[1] - a[1]))
+    };
+    let mut out = Vec::new();
+    for i in 0..n {
+        let prev = chain[(i + n - 1) % n];
+        let cur = chain[i];
+        let next = chain[(i + 1) % n];
+        if dir_of(prev, cur) != dir_of(cur, next) {
+            out.push(cur);
+        }
+    }
+    if out.is_empty() {
+        chain.to_vec()
+    } else {
+        out
+    }
+}
+
+/// External contours of the mask, as pixel-centre chains in
+/// raster order of each component's start pixel; `simple` applies
+/// the CHAIN_APPROX_SIMPLE direction-change compression, otherwise
+/// the full chain (CHAIN_APPROX_NONE) is returned.
+fn external_contours(mask: &[u8], w: usize, h: usize, simple: bool) -> Vec<Vec<Pt>> {
+    // Label components (8-connectivity) in raster order.
+    let mut labels = vec![0i32; w * h];
+    let mut starts: Vec<(i64, i64)> = Vec::new();
+    let mut current = 0i32;
+    for y in 0..h {
+        for x in 0..w {
+            let idx = y * w + x;
+            if mask[idx] == 0 || labels[idx] != 0 {
+                continue;
+            }
+            current += 1;
+            starts.push((x as i64, y as i64));
+            labels[idx] = current;
+            let mut stack = vec![(x, y)];
+            while let Some((cx, cy)) = stack.pop() {
+                for dy in -1..=1i64 {
+                    for dx in -1..=1i64 {
+                        let (nx, ny) = (cx as i64 + dx, cy as i64 + dy);
+                        if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                            continue;
+                        }
+                        let nidx = ny as usize * w + nx as usize;
+                        if mask[nidx] > 0 && labels[nidx] == 0 {
+                            labels[nidx] = current;
+                            stack.push((nx as usize, ny as usize));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    starts
+        .iter()
+        .map(|&s| {
+            let chain = trace_outer(mask, w, h, s);
+            if simple {
+                approx_simple(&chain)
+            } else {
+                chain
+            }
+        })
+        .collect()
+}
+
+fn arc_length(chain: &[Pt], closed: bool) -> f64 {
+    let mut total = 0.0;
+    let n = chain.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let pairs = if closed { n } else { n - 1 };
+    for i in 0..pairs {
+        total += norm(sub(chain[(i + 1) % n], chain[i]));
+    }
+    total
+}
+
+/// cv2.approxPolyDP on a closed chain — a transliteration of
+/// OpenCV's approx.cpp (Ramer-Douglas-Peucker with its diametral
+/// seed pair, cross-product distance test, and final cleanup pass),
+/// because the seed quad is only accepted at exactly 4 points and
+/// textbook DP anchors differently.
+fn approx_poly_dp(chain: &[Pt], eps_in: f64) -> Vec<Pt> {
+    let count = chain.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let eps = eps_in * eps_in; // OpenCV squares it up front
+    let src = chain;
+    let mut dst: Vec<Pt> = Vec::with_capacity(count);
+    // Slices are (start, end) index pairs along the wrapped order.
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    let mut right_start: usize = 0;
+    let mut slice_start: usize;
+    let mut le_eps: bool;
+    // 1. Approximately two farthest points (3 refinement rounds
+    // starting from src[0]).
+    let mut pos: usize = 0;
+    let mut start_pt = pt(0.0, 0.0);
+    right_start = 0;
+    le_eps = false;
+    for _ in 0..3 {
+        let mut max_dist = 0.0f64;
+        pos = (pos + right_start) % count;
+        // READ_PT(start_pt, pos)
+        start_pt = src[pos];
+        pos = if pos + 1 >= count { 0 } else { pos + 1 };
+        for j in 1..count {
+            let p = src[pos];
+            pos = if pos + 1 >= count { 0 } else { pos + 1 };
+            let dx = p[0] - start_pt[0];
+            let dy = p[1] - start_pt[1];
+            let dist = dx * dx + dy * dy;
+            if dist > max_dist {
+                max_dist = dist;
+                right_start = j;
+            }
+        }
+        le_eps = max_dist <= eps;
+    }
+    if !le_eps {
+        // right_slice = (farthest, anchor); slice = (anchor, farthest)
+        let anchor = pos % count;
+        slice_start = anchor;
+        let farthest = (right_start + anchor) % count;
+        stack.push((farthest, anchor)); // right_slice pushed first
+        stack.push((anchor, farthest)); // slice processed first (LIFO)
+    } else {
+        dst.push(start_pt);
+    }
+    // 2. Stack DP: write slice start points whose slice is within eps.
+    while let Some((s, e)) = stack.pop() {
+        let end_pt = src[e];
+        let mut ppos = s;
+        // READ_PT(start_pt, ppos)
+        let mut spt = src[ppos];
+        ppos = if ppos + 1 >= count { 0 } else { ppos + 1 };
+        if ppos != e {
+            let dx = end_pt[0] - spt[0];
+            let dy = end_pt[1] - spt[1];
+            debug_assert!(dx != 0.0 || dy != 0.0);
+            let mut max_dist = 0.0f64;
+            let mut split = right_start;
+            while ppos != e {
+                let p = src[ppos];
+                ppos = if ppos + 1 >= count { 0 } else { ppos + 1 };
+                let dist = ((p[1] - spt[1]) * dx - (p[0] - spt[0]) * dy).abs();
+                if dist > max_dist {
+                    max_dist = dist;
+                    split = (ppos + count - 1) % count;
+                }
+            }
+            le_eps = max_dist * max_dist <= eps * (dx * dx + dy * dy);
+            if le_eps {
+                dst.push(spt);
+            } else {
+                stack.push((split, e)); // right_slice
+                stack.push((s, split)); // slice
+            }
+        } else {
+            spt = src[s];
+            dst.push(spt);
+        }
+    }
+    // 3. Cleanup pass: drop points lying almost on the segment
+    // between their neighbours (in-place, wrapped).
+    let total = dst.len();
+    if total <= 2 {
+        return dst;
+    }
+    let mut new_count = total;
+    let mut buf = dst.clone();
+    let mut pos2: usize = total - 1; // closed: start at last point
+    let read_dst = |buf: &[Pt], pos: &mut usize| -> Pt {
+        let p = buf[*pos];
+        *pos = if *pos + 1 >= total { 0 } else { *pos + 1 };
+        p
+    };
+    let mut start_pt = read_dst(&buf, &mut pos2);
+    let mut wpos = pos2;
+    let mut pt_cur = read_dst(&buf, &mut pos2);
+    let mut i = 0usize;
+    while i < total && new_count > 2 {
+        let end_pt = read_dst(&buf, &mut pos2);
+        let dx = end_pt[0] - start_pt[0];
+        let dy = end_pt[1] - start_pt[1];
+        let dist = ((pt_cur[0] - start_pt[0]) * dy - (pt_cur[1] - start_pt[1]) * dx).abs();
+        let sip = (pt_cur[0] - start_pt[0]) * (end_pt[0] - pt_cur[0])
+            + (pt_cur[1] - start_pt[1]) * (end_pt[1] - pt_cur[1]);
+        if dist * dist <= 0.5 * eps * (dx * dx + dy * dy) && dx != 0.0 && dy != 0.0 && sip >= 0.0 {
+            new_count -= 1;
+            buf[wpos] = end_pt;
+            start_pt = end_pt;
+            wpos = if wpos + 1 >= total { 0 } else { wpos + 1 };
+            pt_cur = read_dst(&buf, &mut pos2);
+            i += 2;
+            continue;
+        }
+        buf[wpos] = pt_cur;
+        start_pt = pt_cur;
+        wpos = if wpos + 1 >= total { 0 } else { wpos + 1 };
+        pt_cur = end_pt;
+        i += 1;
+    }
+    buf.truncate(new_count);
+    buf
+}
+
+fn order_quad(pts: &[Pt]) -> [Pt; 4] {
+    let sums: Vec<f64> = pts.iter().map(|p| p[0] + p[1]).collect();
+    let diffs: Vec<f64> = pts.iter().map(|p| p[0] - p[1]).collect();
+    [
+        pts[argmin_first(&sums)],  // TL
+        pts[argmax_first(&diffs)], // TR
+        pts[argmax_first(&sums)],  // BR
+        pts[argmin_first(&diffs)], // BL
+    ]
+}
+
+/// Homography seed from the card sheet's own quad, or None (port
+/// of `_sheet_seed`).
+fn sheet_seed(mask: &[u8], w: usize, h: usize, card: &CardProfile, ring_centroid: Pt) -> Option<H3> {
+    let mut contours = external_contours(mask, w, h, true);
+    contours.sort_by(|a, b| {
+        arc_length(b, true)
+            .partial_cmp(&arc_length(a, true))
+            .unwrap()
+    });
+    contours.truncate(6);
+    let (cw, ch) = (card.card_width_mm, card.card_height_mm);
+    let sheet_mm = [pt(0.0, 0.0), pt(cw, 0.0), pt(cw, ch), pt(0.0, ch)];
+    for contour in &contours {
+        let peri = arc_length(contour, true);
+        if peri < 400.0 {
+            continue;
+        }
+        let mut approx: Option<Vec<Pt>> = None;
+        for eps_factor in [0.01, 0.02, 0.03] {
+            let candidate = approx_poly_dp(contour, eps_factor * peri);
+            if candidate.len() == 4 {
+                approx = Some(candidate);
+                break;
+            }
+        }
+        let Some(approx) = approx else { continue };
+        let ordered = order_quad(&approx);
+        let Some(H) = solve_homography(&sheet_mm, &ordered) else {
+            continue;
+        };
+        let projected_ring = project1(&H, card.ring_centre_mm);
+        if norm(sub(projected_ring, ring_centroid)) <= 30.0 {
+            return Some(H);
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Canny + Hough (for the fallback quad seed)
+
+/// cv2.Canny(img, 50, 150): Sobel L1 magnitude on the raw input
+/// (OpenCV's Canny has NO internal blur), sector non-max
+/// suppression over the full gradient field, hysteresis. NMS ties
+/// use OpenCV's asymmetric rule (strictly greater than one
+/// neighbour, >= the other) so a 2-px magnitude plateau collapses
+/// to one pixel instead of two.
+fn canny_edges(img: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let at = |x: i64, y: i64| -> f64 {
+        let cx = x.clamp(0, w as i64 - 1) as usize;
+        let cy = y.clamp(0, h as i64 - 1) as usize;
+        img[cy * w + cx] as f64
+    };
+    let mut mag = vec![0.0f64; w * h];
+    let mut ang = vec![0.0f64; w * h];
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let gx = -at(x - 1, y - 1) + at(x + 1, y - 1) - 2.0 * at(x - 1, y)
+                + 2.0 * at(x + 1, y)
+                - at(x - 1, y + 1)
+                + at(x + 1, y + 1);
+            let gy = -at(x - 1, y - 1) - 2.0 * at(x, y - 1) - at(x + 1, y - 1)
+                + at(x - 1, y + 1)
+                + 2.0 * at(x, y + 1)
+                + at(x + 1, y + 1);
+            let idx = y as usize * w + x as usize;
+            mag[idx] = gx.abs() + gy.abs();
+            let mut a = gy.atan2(gx);
+            if a < 0.0 {
+                a += std::f64::consts::PI;
+            }
+            ang[idx] = a;
+        }
+    }
+    let mut candidate = vec![false; w * h];
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let idx = y as usize * w + x as usize;
+            let m = mag[idx];
+            if m <= 50.0 {
+                continue;
+            }
+            let sector = ((ang[idx] + std::f64::consts::PI / 8.0)
+                / (std::f64::consts::PI / 4.0))
+                .floor() as usize
+                % 4;
+            // (strict-side neighbour, weak-side neighbour) along
+            // the gradient direction.
+            let (n1, n2) = match sector {
+                0 => ((x - 1, y), (x + 1, y)),
+                1 => ((x - 1, y - 1), (x + 1, y + 1)),
+                2 => ((x, y - 1), (x, y + 1)),
+                _ => ((x - 1, y + 1), (x + 1, y - 1)),
+            };
+            let get = |p: (i64, i64)| -> f64 {
+                if p.0 < 0 || p.1 < 0 || p.0 as usize >= w || p.1 as usize >= h {
+                    0.0
+                } else {
+                    mag[p.1 as usize * w + p.0 as usize]
+                }
+            };
+            if m > get(n1) && m >= get(n2) {
+                candidate[idx] = true;
+            }
+        }
+    }
+    // Hysteresis: strong pixels plus candidate pixels connected
+    // (8-conn) to a strong one.
+    let mut out = vec![0u8; w * h];
+    let mut stack: Vec<usize> = Vec::new();
+    for i in 0..w * h {
+        if candidate[i] && mag[i] > 150.0 {
+            out[i] = 255;
+            stack.push(i);
+        }
+    }
+    while let Some(i) = stack.pop() {
+        let (x, y) = ((i % w) as i64, (i / w) as i64);
+        for dy in -1..=1i64 {
+            for dx in -1..=1i64 {
+                let (nx, ny) = (x + dx, y + dy);
+                if nx < 0 || ny < 0 || nx as usize >= w || ny as usize >= h {
+                    continue;
+                }
+                let nidx = ny as usize * w + nx as usize;
+                if candidate[nidx] && out[nidx] == 0 {
+                    out[nidx] = 255;
+                    stack.push(nidx);
+                }
+            }
+        }
+    }
+    out
+}
+
+struct HoughSeg {
+    length: f64,
+    rho: f64,
+    normal: Pt,
+    direction: Pt,
+}
+
+/// Deterministic stand-in for cv2.HoughLinesP(edges, 1, pi/180,
+/// threshold=80, minLineLength=110, maxLineGap=20). OpenCV's
+/// progressive Hough is randomized, so exact segment parity is
+/// impossible; this keeps the same accumulator geometry and
+/// thresholds and extracts runs along each strong line, which is
+/// all the quad seed consumes (length, rho, normal, direction).
+fn hough_segments(edges: &[u8], w: usize, h: usize) -> Vec<HoughSeg> {
+    let mut points: Vec<(i64, i64)> = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            if edges[y * w + x] > 0 {
+                points.push((x as i64, y as i64));
+            }
+        }
+    }
+    if points.is_empty() {
+        return Vec::new();
+    }
+    let diag = ((w * w + h * h) as f64).sqrt().ceil() as i64;
+    let rho_bins = (2 * diag + 1) as usize;
+    let mut accum = vec![0u32; 180 * rho_bins];
+    let mut trig: Vec<(f64, f64)> = Vec::with_capacity(180);
+    for k in 0..180 {
+        let theta = k as f64 * std::f64::consts::PI / 180.0;
+        trig.push((theta.cos(), theta.sin()));
+    }
+    for &(x, y) in &points {
+        for (k, &(c, s)) in trig.iter().enumerate() {
+            let rho = (x as f64 * c + y as f64 * s).round() as i64 + diag;
+            accum[k * rho_bins + rho as usize] += 1;
+        }
+    }
+    let mut cells: Vec<(u32, usize, i64)> = Vec::new();
+    for k in 0..180 {
+        for r in 0..rho_bins {
+            let votes = accum[k * rho_bins + r];
+            if votes > 80 {
+                cells.push((votes, k, r as i64 - diag));
+            }
+        }
+    }
+    cells.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    let mut used = vec![false; points.len()];
+    let mut segments: Vec<HoughSeg> = Vec::new();
+    for &(_, k, rho) in cells.iter() {
+        if segments.len() >= 300 {
+            break;
+        }
+        let (c, s) = trig[k];
+        let mut members: Vec<(f64, usize)> = Vec::new(); // (t, point idx)
+        for (i, &(x, y)) in points.iter().enumerate() {
+            if used[i] {
+                continue;
+            }
+            let r = (x as f64 * c + y as f64 * s).round() as i64;
+            if r == rho {
+                members.push((-(x as f64) * s + y as f64 * c, i));
+            }
+        }
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut run_start = 0usize;
+        for j in 1..=members.len() {
+            let end_run = j == members.len()
+                || members[j].0 - members[j - 1].0 > 20.0;
+            if !end_run {
+                continue;
+            }
+            let run = &members[run_start..j];
+            run_start = j;
+            if run.len() < 2 {
+                continue;
+            }
+            let extent = run[run.len() - 1].0 - run[0].0;
+            if extent < 110.0 {
+                continue;
+            }
+            // HoughLinesP reports endpoints ON the accumulator
+            // line (normal (c, s), rho = bin): the extreme run
+            // parameters projected onto the ideal line, not the
+            // raw edge pixels. Using raw pixels instead adds
+            // ~1.4 px of endpoint noise, which skews the line
+            // direction and every quad built from it.
+            let d0 = pt(-s, c);
+            let base = pt(c * rho as f64, s * rho as f64);
+            let p = add(base, scale(d0, run[0].0));
+            let q = add(base, scale(d0, run[run.len() - 1].0));
+            let length = norm(sub(q, p));
+            if length < 110.0 {
+                continue;
+            }
+            let mut direction = d0;
+            if direction[0] < 0.0 {
+                direction = scale(direction, -1.0);
+            }
+            let normal = pt(-direction[1], direction[0]);
+            let seg_rho = dot(normal, p);
+            for &(_, idx) in run {
+                used[idx] = true;
+            }
+            segments.push(HoughSeg {
+                length,
+                rho: seg_rho,
+                normal,
+                direction,
+            });
+        }
+    }
+    segments
+}
+
+/// Line pairs in one orientation family whose rho interval
+/// brackets the ring centre at a plausible sheet separation.
+fn pairs_bracketing<'a>(
+    fam: &[&'a HoughSeg],
+    card: &CardProfile,
+    ring_centroid: Pt,
+    scale0: f64,
+) -> Vec<(&'a HoughSeg, &'a HoughSeg)> {
+    let n_mean = pt(
+        fam.iter().map(|s| s.normal[0]).sum::<f64>() / fam.len() as f64,
+        fam.iter().map(|s| s.normal[1]).sum::<f64>() / fam.len() as f64,
+    );
+    let expected_px = if n_mean[1].abs() > n_mean[0].abs() {
+        card.card_height_mm
+    } else {
+        card.card_width_mm
+    } * scale0;
+    let mut out = Vec::new();
+    for i in 0..fam.len() {
+        for j in (i + 1)..fam.len() {
+            let (r1, r2) = (fam[i].rho, fam[j].rho);
+            let centre_side = dot(fam[i].normal, ring_centroid);
+            let (lo, hi) = (r1.min(r2), r1.max(r2));
+            if lo < centre_side
+                && centre_side < hi
+                && 0.45 * expected_px < hi - lo
+                && hi - lo < 2.2 * expected_px
+            {
+                out.push((fam[i], fam[j]));
+            }
+        }
+    }
+    out
+}
+
+/// Projective seed from Hough line quads, or None (port of
+/// `_hough_quad_seed`).
+fn hough_quad_seed(
+    frame: &MeasureFrame,
+    mask: &[u8],
+    card: &CardProfile,
+    ring_centroid: Pt,
+    scale0: f64,
+) -> Option<H3> {
+    let edges = canny_edges(mask, frame.width, frame.height);
+    let mut segs = hough_segments(&edges, frame.width, frame.height);
+    if segs.len() < 4 {
+        return None;
+    }
+    segs.sort_by(|a, b| b.length.partial_cmp(&a.length).unwrap());
+    segs.truncate(28);
+    let ref_ang = segs[0].normal[1].atan2(segs[0].normal[0]);
+    let (mut fam_a, mut fam_b): (Vec<&HoughSeg>, Vec<&HoughSeg>) = (Vec::new(), Vec::new());
+    for s in &segs {
+        let ang = s.normal[1].atan2(s.normal[0]);
+        if (ref_ang - ang).sin().abs() < 0.35 {
+            fam_a.push(s);
+        } else {
+            fam_b.push(s);
+        }
+    }
+    if fam_a.len() < 2 || fam_b.len() < 2 {
+        return None;
+    }
+    let sheet_mm = [
+        pt(0.0, 0.0),
+        pt(card.card_width_mm, 0.0),
+        pt(card.card_width_mm, card.card_height_mm),
+        pt(0.0, card.card_height_mm),
+    ];
+    let pairs_a = pairs_bracketing(&fam_a, card, ring_centroid, scale0);
+    let pairs_b = pairs_bracketing(&fam_b, card, ring_centroid, scale0);
+    let mut quads: Vec<H3> = Vec::new();
+    for &(a1, a2) in &pairs_a {
+        for &(b1, b2) in &pairs_b {
+            let mut corners = Vec::with_capacity(4);
+            let mut ok = true;
+            for s_a in [a1, a2] {
+                for s_b in [b1, b2] {
+                    let pa = scale(s_a.normal, s_a.rho);
+                    let pb = scale(s_b.normal, s_b.rho);
+                    match line_intersection(pa, s_a.direction, pb, s_b.direction) {
+                        Some(p) => corners.push(p),
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !ok {
+                    break;
+                }
+            }
+            if !ok || corners.len() != 4 {
+                continue;
+            }
+            let ordered = order_quad(&corners);
+            let Some(H) = solve_homography(&sheet_mm, &ordered) else {
+                continue;
+            };
+            let projected_ring = project1(&H, card.ring_centre_mm);
+            if norm(sub(projected_ring, ring_centroid)) > 30.0 {
+                continue;
+            }
+            quads.push(H);
+        }
+    }
+    // Python scores only the first 12 ring-passing quads, in an
+    // order set by HoughLinesP's randomized extraction; which
+    // quads land in the 12 is chance, and the function's own
+    // docstring states the intent ("the survivor with the best
+    // loose tick score wins"). Score every ring-passing quad
+    // (bounded) and take the best: deterministic, and faithful
+    // to the documented selection rule.
+    let mut best: Option<(f64, H3)> = None;
+    for H in quads.iter().take(512) {
+        let tm = tick_matches(frame, mask, card, H, false, false);
+        let score = tm.arms_hit as f64 + 0.02 * tm.matched.len() as f64;
+        if best.is_none() || score > best.unwrap().0 {
+            best = Some((score, *H));
+        }
+    }
+    best.map(|(_, H)| H)
+}
+
+/// Similarity mapping card-mm -> image, anchored at the ring.
+fn similarity(ring_mm: Pt, centre_img: Pt, theta: f64, scale: f64) -> H3 {
+    let (c, s) = (theta.cos(), theta.sin());
+    let r_ring = pt(
+        c * ring_mm[0] - s * ring_mm[1],
+        s * ring_mm[0] + c * ring_mm[1],
+    );
+    let t = sub(centre_img, pt(r_ring[0] * scale, r_ring[1] * scale));
+    [
+        scale * c,
+        -scale * s,
+        t[0],
+        scale * s,
+        scale * c,
+        t[1],
+        0.0,
+        0.0,
+        1.0,
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Homography fitting: RANSAC (OpenCV clone) + weighted least squares
+
+/// cv::RNG as seeded by RANSACPointSetRegistrator::run:
+/// RNG((uint64)-1), fresh for every call, hence deterministic.
+struct CvRng {
+    state: u64,
+}
+
+impl CvRng {
+    fn new() -> CvRng {
+        CvRng { state: u64::MAX }
+    }
+    fn next(&mut self) -> u32 {
+        self.state = (self.state as u32 as u64)
+            .wrapping_mul(4164903690u64)
+            .wrapping_add((self.state >> 32) as u32 as u64);
+        self.state as u32
+    }
+    fn uniform(&mut self, a: i32, b: i32) -> i32 {
+        if a == b {
+            a
+        } else {
+            (self.next() % ((b - a) as u32)) as i32 + a
+        }
+    }
+}
+
+/// precomp.hpp haveCollinearPoints: only triples containing the
+/// LAST point are tested (an OpenCV quirk, kept faithfully).
+fn have_collinear_points(pts: &[Pt; 4]) -> bool {
+    let i = 3;
+    for j in 0..i {
+        let dx1 = pts[j][0] - pts[i][0];
+        let dy1 = pts[j][1] - pts[i][1];
+        for k in 0..j {
+            let dx2 = pts[k][0] - pts[i][0];
+            let dy2 = pts[k][1] - pts[i][1];
+            if (dx2 * dy1 - dy2 * dx1).abs()
+                <= FLT_EPSILON * (dx1.abs() + dy1.abs() + dx2.abs() + dy2.abs())
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// HomographyEstimatorCallback::checkSubset for a 4-subset:
+/// no collinear points, and the four triples' orientation signs
+/// must agree between src and dst (all same or all flipped).
+fn check_subset(src: &[Pt; 4], dst: &[Pt; 4]) -> bool {
+    if have_collinear_points(src) || have_collinear_points(dst) {
+        return false;
+    }
+    let det3 = |p: &[Pt; 4], t: [usize; 3]| -> f64 {
+        let (a, b, c) = (p[t[0]], p[t[1]], p[t[2]]);
+        a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1])
+    };
+    let mut negative = 0;
+    for t in [[0, 1, 2], [1, 2, 3], [0, 2, 3], [0, 1, 3]] {
+        if det3(src, t) * det3(dst, t) < 0.0 {
+            negative += 1;
+        }
+    }
+    negative == 0 || negative == 4
+}
+
+/// cv::RANSACUpdateNumIters.
+fn ransac_update_num_iters(p: f64, ep: f64, model_points: i32, max_iters: i64) -> i64 {
+    let p = p.clamp(0.0, 1.0);
+    let ep = ep.clamp(0.0, 1.0);
+    let num = (1.0 - p).max(DBL_MIN);
+    let denom = 1.0 - (1.0 - ep).powi(model_points);
+    if denom < DBL_MIN {
+        return 0;
+    }
+    let num = num.ln();
+    let denom = denom.ln();
+    if denom >= 0.0 || -num >= max_iters as f64 * (-denom) {
+        max_iters
+    } else {
+        (num / denom).round_ties_even() as i64
+    }
+}
+
+/// findInliers with the callback's float32 error: squared forward
+/// reprojection error <= threshold^2 (9.0 for the 3.0 default).
+fn find_inliers_f32(pairs: &[(Pt, Pt)], H: &H3) -> (Vec<bool>, usize) {
+    let hf: [f32; 9] = std::array::from_fn(|i| H[i] as f32);
+    let mut mask = vec![false; pairs.len()];
+    let mut count = 0usize;
+    for (i, (big_m, m)) in pairs.iter().enumerate() {
+        let (x, y) = (big_m[0] as f32, big_m[1] as f32);
+        let ww = 1.0f32 / (hf[6] * x + hf[7] * y + hf[8]);
+        let dx = (hf[0] * x + hf[1] * y + hf[2]) * ww - m[0] as f32;
+        let dy = (hf[3] * x + hf[4] * y + hf[5]) * ww - m[1] as f32;
+        let err = dx * dx + dy * dy;
+        if err <= 9.0f32 {
+            mask[i] = true;
+            count += 1;
+        }
+    }
+    (mask, count)
+}
+
+/// cv2.findHomography(src, dst, RANSAC, 3.0) at the defaults
+/// (confidence 0.995, maxIters 2000): RANSACPointSetRegistrator
+/// with the homography callback — fresh RNG per call, getSubset
+/// with checkSubset (10000 attempts), the adaptive iteration
+/// update, and findHomography's post-loop inlier kernel refit +
+/// LM refinement. The returned mask is the SAMPLING mask.
+fn ransac_homography(pairs_in: &[(Pt, Pt)]) -> Option<(H3, Vec<bool>)> {
+    let pairs = to_f32_pairs(pairs_in);
+    let n = pairs.len();
+    if n < 4 {
+        return None;
+    }
+    if n == 4 {
+        let H = dlt_kernel(&pairs)?;
+        return Some((H, vec![true; 4]));
+    }
+    let mut rng = CvRng::new();
+    let mut niters: i64 = 2000;
+    let mut max_good = 0usize;
+    let mut best: Option<(H3, Vec<bool>)> = None;
+    let mut iter: i64 = 0;
+    while iter < niters {
+        // getSubset: rejection-sampled distinct indices until
+        // checkSubset passes (10000 attempts).
+        let mut subset: Option<[usize; 4]> = None;
+        for _attempt in 0..10000 {
+            let mut idx = [0usize; 4];
+            for i in 0..4 {
+                loop {
+                    let cand = rng.uniform(0, n as i32) as usize;
+                    if !idx[..i].contains(&cand) {
+                        idx[i] = cand;
+                        break;
+                    }
+                }
+            }
+            let s4: [Pt; 4] = std::array::from_fn(|i| pairs[idx[i]].0);
+            let d4: [Pt; 4] = std::array::from_fn(|i| pairs[idx[i]].1);
+            if check_subset(&s4, &d4) {
+                subset = Some(idx);
+                break;
+            }
+        }
+        let Some(idx) = subset else {
+            if iter == 0 {
+                return None;
+            }
+            break;
+        };
+        iter += 1;
+        let sample: Vec<(Pt, Pt)> = idx.iter().map(|&i| pairs[i]).collect();
+        let Some(H) = dlt_kernel(&sample) else {
+            continue;
+        };
+        let (mask, good) = find_inliers_f32(&pairs, &H);
+        if good > max_good.max(3) {
+            max_good = good;
+            best = Some((H, mask));
+            niters = ransac_update_num_iters(0.995, (n - good) as f64 / n as f64, 4, niters);
+        }
+    }
+    if max_good == 0 {
+        return None;
+    }
+    let (best_H, mask) = best?;
+    // findHomography post-process: compress to inliers, kernel
+    // refit, LM refinement, scaleFor normalization.
+    let kept: Vec<(Pt, Pt)> = pairs
+        .iter()
+        .zip(mask.iter())
+        .filter(|(_, &k)| k)
+        .map(|(p, _)| *p)
+        .collect();
+    let mut H = best_H;
+    if !kept.is_empty() {
+        if kept.len() >= 4 {
+            if let Some(Hk) = dlt_kernel(&kept) {
+                H = Hk;
+            }
+        }
+        lm_refine(&kept, &mut H);
+        normalize_h(&mut H);
+    }
+    Some((H, mask))
+}
+
+fn solve_homography_pairs(pairs: &[(Pt, Pt)]) -> Option<H3> {
+    let src: Vec<Pt> = pairs.iter().map(|p| p.0).collect();
+    let dst: Vec<Pt> = pairs.iter().map(|p| p.1).collect();
+    solve_homography(&src, &dst)
+}
+
+// ---------------------------------------------------------------------------
+// Card detection
+
+fn fit_homography(
+    tick_pairs: &[(Pt, Pt)],
+    corner_pairs: &[(Pt, Pt)],
+) -> Option<H3> {
+    let mut pool: Vec<(Pt, Pt)> = tick_pairs.to_vec();
+    pool.extend_from_slice(corner_pairs);
+    let (H_r, inliers) = ransac_homography(&pool)?;
+    let n_inliers: usize = inliers.iter().filter(|&&b| b).count();
+    let (ticks_kept, corners_kept): (Vec<(Pt, Pt)>, Vec<(Pt, Pt)>) =
+        if n_inliers >= 8 {
+            let n_ticks = tick_pairs.len();
+            (
+                tick_pairs
+                    .iter()
+                    .zip(inliers[..n_ticks].iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(p, _)| *p)
+                    .collect(),
+                corner_pairs
+                    .iter()
+                    .zip(inliers[n_ticks..].iter())
+                    .filter(|(_, &k)| k)
+                    .map(|(p, _)| *p)
+                    .collect(),
+            )
+        } else {
+            (tick_pairs.to_vec(), corner_pairs.to_vec())
+        };
+    let mut weighted: Vec<(Pt, Pt)> = ticks_kept;
+    for _ in 0..6 {
+        weighted.extend_from_slice(&corners_kept);
+    }
+    match solve_homography_pairs(&weighted) {
+        Some(H) => Some(H),
+        None => Some(H_r),
+    }
+}
+
+pub struct Detection {
+    pub H: H3,
+    pub tick_pairs: Vec<(Pt, Pt)>,
+    /// Projected frame vertices, TL/TR/BR/BL order.
+    pub quad: [Pt; 4],
+    pub rms: f64,
+}
+
+/// Fit + strict refits; the span gate lives here (port of the
+/// Python `pipeline` closure inside `_detect_card`).
+fn fit_pipeline(
+    frame: &MeasureFrame,
+    mask: &[u8],
+    card: &CardProfile,
+    mut tick_pairs: Vec<(Pt, Pt)>,
+    mut corner_pairs: Vec<(Pt, Pt)>,
+) -> Option<(H3, Vec<(Pt, Pt)>, f64)> {
+    let mut H = fit_homography(&tick_pairs, &corner_pairs)?;
+    for _i in 0..2 {
+        let tm = tick_matches(frame, mask, card, &H, true, true);
+        if tm.matched.len() >= 10 {
+            tick_pairs = tm.matched;
+            corner_pairs = tm.corners;
+        }
+        match fit_homography(&tick_pairs, &corner_pairs) {
+            Some(H_new) => {
+                H = H_new;
+            }
+            None => break,
+        }
+    }
+    let tl = card.frame["TL"];
+    let br = card.frame["BR"];
+    let frame_span = sub(br, tl);
+    let mut lo = pt(f64::INFINITY, f64::INFINITY);
+    let mut hi = pt(f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for (src, _) in tick_pairs.iter().chain(corner_pairs.iter()) {
+        lo = pt(lo[0].min(src[0]), lo[1].min(src[1]));
+        hi = pt(hi[0].max(src[0]), hi[1].max(src[1]));
+    }
+    let span = sub(hi, lo);
+    if span[0] < 0.6 * frame_span[0] || span[1] < 0.6 * frame_span[1] || tick_pairs.len() < 12 {
+        return None;
+    }
+    let mut sse = 0.0;
+    for (src, dst) in &tick_pairs {
+        let p = project1(&H, *src);
+        let d = norm(sub(p, *dst));
+        sse += d * d;
+    }
+    let rms = (sse / tick_pairs.len() as f64).sqrt();
+    Some((H, tick_pairs, rms))
+}
+
+/// Port of `_detect_card`.
+pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection, String> {
+    let mask = ink_mask(frame);
+    let (centre, ring_area_px) = ring_centroid(frame)
+        .ok_or_else(|| "Cyan ring not found; card not detectable.".to_string())?;
+    let ring_mm = card.ring_centre_mm;
+    let ring_area_mm2 = std::f64::consts::PI
+        * (card.ring_outer_mm.powi(2) - card.ring_inner_mm.powi(2));
+    let scale0 = (ring_area_px / ring_area_mm2).sqrt();
+    if mask.iter().filter(|&&v| v > 0).count() < 500 {
+        return Err("Too little ink; card not detectable.".to_string());
+    }
+
+    let objective = |params: &[f64; 4]| -> (f64, Vec<(Pt, Pt)>, usize) {
+        let anchor = add(centre, pt(params[0], params[1]));
+        let H = similarity(ring_mm, anchor, params[2], params[3].exp());
+        let tm = tick_matches(frame, &mask, card, &H, false, false);
+        let mut pairs = tm.matched.clone();
+        pairs.extend_from_slice(&tm.corners);
+        (
+            tm.arms_hit as f64 + 0.02 * (tm.matched.len() + tm.corners.len()) as f64,
+            pairs,
+            tm.arms_hit,
+        )
+    };
+    let loose_score = |H: &H3| -> f64 {
+        let tm = tick_matches(frame, &mask, card, H, false, false);
+        tm.arms_hit as f64 + 0.02 * (tm.matched.len() + tm.corners.len()) as f64
+    };
+
+    // Coarse grid over rotation x scale, ring-anchored.
+    let mut grid: Vec<(f64, [f64; 4])> = Vec::new();
+    for theta_deg in (0..360).step_by(10) {
+        for factor in [0.86, 0.92, 0.98, 1.04, 1.10] {
+            let trial = [
+                0.0,
+                0.0,
+                (theta_deg as f64).to_radians(),
+                (scale0 * factor).ln(),
+            ];
+            let (value, _, _) = objective(&trial);
+            grid.push((value, trial));
+        }
+    }
+    grid.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    // Top seeds in distinct rotation buckets.
+    let mut seeds: Vec<[f64; 4]> = Vec::new();
+    for (_, trial) in &grid {
+        let theta_deg = trial[2].to_degrees().rem_euclid(360.0);
+        let distinct = seeds.iter().all(|s: &[f64; 4]| {
+            let other = s[2].to_degrees().rem_euclid(360.0);
+            let d = (theta_deg - other).abs();
+            d.min(360.0 - d) >= 20.0
+        });
+        if distinct {
+            seeds.push(*trial);
+        }
+        if seeds.len() >= 3 {
+            break;
+        }
+    }
+
+    let frame_keys = ["TL", "TR", "BR", "BL"];
+    let frame_src: Vec<Pt> = frame_keys.iter().map(|k| card.frame[*k]).collect();
+
+    // Similarity ascent + projective vertex search from one seed.
+    let refine_seed = |params0: &[f64; 4]| -> [H3; 2] {
+        let mut params = *params0;
+        let (mut value, _, _) = objective(&params);
+        let mut steps = [8.0, 8.0, 1.5f64.to_radians(), 0.03];
+        for _round in 0..4 {
+            let mut improved = true;
+            while improved {
+                improved = false;
+                for i in 0..4 {
+                    for sign in [1.0, -1.0] {
+                        let mut trial = params;
+                        trial[i] += sign * steps[i];
+                        let (trial_value, _, _) = objective(&trial);
+                        if trial_value > value + 1e-9 {
+                            params = trial;
+                            value = trial_value;
+                            improved = true;
+                        }
+                    }
+                }
+            }
+            for s in steps.iter_mut() {
+                *s /= 2.0;
+            }
+        }
+        let anchor = add(centre, pt(params[0], params[1]));
+        let H_sim = similarity(ring_mm, anchor, params[2], params[3].exp());
+        let mut vertices: Vec<Pt> = frame_src
+            .iter()
+            .map(|p| project1(&H_sim, *p))
+            .collect();
+        let mut best_val = loose_score(&H_sim);
+        for step in [16.0, 8.0, 4.0, 2.0] {
+            let mut improved = true;
+            while improved {
+                improved = false;
+                for vi in 0..4 {
+                    for axis in 0..2 {
+                        for sign in [1.0, -1.0] {
+                            let mut trial_v = vertices.clone();
+                            trial_v[vi][axis] += sign * step;
+                            let Some(H_try) = solve_homography(&frame_src, &trial_v) else {
+                                continue;
+                            };
+                            let val = loose_score(&H_try);
+                            if val > best_val + 1e-9 {
+                                vertices = trial_v;
+                                best_val = val;
+                                improved = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let H_proj = solve_homography(&frame_src, &vertices).unwrap_or(H_sim);
+        [H_sim, H_proj]
+    };
+
+    let mut seed_observations: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
+    let mut observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
+        let tm = tick_matches(frame, &mask, card, H, false, false);
+        if tm.arms_hit >= 4 && tm.matched.len() >= 10 {
+            Some((tm.matched, tm.corners))
+        } else {
+            None
+        }
+    };
+    if let Some(H_sheet) = sheet_seed(&mask, frame.width, frame.height, card, centre) {
+        if let Some(obs) = observe(&H_sheet) {
+            seed_observations.push(obs);
+        }
+    }
+    for seed in &seeds {
+        for H_seed in refine_seed(seed) {
+            if let Some(obs) = observe(&H_seed) {
+                seed_observations.push(obs);
+            }
+        }
+    }
+    if seed_observations.is_empty() {
+        if let Some(H_hough) = hough_quad_seed(frame, &mask, card, centre, scale0) {
+            if let Some(obs) = observe(&H_hough) {
+                seed_observations.push(obs);
+            }
+        }
+    }
+    if seed_observations.is_empty() {
+        return Err("Tick verification failed (card too degraded or occluded).".to_string());
+    }
+
+    let mut results: Vec<(H3, Vec<(Pt, Pt)>, f64)> = Vec::new();
+    for (t0, c0) in &seed_observations {
+        if let Some(result) = fit_pipeline(frame, &mask, card, t0.clone(), c0.clone()) {
+            if result.2 <= 4.0 {
+                results.push(result);
+            }
+        }
+    }
+    if results.is_empty() {
+        return Err(
+            "Card fit did not converge to a trustworthy homography \
+             (coverage or residual gates failed)."
+                .to_string(),
+        );
+    }
+    results.sort_by(|a, b| {
+        b.1.len()
+            .cmp(&a.1.len())
+            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let (H, tick_pairs, rms) = results.into_iter().next().unwrap();
+    let quad = [
+        project1(&H, card.frame["TL"]),
+        project1(&H, card.frame["TR"]),
+        project1(&H, card.frame["BR"]),
+        project1(&H, card.frame["BL"]),
+    ];
+    Ok(Detection {
+        H,
+        tick_pairs,
+        quad,
+        rms,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Object extent
+
+fn extent_from_points(points: &[Pt]) -> (f64, f64, Pt) {
+    let mut lo = pt(f64::INFINITY, f64::INFINITY);
+    let mut hi = pt(f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in points {
+        lo = pt(lo[0].min(p[0]), lo[1].min(p[1]));
+        hi = pt(hi[0].max(p[0]), hi[1].max(p[1]));
+    }
+    (
+        hi[0] - lo[0],
+        hi[1] - lo[1],
+        pt((lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0),
+    )
+}
+
+fn contour_area(chain: &[Pt]) -> f64 {
+    let n = chain.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut acc = 0.0;
+    for i in 0..n {
+        let a = chain[i];
+        let b = chain[(i + 1) % n];
+        acc += a[0] * b[1] - b[0] * a[1];
+    }
+    (acc / 2.0).abs()
+}
+
+/// Flat erosion (min over the in-bounds kernel window, matching
+/// OpenCV's morphology border semantics).
+fn erode(mask: &[u8], w: usize, h: usize, k: usize) -> Vec<u8> {
+    let r = (k / 2) as i64;
+    let mut out = vec![0u8; w * h];
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let mut m = 255u8;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                        m = m.min(mask[ny as usize * w + nx as usize]);
+                    }
+                }
+            }
+            out[y as usize * w + x as usize] = m;
+        }
+    }
+    out
+}
+
+fn dilate(mask: &[u8], w: usize, h: usize, k: usize) -> Vec<u8> {
+    let r = (k / 2) as i64;
+    let mut out = vec![0u8; w * h];
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let mut m = 0u8;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx >= 0 && ny >= 0 && (nx as usize) < w && (ny as usize) < h {
+                        m = m.max(mask[ny as usize * w + nx as usize]);
+                    }
+                }
+            }
+            out[y as usize * w + x as usize] = m;
+        }
+    }
+    out
+}
+
+/// Is the pixel centre inside the (vertex-truncated) quad, or on
+/// its boundary — cv2.fillPoly semantics, approximated.
+fn point_in_quad(px: f64, py: f64, quad: &[Pt; 4]) -> bool {
+    // Boundary: within half a pixel of any edge segment.
+    for i in 0..4 {
+        let a = quad[i];
+        let b = quad[(i + 1) % 4];
+        let ab = sub(b, a);
+        let len2 = dot(ab, ab);
+        let t = if len2 > 0.0 {
+            (dot(pt(px - a[0], py - a[1]), ab) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let closest = add(a, scale(ab, t));
+        if norm(pt(px - closest[0], py - closest[1])) <= 0.5 {
+            return true;
+        }
+    }
+    // Even-odd ray casting.
+    let mut inside = false;
+    for i in 0..4 {
+        let a = quad[i];
+        let b = quad[(i + 1) % 4];
+        if (a[1] > py) != (b[1] > py) {
+            let x_int = a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+            if px < x_int {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+/// Port of `_object_extent`.
+#[allow(clippy::too_many_arguments)]
+fn object_extent(
+    frame: &MeasureFrame,
+    H: &H3,
+    quad_img: &[Pt; 4],
+    bbox: Option<(f64, f64, f64, f64)>,
+    mask_obj: Option<&[u8]>,
+    warnings: &mut Vec<String>,
+) -> Result<(f64, f64, Pt), String> {
+    let H_inv = mat3_inv(H)
+        .ok_or_else(|| "Degenerate homography at the object location.".to_string())?;
+    if let Some(mask) = mask_obj {
+        let mut points = Vec::new();
+        for y in 0..frame.height {
+            for x in 0..frame.width {
+                if mask[y * frame.width + x] != 0 {
+                    points.push(pt(x as f64, y as f64));
+                }
+            }
+        }
+        if points.len() < 10 {
+            return Err("Supplied mask is empty.".to_string());
+        }
+        let projected: Vec<Pt> = points.iter().map(|p| project1(&H_inv, *p)).collect();
+        return Ok(extent_from_points(&projected));
+    }
+    if let Some((x, y, bw, bh)) = bbox {
+        let corners = [
+            pt(x, y),
+            pt(x + bw, y),
+            pt(x + bw, y + bh),
+            pt(x, y + bh),
+        ];
+        warnings.push(
+            "Extent from a caller-supplied image bbox: a bbox around a \
+             rotated object overestimates; a mask is tighter."
+                .to_string(),
+        );
+        let projected: Vec<Pt> = corners.iter().map(|p| project1(&H_inv, *p)).collect();
+        return Ok(extent_from_points(&projected));
+    }
+    // Prototype fallback: colour segmentation. The object is the
+    // largest saturated, non-card contour outside the card quad.
+    let (w, h) = (frame.width, frame.height);
+    let mut candidate = vec![0u8; w * h];
+    for i in 0..w * h {
+        let (_, s, v) = frame.hsv(i);
+        if s > 70.0 && v > 40.0 {
+            candidate[i] = 255;
+        }
+    }
+    let quad_i: [Pt; 4] = [
+        pt(quad_img[0][0].trunc(), quad_img[0][1].trunc()),
+        pt(quad_img[1][0].trunc(), quad_img[1][1].trunc()),
+        pt(quad_img[2][0].trunc(), quad_img[2][1].trunc()),
+        pt(quad_img[3][0].trunc(), quad_img[3][1].trunc()),
+    ];
+    let (mut qlo_x, mut qlo_y) = (i64::MAX, i64::MAX);
+    let (mut qhi_x, mut qhi_y) = (i64::MIN, i64::MIN);
+    for q in quad_i {
+        qlo_x = qlo_x.min(q[0] as i64);
+        qlo_y = qlo_y.min(q[1] as i64);
+        qhi_x = qhi_x.max(q[0] as i64);
+        qhi_y = qhi_y.max(q[1] as i64);
+    }
+    for y in qlo_y.max(0)..=qhi_y.min(h as i64 - 1) {
+        for x in qlo_x.max(0)..=qhi_x.min(w as i64 - 1) {
+            if point_in_quad(x as f64, y as f64, &quad_i) {
+                candidate[y as usize * w + x as usize] = 0;
+            }
+        }
+    }
+    let opened = dilate(&erode(&candidate, w, h, 5), w, h, 5);
+    let closed = erode(&dilate(&opened, w, h, 9), w, h, 9);
+    let contours = external_contours(&closed, w, h, false);
+    if contours.is_empty() {
+        return Err(
+            "Auto extent found no object (colour segmentation); \
+             supply a bbox or mask."
+                .to_string(),
+        );
+    }
+    let largest = contours
+        .iter()
+        .max_by(|a, b| contour_area(a).partial_cmp(&contour_area(b)).unwrap())
+        .unwrap();
+    if contour_area(largest) < 0.0005 * (w * h) as f64 {
+        return Err("Auto extent contour is implausibly small.".to_string());
+    }
+    warnings.push(
+        "Extent by colour segmentation (prototype fallback): the object \
+         must be colour-distinct from the surface and the card."
+            .to_string(),
+    );
+    let projected: Vec<Pt> = largest.iter().map(|p| project1(&H_inv, *p)).collect();
+    Ok(extent_from_points(&projected))
+}
+
+/// The card sheet's width in image pixels under H (port of
+/// `_card_width_px`).
+fn card_width_px(H: &H3, card: &CardProfile) -> f64 {
+    let (cw, ch) = (card.card_width_mm, card.card_height_mm);
+    let corners = [
+        project1(H, pt(0.0, 0.0)),
+        project1(H, pt(cw, 0.0)),
+        project1(H, pt(cw, ch)),
+        project1(H, pt(0.0, ch)),
+    ];
+    let top = norm(sub(corners[1], corners[0]));
+    let bottom = norm(sub(corners[2], corners[3]));
+    (top + bottom) / 2.0
+}
+
+// ---------------------------------------------------------------------------
+// Public estimate
+
+fn round_n(x: f64, digits: i32) -> f64 {
+    let f = 10f64.powi(digits);
+    (x * f).round_ties_even() / f
+}
+
+#[derive(Clone, Debug)]
+pub struct Estimate {
+    pub width_mm: f64,
+    pub height_mm: f64,
+    pub range_pct: f64,
+    pub width_range_mm: [f64; 2],
+    pub height_range_mm: [f64; 2],
+    pub display: String,
+    pub method: &'static str,
+    pub card_id: String,
+    pub ticks_matched: usize,
+    pub card_width_px: i64,
+    pub reprojection_rms_px: f64,
+    pub warnings: Vec<String>,
+}
+
+impl Estimate {
+    /// JSON in the Python dict's insertion order, indent 2.
+    pub fn to_json_pretty(&self) -> String {
+        let num = |x: f64| -> String {
+            serde_json::to_string(&serde_json::json!(x)).unwrap()
+        };
+        let warnings: Vec<String> = self
+            .warnings
+            .iter()
+            .map(|w| serde_json::to_string(w).unwrap())
+            .collect();
+        format!(
+            "{{\n  \"width_mm\": {},\n  \"height_mm\": {},\n  \"range_pct\": {},\n  \
+             \"width_range_mm\": [{}, {}],\n  \"height_range_mm\": [{}, {}],\n  \
+             \"display\": {},\n  \"method\": {},\n  \"card_id\": {},\n  \
+             \"ticks_matched\": {},\n  \"card_width_px\": {},\n  \
+             \"reprojection_rms_px\": {},\n  \"warnings\": [{}]\n}}",
+            num(self.width_mm),
+            num(self.height_mm),
+            num(self.range_pct),
+            num(self.width_range_mm[0]),
+            num(self.width_range_mm[1]),
+            num(self.height_range_mm[0]),
+            num(self.height_range_mm[1]),
+            serde_json::to_string(&self.display).unwrap(),
+            serde_json::to_string(self.method).unwrap(),
+            serde_json::to_string(&self.card_id).unwrap(),
+            self.ticks_matched,
+            self.card_width_px,
+            num(self.reprojection_rms_px),
+            warnings
+                .iter()
+                .map(|w| format!("\n    {w}"))
+                .collect::<Vec<_>>()
+                .join(",")
+                + if warnings.is_empty() { "" } else { "\n  " },
+        )
+    }
+}
+
+/// Port of Python `estimate` (frame already decoded; see the CLI
+/// for source loading, including asset:// handles).
+pub fn estimate(
+    frame: &MeasureFrame,
+    card: &CardProfile,
+    card_id: &str,
+    bbox: Option<(f64, f64, f64, f64)>,
+    mask_obj: Option<&[u8]>,
+) -> Result<Estimate, String> {
+    let mut warnings: Vec<String> =
+        vec!["Prototype: flat object in the same plane as the card only.".to_string()];
+    let det = detect_card(frame, card)?;
+    let n_ticks = det.tick_pairs.len();
+
+    let card_px = card_width_px(&det.H, card);
+    if let Some(envelope_min) = card_envelope_min_px(card_id) {
+        if card_px < envelope_min {
+            return Err(format!(
+                "Card too small in frame for the {card_id} mini \
+                 (~{card_px:.0} px across; this card is only validated \
+                 for close-ups at ~{envelope_min:.0} px across or more, \
+                 where its ranges demonstrably cover the true size) — \
+                 move closer or use a bigger card."
+            ));
+        }
+    }
+    if card_px < MIN_CARD_PX {
+        return Err(format!(
+            "Card too small in frame (~{card_px:.0} px across; the \
+             fit stays quiet but the range stops covering the true \
+             size below ~{MIN_CARD_PX:.0} px) — move closer or use \
+             a bigger card."
+        ));
+    }
+    let mut sys_frac = 0.0;
+    if card_px < COMFORT_CARD_PX {
+        let band_t = (COMFORT_CARD_PX - card_px) / (COMFORT_CARD_PX - MIN_CARD_PX);
+        sys_frac = SMALL_CARD_SYS_MAX * band_t * band_t;
+        warnings.push(format!(
+            "Card is small in frame (~{card_px:.0} px across): the \
+             range is widened for small-card systematic error — a \
+             bigger card or a closer shot would tighten it."
+        ));
+    }
+    if n_ticks < 24 {
+        warnings.push(format!(
+            "Only {n_ticks}/24 tick cuts matched; the range reflects \
+             the fit residual, but a cleaner photo would tighten it."
+        ));
+    }
+
+    let (width_mm, height_mm, centre_mm) =
+        object_extent(frame, &det.H, &det.quad, bbox, mask_obj, &mut warnings)?;
+    if width_mm <= 0.0 || height_mm <= 0.0 {
+        return Err("Degenerate object extent.".to_string());
+    }
+
+    let centre_img = project1(&det.H, centre_mm);
+    let jx = scale(
+        sub(
+            project1(&det.H, pt(centre_mm[0] + 1.0, centre_mm[1])),
+            centre_img,
+        ),
+        1.0,
+    );
+    let jy = sub(
+        project1(&det.H, pt(centre_mm[0], centre_mm[1] + 1.0)),
+        centre_img,
+    );
+    let px_per_mm = (norm(jx) + norm(jy)) / 2.0;
+    if px_per_mm <= 0.0 {
+        return Err("Degenerate homography at the object location.".to_string());
+    }
+    let sigma_mm = det.rms / px_per_mm;
+    let frame_vals = [card.frame["TL"], card.frame["TR"], card.frame["BR"], card.frame["BL"]];
+    let frame_centroid = pt(
+        frame_vals.iter().map(|p| p[0]).sum::<f64>() / 4.0,
+        frame_vals.iter().map(|p| p[1]).sum::<f64>() / 4.0,
+    );
+    let frame_diag = norm(sub(card.frame["BR"], card.frame["TL"]));
+    let lever = norm(sub(centre_mm, frame_centroid)) / frame_diag;
+    let half_range = |dim: f64| -> f64 {
+        let u = sigma_mm * (1.0 + lever).powi(2);
+        2.0 * u + 0.01 * dim + sys_frac * dim
+    };
+    let err_w = half_range(width_mm);
+    let err_h = half_range(height_mm);
+    let range_pct_raw = (err_w / width_mm).max(err_h / height_mm) * 100.0;
+    let range_pct = (range_pct_raw * 2.0).ceil() / 2.0;
+    let fmt_dim = |dim: f64, err: f64| -> String {
+        let (lo, hi) = (dim - err, dim + err);
+        if dim >= 100.0 {
+            format!(
+                "~{:.1} cm ({:.1}–{:.1} cm)",
+                dim / 10.0,
+                lo / 10.0,
+                hi / 10.0
+            )
+        } else {
+            format!("~{:.0} mm ({:.0}–{:.0} mm)", dim, lo, hi)
+        }
+    };
+    Ok(Estimate {
+        width_mm: round_n(width_mm, 1),
+        height_mm: round_n(height_mm, 1),
+        range_pct,
+        width_range_mm: [round_n(width_mm - err_w, 1), round_n(width_mm + err_w, 1)],
+        height_range_mm: [round_n(height_mm - err_h, 1), round_n(height_mm + err_h, 1)],
+        display: format!(
+            "{} wide × {} high",
+            fmt_dim(width_mm, err_w),
+            fmt_dim(height_mm, err_h)
+        ),
+        method: METHOD,
+        card_id: card_id.to_string(),
+        ticks_matched: n_ticks,
+        card_width_px: card_px.round_ties_even() as i64,
+        reprojection_rms_px: round_n(det.rms, 2),
+        warnings,
+    })
+}
