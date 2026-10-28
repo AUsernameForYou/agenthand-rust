@@ -5,10 +5,11 @@
 //! RGBA PNG with the source's ICC profile carried into the stored
 //! bytes.
 //!
-//! Differences from the Python build, stated plainly: EXIF
-//! orientation is applied for JPEG inputs only (a minimal TIFF parse
-//! of the APP1 segment); PNG eXIf chunks and HEIC inputs are not
-//! handled (HEIC needs pillow-heif on the Python side).
+//! EXIF orientation is applied for JPEG inputs (a minimal TIFF
+//! parse of the APP1 segment) and for PNG inputs (the eXIf chunk,
+//! whose payload is a bare TIFF header — Pillow's `exif_transpose`
+//! reads both). HEIC inputs are not handled (HEIC needs pillow-heif
+//! on the Python side and would break the single static binary).
 
 use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_SOURCE};
 use crate::image::{decode_image, encode_png_rgba, DecodedImage, RgbaImage};
@@ -55,6 +56,33 @@ fn jpeg_exif_orientation(data: &[u8]) -> Option<u16> {
             return tiff_orientation(&segment[6..]);
         }
         pos += 2 + seg_len;
+    }
+    None
+}
+
+/// EXIF orientation (1-8) from a PNG's eXIf chunk, if present.
+/// The chunk payload is a TIFF header with no "Exif\0\0" prefix.
+fn png_exif_orientation(data: &[u8]) -> Option<u16> {
+    if !data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return None;
+    }
+    let mut pos = 8usize;
+    while pos + 8 <= data.len() {
+        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+            as usize;
+        let kind = &data[pos + 4..pos + 8];
+        let start = pos + 8;
+        let end = start.checked_add(len)?;
+        if end > data.len() {
+            return None;
+        }
+        if kind == b"eXIf" {
+            return tiff_orientation(&data[start..end]);
+        }
+        if kind == b"IEND" {
+            return None;
+        }
+        pos = end + 4; // skip CRC
     }
     None
 }
@@ -144,7 +172,7 @@ pub fn normalize_image_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
     let orientation = if is_jpeg {
         jpeg_exif_orientation(data)
     } else {
-        None
+        png_exif_orientation(data)
     };
     let decoded = decode_image(data)
         .map_err(|e| format!("Input does not decode as an image: {e}"))?;

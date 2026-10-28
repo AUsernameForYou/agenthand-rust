@@ -1,0 +1,13 @@
+{
+  "asset_id": "75a2ac1fbe7a4ddbbfa5d1015a9c8763",
+  "sha256": "17c7019053c6ff58381441ad6aa5c303ad7446fa5c0787f3016003660e2014eb",
+  "kind": "mask_overlay",
+  "filename": "75a2ac1fbe7a4ddbbfa5d1015a9c8763.png",
+  "byte_size": 3231997,
+  "created_at": "2026-10-27T16:38:00+00:00",
+  "source_asset_id": "ee5451675a2644aabc58887846b2b4c6",
+  "pixel_sha256": "312888d6ff217f05fc25bd54a40ac07791a2b2c36a1c49c6ac2cdd0ada2970b5",
+  "width": 1920,
+  "height": 1280,
+  "color_profile_sha256": null
+}

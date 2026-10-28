@@ -1,0 +1,14 @@
+{
+  "changed_pixels": 0,
+  "checked_pixels": 229953,
+  "color_profile_output_sha256": null,
+  "color_profile_preserved": true,
+  "color_profile_source_sha256": null,
+  "edge_band_pixels": 0,
+  "final": "/home/hatch/workspace/agenthand-rust/live-data/exports/final.png",
+  "mask": "/home/hatch/workspace/agenthand-rust/live-data/exports/mask.png",
+  "ok": true,
+  "outside_mask_pixels": 2227647,
+  "problems": [],
+  "source": "/home/hatch/workspace/agenthand-rust/live-data/exports/source.png"
+}

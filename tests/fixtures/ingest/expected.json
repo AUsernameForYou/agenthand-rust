@@ -1,0 +1,42 @@
+{
+  "png_exif_2.png": {
+    "width": 4,
+    "height": 2,
+    "pixel_sha256": "8b6ab3ee47ba86f0c529b3c86c8251b36c1fc5a3f21293ad84d80574245629b8"
+  },
+  "png_exif_3.png": {
+    "width": 4,
+    "height": 2,
+    "pixel_sha256": "c08842c6e0390cbbbbcc30719c75ca4f75fcba5badd348c9354b2e89d591ceed"
+  },
+  "png_exif_5.png": {
+    "width": 2,
+    "height": 4,
+    "pixel_sha256": "827b85840bb4a0e73b53923f222ad27a2c797af8bc91ff3bf3205636ee81acf8"
+  },
+  "png_exif_6.png": {
+    "width": 2,
+    "height": 4,
+    "pixel_sha256": "6a25976d646e98541bd807ec681a2aa11bd367219e1828e76e804ac92ace695c"
+  },
+  "png_exif_7.png": {
+    "width": 2,
+    "height": 4,
+    "pixel_sha256": "6fa4a0f864eb5307f5ff0626f2316d0fc67bc50e3fa8a1b380763646f62bd059"
+  },
+  "png_exif_8.png": {
+    "width": 2,
+    "height": 4,
+    "pixel_sha256": "60048df2ea66059ca8fdbc5e5960ed04c9866671ad5ae42bdef9708d1fa053e2"
+  },
+  "png_plain.png": {
+    "width": 4,
+    "height": 2,
+    "pixel_sha256": "8ec0c13adf5c8caae32a7619e7ce8e25f4666e0ae5cfaeea658234a10f9f0a5a"
+  },
+  "jpeg_exif_6.jpg": {
+    "width": 2,
+    "height": 4,
+    "pixel_sha256": "a0d6d2ec3364c180e6d19f796fcff75da3a879e4b5ae0fc6ea0e032e3facc87f"
+  }
+}
