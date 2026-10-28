@@ -198,7 +198,7 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     ));
 
     // 3. Independent verification of the frozen composite.
-    let report = composite::verify_receipt_from_disk(&store, &output_handle, &receipt)?;
+    let report = composite::verify_receipt_from_disk(&store, &output_handle, Some(&receipt))?;
     checks.push((
         "frozen_receipt_verify_from_disk_ok".to_string(),
         report["ok"].as_bool() == Some(true),

@@ -189,13 +189,33 @@ impl AssetStore {
         self.load_record(&Self::parse_handle(handle)?)
     }
 
+    /// Where an asset's persisted fidelity receipt lives, if any:
+    /// beside the asset's data file, named `<asset_id>.receipt.json`.
+    pub fn receipt_path(&self, handle: &str) -> Result<PathBuf, String> {
+        let asset_id = Self::parse_handle(handle)?;
+        Ok(self.assets_dir.join(format!("{asset_id}.receipt.json")))
+    }
+
+    /// The asset's persisted fidelity receipt, or None if none exists.
+    pub fn load_receipt(&self, handle: &str) -> Result<Option<serde_json::Value>, String> {
+        let path = self.receipt_path(handle)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("cannot read receipt: {e}"))?;
+        let value = serde_json::from_str(&text)
+            .map_err(|e| format!("corrupt receipt beside {handle}: {e}"))?;
+        Ok(Some(value))
+    }
+
     /// Persist a draw receipt beside its composite asset as
     /// `<asset_id>.receipt.json` (the Python store's `save_receipt`).
     pub fn save_receipt(&self, handle: &str, receipt: &serde_json::Value) -> Result<(), String> {
         let asset_id = Self::parse_handle(handle)?;
         std::fs::create_dir_all(&self.assets_dir)
             .map_err(|e| format!("cannot create assets dir: {e}"))?;
-        let path = self.assets_dir.join(format!("{asset_id}.receipt.json"));
+        let path = self.receipt_path(handle)?;
         let tmp = self
             .assets_dir
             .join(format!("{asset_id}.receipt.json.tmp-{}", uuid_hex()));

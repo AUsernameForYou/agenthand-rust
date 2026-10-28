@@ -1,0 +1,702 @@
+{
+  "ah46_close": {
+    "file": "ah46_close.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 179.8,
+      "height_mm": 110.6,
+      "range_pct": 3.0,
+      "width_range_mm": [
+        176.2,
+        183.4
+      ],
+      "height_range_mm": [
+        107.7,
+        113.5
+      ],
+      "display": "~18.0 cm (17.6\u201318.3 cm) wide \u00d7 ~11.1 cm (10.8\u201311.3 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 413,
+      "reprojection_rms_px": 0.39,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 412.9765625
+  },
+  "ah46_far2x": {
+    "file": "ah46_far2x.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 178.8,
+      "height_mm": 109.9,
+      "range_pct": 3.5,
+      "width_range_mm": [
+        174.7,
+        183.0
+      ],
+      "height_range_mm": [
+        106.4,
+        113.4
+      ],
+      "display": "~17.9 cm (17.5\u201318.3 cm) wide \u00d7 ~11.0 cm (10.6\u201311.3 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 201,
+      "reprojection_rms_px": 0.26,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 201.0829315185547
+  },
+  "ah42_close": {
+    "file": "ah42_close.png",
+    "card_id": "AH-42",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 179.2,
+      "height_mm": 110.3,
+      "range_pct": 3.5,
+      "width_range_mm": [
+        174.9,
+        183.5
+      ],
+      "height_range_mm": [
+        106.7,
+        113.9
+      ],
+      "display": "~17.9 cm (17.5\u201318.3 cm) wide \u00d7 ~11.0 cm (10.7\u201311.4 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-42",
+      "ticks_matched": 21,
+      "card_width_px": 291,
+      "reprojection_rms_px": 0.3,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 291.4986572265625
+  },
+  "ah42_mid": {
+    "file": "ah42_mid.png",
+    "card_id": "AH-42",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 177.1,
+      "height_mm": 109.3,
+      "range_pct": 5.0,
+      "width_range_mm": [
+        171.3,
+        182.9
+      ],
+      "height_range_mm": [
+        104.2,
+        114.5
+      ],
+      "display": "~17.7 cm (17.1\u201318.3 cm) wide \u00d7 ~10.9 cm (10.4\u201311.4 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-42",
+      "ticks_matched": 21,
+      "card_width_px": 190,
+      "reprojection_rms_px": 0.33,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 190.25038146972656
+  },
+  "ah42_far2x": {
+    "file": "ah42_far2x.png",
+    "card_id": "AH-42",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 181.2,
+      "height_mm": 110.2,
+      "range_pct": 8.5,
+      "width_range_mm": [
+        169.5,
+        193.0
+      ],
+      "height_range_mm": [
+        101.1,
+        119.3
+      ],
+      "display": "~18.1 cm (16.9\u201319.3 cm) wide \u00d7 ~11.0 cm (10.1\u201311.9 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-42",
+      "ticks_matched": 21,
+      "card_width_px": 142,
+      "reprojection_rms_px": 0.29,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Card is small in frame (~142 px across): the range is widened for small-card systematic error \u2014 a bigger card or a closer shot would tighten it.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 142.03199768066406
+  },
+  "ah42_probe225": {
+    "file": "ah42_probe225.png",
+    "card_id": "AH-42",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "refused",
+    "error": "Card too small in frame (~126 px across; the fit stays quiet but the range stops covering the true size below ~130 px) \u2014 move closer or use a bigger card.",
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 126.05772399902344
+  },
+  "ah42_degraded_mid": {
+    "file": "ah42_degraded_mid.png",
+    "card_id": "AH-42",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 182.8,
+      "height_mm": 112.2,
+      "range_pct": 5.0,
+      "width_range_mm": [
+        177.0,
+        188.7
+      ],
+      "height_range_mm": [
+        107.1,
+        117.4
+      ],
+      "display": "~18.3 cm (17.7\u201318.9 cm) wide \u00d7 ~11.2 cm (10.7\u201311.7 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-42",
+      "ticks_matched": 21,
+      "card_width_px": 189,
+      "reprojection_rms_px": 0.31,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 188.80718994140625
+  },
+  "ah35_close": {
+    "file": "ah35_close.png",
+    "card_id": "AH-35",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 177.2,
+      "height_mm": 110.4,
+      "range_pct": 5.0,
+      "width_range_mm": [
+        171.5,
+        182.9
+      ],
+      "height_range_mm": [
+        105.4,
+        115.5
+      ],
+      "display": "~17.7 cm (17.1\u201318.3 cm) wide \u00d7 ~11.0 cm (10.5\u201311.5 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-35",
+      "ticks_matched": 21,
+      "card_width_px": 205,
+      "reprojection_rms_px": 0.26,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 205.25006103515625
+  },
+  "ah35_probe175": {
+    "file": "ah35_probe175.png",
+    "card_id": "AH-35",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "refused",
+    "error": "Card too small in frame for the AH-35 mini (~112 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 114.54248046875
+  },
+  "ah35_far2x": {
+    "file": "ah35_far2x.png",
+    "card_id": "AH-35",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "refused",
+    "error": "Card too small in frame for the AH-35 mini (~101 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 100.05654907226562
+  },
+  "ah35_degraded_mid": {
+    "file": "ah35_degraded_mid.png",
+    "card_id": "AH-35",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "refused",
+    "error": "Card too small in frame for the AH-35 mini (~133 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "seeds": {
+      "_sheet_seed": false
+    },
+    "renderer_card_px": 132.8507537841797
+  },
+  "ahbig_2x": {
+    "file": "ahbig_2x.png",
+    "card_id": "AH-BIG",
+    "truth_mm": [
+      420.0,
+      260.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 419.0,
+      "height_mm": 259.9,
+      "range_pct": 2.5,
+      "width_range_mm": [
+        411.4,
+        426.5
+      ],
+      "height_range_mm": [
+        253.9,
+        265.8
+      ],
+      "display": "~41.9 cm (41.1\u201342.7 cm) wide \u00d7 ~26.0 cm (25.4\u201326.6 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-BIG",
+      "ticks_matched": 21,
+      "card_width_px": 337,
+      "reprojection_rms_px": 0.27,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 336.84710693359375
+  },
+  "ahbig_3x": {
+    "file": "ahbig_3x.png",
+    "card_id": "AH-BIG",
+    "truth_mm": [
+      420.0,
+      260.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 419.6,
+      "height_mm": 259.4,
+      "range_pct": 3.5,
+      "width_range_mm": [
+        410.0,
+        429.2
+      ],
+      "height_range_mm": [
+        251.4,
+        267.4
+      ],
+      "display": "~42.0 cm (41.0\u201342.9 cm) wide \u00d7 ~25.9 cm (25.1\u201326.7 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-BIG",
+      "ticks_matched": 21,
+      "card_width_px": 223,
+      "reprojection_rms_px": 0.28,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 222.94119262695312
+  },
+  "ahbig_4x": {
+    "file": "ahbig_4x.png",
+    "card_id": "AH-BIG",
+    "truth_mm": [
+      420.0,
+      260.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 429.8,
+      "height_mm": 264.3,
+      "range_pct": 5.0,
+      "width_range_mm": [
+        415.0,
+        444.6
+      ],
+      "height_range_mm": [
+        251.3,
+        277.3
+      ],
+      "display": "~43.0 cm (41.5\u201344.5 cm) wide \u00d7 ~26.4 cm (25.1\u201327.7 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-BIG",
+      "ticks_matched": 21,
+      "card_width_px": 166,
+      "reprojection_rms_px": 0.38,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Card is small in frame (~166 px across): the range is widened for small-card systematic error \u2014 a bigger card or a closer shot would tighten it.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "renderer_card_px": 165.11785888671875
+  },
+  "ahbig_degraded_3x": {
+    "file": "ahbig_degraded_3x.png",
+    "card_id": "AH-BIG",
+    "truth_mm": [
+      420.0,
+      260.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 418.7,
+      "height_mm": 262.0,
+      "range_pct": 4.0,
+      "width_range_mm": [
+        407.3,
+        430.0
+      ],
+      "height_range_mm": [
+        252.3,
+        271.8
+      ],
+      "display": "~41.9 cm (40.7\u201343.0 cm) wide \u00d7 ~26.2 cm (25.2\u201327.2 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-BIG",
+      "ticks_matched": 21,
+      "card_width_px": 221,
+      "reprojection_rms_px": 0.38,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": false
+    },
+    "renderer_card_px": 221.09713745117188
+  },
+  "tm_clean2": {
+    "file": "tm_clean2.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      95.0,
+      60.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 94.7,
+      "height_mm": 60.1,
+      "range_pct": 4.5,
+      "width_range_mm": [
+        91.9,
+        97.6
+      ],
+      "height_range_mm": [
+        57.7,
+        62.6
+      ],
+      "display": "~95 mm (92\u201398 mm) wide \u00d7 ~60 mm (58\u201363 mm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 397,
+      "reprojection_rms_px": 0.54,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    }
+  },
+  "tm_clean3": {
+    "file": "tm_clean3.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      60.0,
+      40.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 60.6,
+      "height_mm": 40.5,
+      "range_pct": 6.5,
+      "width_range_mm": [
+        57.9,
+        63.4
+      ],
+      "height_range_mm": [
+        38.0,
+        43.0
+      ],
+      "display": "~61 mm (58\u201363 mm) wide \u00d7 ~41 mm (38\u201343 mm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 409,
+      "reprojection_rms_px": 0.44,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    }
+  },
+  "tm_deg1": {
+    "file": "tm_deg1.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      95.0,
+      60.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 95.5,
+      "height_mm": 60.9,
+      "range_pct": 3.5,
+      "width_range_mm": [
+        93.1,
+        97.9
+      ],
+      "height_range_mm": [
+        58.8,
+        62.9
+      ],
+      "display": "~96 mm (93\u201398 mm) wide \u00d7 ~61 mm (59\u201363 mm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 397,
+      "reprojection_rms_px": 0.41,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": false,
+      "_hough_quad_seed": true
+    }
+  },
+  "tm_deg2": {
+    "file": "tm_deg2.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      140.0,
+      85.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 142.1,
+      "height_mm": 86.3,
+      "range_pct": 3.0,
+      "width_range_mm": [
+        139.3,
+        144.9
+      ],
+      "height_range_mm": [
+        84.0,
+        88.5
+      ],
+      "display": "~14.2 cm (13.9\u201314.5 cm) wide \u00d7 ~86 mm (84\u201389 mm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 392,
+      "reprojection_rms_px": 0.35,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent by colour segmentation (prototype fallback): the object must be colour-distinct from the surface and the card."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": false,
+      "_hough_quad_seed": true
+    }
+  },
+  "tm_mask_path": {
+    "file": "ah46_close.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 180.0,
+      "height_mm": 110.6,
+      "range_pct": 3.0,
+      "width_range_mm": [
+        176.4,
+        183.6
+      ],
+      "height_range_mm": [
+        107.7,
+        113.5
+      ],
+      "display": "~18.0 cm (17.6\u201318.4 cm) wide \u00d7 ~11.1 cm (10.8\u201311.3 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 413,
+      "reprojection_rms_px": 0.39,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "mask_file": "tm_mask.png"
+  },
+  "tm_bbox_path": {
+    "file": "ah46_close.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      180.0,
+      110.0
+    ],
+    "outcome": "ok",
+    "result": {
+      "width_mm": 187.5,
+      "height_mm": 114.5,
+      "range_pct": 3.0,
+      "width_range_mm": [
+        183.8,
+        191.2
+      ],
+      "height_range_mm": [
+        111.5,
+        117.4
+      ],
+      "display": "~18.7 cm (18.4\u201319.1 cm) wide \u00d7 ~11.4 cm (11.2\u201311.7 cm) high",
+      "method": "card-homography v0 (seeded tick/corner homography, prototype)",
+      "card_id": "AH-46",
+      "ticks_matched": 21,
+      "card_width_px": 413,
+      "reprojection_rms_px": 0.39,
+      "warnings": [
+        "Prototype: flat object in the same plane as the card only.",
+        "Only 21/24 tick cuts matched; the range reflects the fit residual, but a cleaner photo would tighten it.",
+        "Extent from a caller-supplied image bbox: a bbox around a rotated object overestimates; a mask is tighter."
+      ]
+    },
+    "seeds": {
+      "_sheet_seed": true
+    },
+    "bbox": [
+      825.4739990234375,
+      398.8602600097656,
+      515.31201171875,
+      368.2721252441406
+    ]
+  },
+  "tm_blank": {
+    "file": "tm_blank.png",
+    "card_id": "AH-46",
+    "truth_mm": [
+      0,
+      0
+    ],
+    "outcome": "refused",
+    "error": "Cyan ring not found; card not detectable.",
+    "seeds": {}
+  }
+}

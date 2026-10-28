@@ -392,17 +392,42 @@ pub fn draw_product(
         "plate_pixel_sha256": plate_pixel_sha256,
         "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match."
     });
+    // Persist the receipt beside the composite, as the Python
+    // compositor does: a receipt that exists only in the tool's
+    // return value is gone if the client drops it. The server layer
+    // enriches this same file with the billed call's cost and
+    // attribution once billing settles.
+    store.save_receipt(&composite_handle, &receipt)?;
     Ok((composite_handle, receipt))
 }
 
 /// Independently re-verify a draw receipt from the stored FILES
 /// (port of `verify_receipt_from_disk`). Returns a report object:
 /// ok / checks / problems / recomputed.
+///
+/// The receipt may be omitted: draw persists it beside the
+/// composite and it is loaded from there, so a composite found in
+/// the store carries the claims to check with it. A supplied
+/// receipt takes precedence. An error is returned when no receipt
+/// is supplied and none is persisted for the composite.
 pub fn verify_receipt_from_disk(
     store: &AssetStore,
     composite_handle: &str,
-    receipt: &Value,
+    receipt: Option<&Value>,
 ) -> Result<Value, String> {
+    let loaded;
+    let receipt = match receipt {
+        Some(r) => r,
+        None => {
+            loaded = store.load_receipt(composite_handle)?.ok_or_else(|| {
+                format!(
+                    "No receipt supplied and none persisted beside \
+                     '{composite_handle}'; there are no claims to verify."
+                )
+            })?;
+            &loaded
+        }
+    };
     let mut checks: Map<String, Value> = Map::new();
     let mut problems: Vec<String> = Vec::new();
     let mut set_check = |checks: &mut Map<String, Value>,
@@ -450,6 +475,87 @@ pub fn verify_receipt_from_disk(
                 false,
                 &e,
             ),
+        }
+    }
+
+    // 1b. The receipt's own hashes must name THESE files. Step 1
+    // only proves each file matches its own asset record; without
+    // this step, run A's receipt verifies against run B's composite
+    // whenever the numbers happen to reproduce.
+    let source_record = store.get_record(&source_handle)?;
+    let foreground_record = store.get_record(&foreground_handle)?;
+    set_check(
+        &mut checks,
+        &mut problems,
+        "source_hash_matches_receipt",
+        receipt["source_sha256"].as_str() == Some(source_record.sha256.as_str())
+            && receipt["source_pixel_sha256"].as_str()
+                == source_record.pixel_sha256.as_deref(),
+        "the receipt's source hashes do not match the source asset's recorded hashes; this receipt was not issued for this source",
+    );
+    set_check(
+        &mut checks,
+        &mut problems,
+        "foreground_hash_matches_receipt",
+        receipt["foreground_sha256"].as_str() == Some(foreground_record.sha256.as_str())
+            && receipt["foreground_pixel_sha256"].as_str()
+                == foreground_record.pixel_sha256.as_deref(),
+        "the receipt's foreground hashes do not match the foreground asset's recorded hashes",
+    );
+    set_check(
+        &mut checks,
+        &mut problems,
+        "output_hash_matches_receipt",
+        receipt["output_asset"].as_str() == Some(composite_handle)
+            && receipt["output_sha256"].as_str() == Some(composite_record.sha256.as_str())
+            && receipt["output_pixel_sha256"].as_str()
+                == composite_record.pixel_sha256.as_deref(),
+        "the receipt does not name this composite (its output_asset / output hashes point elsewhere); this receipt was issued for a different composite, even if the files happen to be byte-identical",
+    );
+    if let Some(mask_handle) = receipt["mask_asset"].as_str() {
+        let pins_hashes = receipt["mask_sha256"].as_str().is_some()
+            || receipt["mask_pixel_sha256"].as_str().is_some();
+        if pins_hashes {
+            match store.get_record(mask_handle) {
+                Ok(mask_record) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    "mask_hash_matches_receipt",
+                    receipt["mask_sha256"].as_str() == Some(mask_record.sha256.as_str())
+                        && receipt["mask_pixel_sha256"].as_str()
+                            == mask_record.pixel_sha256.as_deref(),
+                    "the receipt's mask hashes do not match the mask asset's recorded hashes",
+                ),
+                Err(e) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    "mask_hash_matches_receipt",
+                    false,
+                    &e,
+                ),
+            }
+        } else {
+            // A receipt that names a mask asset without pinning its
+            // hashes (issued before mask pinning — the frozen replay
+            // package's receipt is the live example): the strongest
+            // check available is the mask file's integrity against
+            // its own asset record.
+            match store.verify_integrity(mask_handle) {
+                Ok(()) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    "mask_asset_integrity",
+                    true,
+                    "",
+                ),
+                Err(e) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    "mask_asset_integrity",
+                    false,
+                    &e,
+                ),
+            }
         }
     }
 
@@ -521,6 +627,39 @@ pub fn verify_receipt_from_disk(
             "receipt and recount disagree on opaque_fraction",
         );
     }
+
+    // 2b. The verdict itself, stated as checks rather than implied
+    // by agreement: a pass requires ZERO changed pixels — an honest
+    // receipt reporting a real change reproduces perfectly under
+    // the recount checks above and must still fail — and POSITIVE
+    // coverage, because a receipt covering no opaque pixels vouches
+    // for nothing.
+    let show = |v: Option<i64>| match v {
+        Some(n) => n.to_string(),
+        None => "None".to_string(),
+    };
+    let recount_changed = recomputed["changed_opaque_pixels"].as_i64();
+    let recount_opaque = recomputed["opaque_pixels"].as_i64();
+    set_check(
+        &mut checks,
+        &mut problems,
+        "zero_changed_pixels",
+        recount_changed == Some(0)
+            && receipt["changed_opaque_pixels"].as_i64() == Some(0),
+        &format!(
+            "changed opaque pixels: receipt says {}, recount from disk finds {}; the Fidelity Lock claim requires exactly 0",
+            show(receipt["changed_opaque_pixels"].as_i64()),
+            show(recount_changed)
+        ),
+    );
+    set_check(
+        &mut checks,
+        &mut problems,
+        "positive_coverage",
+        recount_opaque.map(|v| v > 0).unwrap_or(false)
+            && receipt["opaque_pixels"].as_i64().map(|v| v > 0).unwrap_or(false),
+        "the receipt covers 0 fully opaque foreground pixels; there is no product evidence to verify",
+    );
 
     let source_image = store.read_image(&source_handle)?;
     let source_profile = source_image.color_profile_sha256();
@@ -631,6 +770,15 @@ pub fn verify_files(
             problems.push(format!(
                 "{changed} of {checked} fully-masked product pixels differ between the source photo and the final image"
             ));
+        }
+        if checked == 0 {
+            // A mask that selects nothing checks nothing: without
+            // this refusal, two completely different images pass
+            // with an empty mask because 0 of 0 pixels changed.
+            problems.push(
+                "the mask selects no fully-on pixels, so no product pixels were checked; a verification that compares nothing does not pass"
+                    .to_string(),
+            );
         }
     }
 
