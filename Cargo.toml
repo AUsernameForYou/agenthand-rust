@@ -1,8 +1,8 @@
 [package]
 name = "agenthand"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "agenthand MCP server — Rust port (parallel experiment; the Python build is the shipped product)"
+description = "agenthand MCP server — Rust build (the public submission build; Python package remains as fallback install)"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
