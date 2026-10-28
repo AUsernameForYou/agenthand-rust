@@ -12,7 +12,7 @@ use agenthand::billing::billed_call;
 use agenthand::ledger::{self, Receipt};
 use agenthand::pricing::Usage;
 use agenthand::sqlledger;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
