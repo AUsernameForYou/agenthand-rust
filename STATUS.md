@@ -1,9 +1,17 @@
 # agenthand — Rust port (PARALLEL EXPERIMENT)
 
-Status as of 2026-10-27. This repo is an experiment next to the
+Status as of 2026-10-28. This repo is an experiment next to the
 shipped Python product in `~/workspace/agenthand`, which is
 untouched and remains the product. The port earns "parity" only
 through the gate below; this file says exactly where it stands.
+
+**Completion lane (2026-10-28): the remaining Python-only pieces
+are ported.** PNG eXIf orientation on ingest (4192357), receipt
+persistence beside the composite with the hardened verify loading
+(25fec5c), and the scale-card estimator (25794b0). The parity gate
+was re-run after all three landed: still PASS, same hashes. What
+remains unported is listed bluntly at the bottom (HEIC is the one
+deliberate exception).
 
 ## Verdict
 
@@ -28,15 +36,15 @@ gate and the test suite remain offline.
 
 ## Build
 
-- `cargo build` — clean (6 warnings, all dead-code/unused in the
+- `cargo build` — clean (a few warnings, dead-code/unused in the
   prototype surface).
 - `cargo build --release` — clean.
-- Release binary: `target/release/agenthand`, **6,303,896 bytes**
-  (~6.0 MiB), one static binary, no Python runtime.
+- Release binary: `target/release/agenthand`, **6,623,032 bytes**
+  (~6.3 MiB), one static binary, no Python runtime.
 - Rust was not preinstalled on this VM; installed via rustup
   (stable 1.99.1, minimal profile).
 
-## Tests — 36 passing, 0 failing (debug and release)
+## Tests — 49 passing, 0 failing (debug and release)
 
 - `tests/core.rs` (15): the Python composite suite ported —
   opaque/edge-band/transparent counting, feathered band width,
@@ -68,6 +76,23 @@ gate and the test suite remain offline.
   shapes with no key, cut_out plan-error propagation, a full
   placeholder-mode draw with a 0-changed receipt and image preview
   block, and resources/read.
+- `tests/ingest.rs` (2): EXIF orientation on ingest — PNGs with
+  eXIf chunks for orientations 2–8 decode pixel-hash-exact against
+  Pillow's results, plus a plain-PNG control; JPEG EXIF regression.
+- `tests/receipt_persistence.rs` (8): draw persists
+  `<composite_id>.receipt.json` beside the composite (tmp file +
+  atomic rename, byte-format matched to Python's
+  `json.dumps(indent=2, sort_keys=True)`), verify loads it from
+  disk when no receipt is supplied, and the hardened checks
+  (source/foreground/output/mask hash pins, zero changed pixels,
+  positive coverage, empty-mask refusal) behave as Python's.
+- `tests/measure.rs` (1 battery, 22 scenes): the estimator
+  against Python-recorded outcomes on rendered scenes
+  (`tests/fixtures/measure/` + `expected.json`): 17 measurements
+  with the true size inside the stated range and centres/ranges
+  matching Python's, 5 refusals with matching error text (digits
+  masked). Covers AH-46/AH-42/AH-35/AH-BIG, both gates, the mask
+  and bbox extent paths, and the two degraded Hough-seeded scenes.
 - `tests/parity.rs` (1): the gate below, as a test (runs when
   AGENTHAND_REPLAY_DIR points at the replay package).
 
@@ -76,7 +101,10 @@ Run: `AGENTHAND_REPLAY_DIR=~/workspace/meta-hackathon/replay-package cargo test`
 ## Parity gate — output verbatim
 
 Command: `./target/release/agenthand parity ~/workspace/meta-hackathon/replay-package`
-Full JSON saved in `parity-output.json` in this repo. Summary:
+Full JSON saved in `parity-output.json` in this repo.
+Re-verified 2026-10-28 after the completion lane (estimator,
+receipt persistence, PNG eXIf): PASS, every hash below unchanged.
+Summary:
 
 ```
 parity: PASS
@@ -193,7 +221,9 @@ then handle-chained calls), fresh data dir in `live-data/`
   dir / crate dir — env wins); the value is never printed.
 - Subcommands: `serve` (default; the MCP server), `parity <dir>`,
   `verify <source> <final> <mask>` (exit 0/1, port of
-  agenthand-verify).
+  agenthand-verify), `measure <image> <card> [--profile <path>]
+  [--bbox x,y,w,h]` (the estimator; JSON result on stdout,
+  `{"error": ...}` on stderr with exit 1, as Python's CLI).
 
 ## What is stubbed or missing (blunt)
 
@@ -204,9 +234,12 @@ then handle-chained calls), fresh data dir in `live-data/`
   call fired during e2e testing before the test's key isolation
   was fixed — it returned an error body, BAD_MODEL_RESPONSE,
   worst-case cost about a cent of credits.)
-- **Ingest gaps vs Python**: no PNG eXIf orientation handling and
-  no HEIC (Python gained HEIC via pillow-heif). JPEG EXIF
-  orientation is implemented (all 8 transforms).
+- **Ingest**: JPEG EXIF and PNG eXIf orientation are implemented
+  (all 8 transforms), pixel-hash-matched to Pillow on fixtures.
+  **HEIC is the one deliberate exception**: Python decodes it via
+  pillow-heif; the Rust decoder is hand-rolled PNG/JPEG, and
+  linking libheif would break the single static binary. HEIC
+  inputs stay on the Python path.
 - **`describe_color_profile` is simplified**: it does not parse
   the ICC description string; profiles are pinned by sha256
   everywhere it matters, and the human-readable label is coarser
@@ -218,10 +251,28 @@ then handle-chained calls), fresh data dir in `live-data/`
   file hashes therefore match only for files the Rust side did not
   re-encode — receipts record both file and pixel hashes exactly
   like Python's.
-- **Not ported**: the estimator prototype (`measure.py`, a
-  parallel lane's WIP, not part of the shipped product), any HTTP
-  transport (Python is stdio-first too), OAuth/per-user keys
-  (roadmap in both).
+- **The estimator is ported** (`src/measure.rs`, CLI subcommand
+  `measure`), including the AH-35 close-up envelope gate the
+  Python fix lane added. Its OpenCV internals are cloned at the
+  algorithm level (findHomography incl. the deterministic RANSAC
+  RNG stream and LM refinement; adaptiveThreshold's
+  round-then-subtract comparison, which bit-matches the ink mask
+  on the battery scenes; approxPolyDP transliterated). Two
+  honest boundaries:
+  - HoughLinesP is randomized in OpenCV, so segment extraction is
+    a deterministic approximation (same accumulator geometry and
+    thresholds; endpoints on the accumulator line, as OpenCV
+    reports them). Quad selection scores all ring-passing quads
+    and takes the best loose score — the selection rule in
+    Python's own docstring — instead of Python's first-12, whose
+    membership is an artifact of the randomized extraction order.
+  - Validation is on rendered scenes, exactly like Python's:
+    no photo-real validation yet (waits on printed cards and
+    real photos, same gate as the Python estimator).
+  Minor: `verify_files`' size-mismatch message prints `WxH`
+  where Python prints its `(W, H)` tuple; text only.
+- **Not ported**: any HTTP transport (Python is stdio-first too),
+  OAuth/per-user keys (roadmap in both).
 - The server has not been registered with a real MCP client
   (only the JSON-RPC e2e driver).
 
@@ -231,4 +282,5 @@ then handle-chained calls), fresh data dir in `live-data/`
 composite (Fidelity Lock core), assets (hashed store + lineage),
 sam (wire codec), segmentation (mask QA + bounded attempts),
 meta (API client), pricing, ledger, billing, config, ingest,
-server (tools + JSON-RPC). `tests/` as above.
+measure (the estimator + its OpenCV layer), server (tools +
+JSON-RPC). `tests/` as above.
