@@ -12,15 +12,22 @@ use crate::pricing::{self, Usage};
 use base64::Engine;
 use serde_json::{json, Value};
 
+/// Base URL of the Meta Model API.
 pub const META_BASE_URL: &str = "https://api.meta.ai/v1";
+/// Output-token budget for one identify call.
 pub const IDENTIFY_MAX_TOKENS: i64 = 2048;
+/// Bounded retry budget for identify (body failures only).
 pub const IDENTIFY_MAX_ATTEMPTS: usize = 3;
+/// Bounded attempt budget for one cut_out call.
 pub const SAM_MAX_ATTEMPTS: usize = 2;
 
 const IDENTIFY_PROMPT_TOKENS: i64 = 300;
 
+/// Model behind the identify tool.
 pub const IDENTIFY_MODEL: &str = "muse-spark-1.3";
+/// Model behind the cut_out tool.
 pub const CUT_OUT_MODEL: &str = "sam-3.1";
+/// Model that generates draw's background plate.
 pub const DRAW_BACKGROUND_MODEL: &str = "muse-image-1.0";
 
 /// Raised when a real call is attempted with no META_API_KEY. Raised
@@ -32,6 +39,7 @@ pub fn require_meta_api_key() -> Result<String, String> {
     })
 }
 
+/// Build the shared HTTP client for Meta API calls.
 pub fn build_client() -> Result<reqwest::blocking::Client, String> {
     // Direct connections only — never the environment's HTTP proxy.
     // reqwest auto-detects proxy env vars, and a TLS-intercepting
@@ -514,6 +522,8 @@ pub fn vision_identify(
     }
 }
 
+/// Estimate image input tokens from pixel dimensions (32 px patches + 256);
+/// 4096 when the dimensions are unknown.
 pub fn estimate_image_input_tokens(width: Option<u32>, height: Option<u32>) -> i64 {
     match (width, height) {
         (Some(w), Some(h)) if w > 0 && h > 0 => {
@@ -524,6 +534,7 @@ pub fn estimate_image_input_tokens(width: Option<u32>, height: Option<u32>) -> i
     }
 }
 
+/// Worst-case projected cost of one identify call; feeds the spend-cap gate.
 pub fn project_identify_cost_usd(model: &str, width: Option<u32>, height: Option<u32>) -> Result<f64, String> {
     let input_tokens = estimate_image_input_tokens(width, height) + IDENTIFY_PROMPT_TOKENS;
     let one_call = pricing::estimate_cost_usd(
@@ -537,6 +548,7 @@ pub fn project_identify_cost_usd(model: &str, width: Option<u32>, height: Option
     Ok(crate::round6(2.0 * one_call))
 }
 
+/// Worst-case projected cost of one cut_out call at the given attempt budget.
 pub fn project_cut_out_cost_usd(model: &str, max_attempts: usize) -> Result<f64, String> {
     pricing::estimate_cost_usd(
         model,
@@ -547,6 +559,7 @@ pub fn project_cut_out_cost_usd(model: &str, max_attempts: usize) -> Result<f64,
     )
 }
 
+/// Worst-case projected cost of one draw call (a single generated image).
 pub fn project_draw_cost_usd(model: &str) -> Result<f64, String> {
     pricing::estimate_cost_usd(
         model,
@@ -631,10 +644,14 @@ const IMAGE_SIZE_CANDIDATES: [(u32, u32); 5] = [
 
 const PLATE_INSTRUCTION: &str = "An empty scene photographed straight-on: the setting described below, with a clear, unobstructed flat surface in the center foreground where an object will be placed later. The scene is EMPTY: no product, no featured object on the central surface, no people, no animals, no text, no logos, no watermark. Scene: ";
 
+/// Wrap a scene description in the empty-plate instruction draw sends
+/// to the image model.
 pub fn wrap_plate_prompt(scene_prompt: &str) -> String {
     format!("{PLATE_INSTRUCTION}{scene_prompt}")
 }
 
+/// Nearest supported generation size for the given dimensions;
+/// `1024x1024` when the dimensions are unknown.
 pub fn closest_image_size(width: Option<u32>, height: Option<u32>) -> String {
     let (Some(w), Some(h)) = (width, height) else {
         return "1024x1024".to_string();

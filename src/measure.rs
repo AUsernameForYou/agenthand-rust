@@ -27,9 +27,14 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// Method identifier recorded in estimator output.
 pub const METHOD: &str = "card-homography v0 (seeded tick/corner homography, prototype)";
 
+/// Pixel floor: below this many pixels across the card, the estimator
+/// refuses rather than guessing.
 pub const MIN_CARD_PX: f64 = 130.0;
+/// At or above this card width in pixels, estimates carry the standard
+/// (narrower) ranges.
 pub const COMFORT_CARD_PX: f64 = 170.0;
 const SMALL_CARD_SYS_MAX: f64 = 0.055;
 
@@ -45,6 +50,7 @@ fn card_envelope_min_px(card_id: &str) -> Option<f64> {
     }
 }
 
+/// Default location of the card-profile JSON.
 pub fn default_profile_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -620,6 +626,8 @@ fn arm_geometry(name: &str) -> Option<(&'static str, Pt)> {
     })
 }
 
+/// Load one card's profile (tick geometry and envelope gates) from
+/// the profile file.
 pub fn load_card_profile(profile_path: &Path, card_id: &str) -> Result<CardProfile, String> {
     let text = std::fs::read_to_string(profile_path)
         .map_err(|e| format!("Could not read profile {}: {e}", profile_path.display()))?;
@@ -2152,6 +2160,8 @@ fn fit_homography(
     }
 }
 
+/// A successful card detection: the fitted homography, the tick pairs
+/// it rests on, the projected frame quad, and the fit RMS.
 pub struct Detection {
     pub H: H3,
     pub tick_pairs: Vec<(Pt, Pt)>,

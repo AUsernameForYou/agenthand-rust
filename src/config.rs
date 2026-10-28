@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 use std::sync::Once;
 
+/// Absolute spend ceiling; no configuration may raise the cap above this.
 pub const HARD_CEILING_USD: f64 = 150.00;
+/// Default working spend cap when no cap is configured.
 pub const DEFAULT_TOTAL_SPEND_CAP_USD: f64 = 120.00;
 
 static DOTENV_ONCE: Once = Once::new();
@@ -48,6 +50,7 @@ fn env_trimmed(name: &str) -> String {
         .to_string()
 }
 
+/// The data dir holding assets and the ledger.
 pub fn get_data_dir() -> PathBuf {
     let raw = env_trimmed("AGENTHAND_DATA_DIR");
     if !raw.is_empty() {
@@ -65,6 +68,7 @@ fn shellexpand_home(path: &str) -> String {
     path.to_string()
 }
 
+/// Path of the JSONL ledger inside the data dir.
 pub fn get_ledger_path() -> PathBuf {
     get_data_dir().join("ledger.jsonl")
 }
@@ -81,6 +85,8 @@ pub enum LedgerStore {
     Sqlite(PathBuf),
 }
 
+/// Resolve `AGENTHAND_LEDGER` to the ledger store to use; unknown
+/// values fail closed rather than spend against an unknown store.
 pub fn get_ledger_store() -> Result<LedgerStore, String> {
     let raw = env_trimmed("AGENTHAND_LEDGER");
     if raw.is_empty() || raw == "jsonl" {
@@ -136,6 +142,7 @@ pub fn get_total_spend_cap_usd() -> Result<f64, String> {
     Ok(value.min(HARD_CEILING_USD))
 }
 
+/// The operator's Meta API key, from the environment or a local `.env`.
 pub fn get_meta_api_key() -> Option<String> {
     let raw = env_trimmed("META_API_KEY");
     if raw.is_empty() {
@@ -145,6 +152,8 @@ pub fn get_meta_api_key() -> Option<String> {
     }
 }
 
+/// True when `AGENTHAND_DRAW_PLACEHOLDER_PLATE` opts into the offline
+/// placeholder plate instead of a generated one.
 pub fn use_placeholder_plate() -> bool {
     matches!(
         env_trimmed("AGENTHAND_DRAW_PLACEHOLDER_PLATE")

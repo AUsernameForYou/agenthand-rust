@@ -14,10 +14,15 @@ use crate::pricing::Usage;
 use crate::sam::{parse_sam_masks, DecodedMask};
 use serde_json::{json, Value};
 
+/// Smallest mask coverage (fraction of the frame) that can be accepted.
 pub const MIN_COVERAGE: f64 = 0.001;
+/// Largest acceptable mask coverage; above it the "item" is the photo.
 pub const MAX_COVERAGE: f64 = 0.98;
+/// The largest connected component must hold at least this fraction
+/// of the mask.
 pub const MIN_DOMINANT_FRACTION: f64 = 0.75;
 
+/// Outline color of the mask overlay (the logo cyan, #00AFE1).
 pub const OVERLAY_OUTLINE_RGBA: [u8; 4] = [0, 175, 225, 255];
 
 #[derive(Debug)]
@@ -27,6 +32,8 @@ pub struct CutOutError {
     pub attempts: Vec<Value>,
 }
 
+/// Quality verdict for one candidate mask; `accepted` is true only
+/// when every gate passed.
 pub struct MaskAssessment {
     pub mask_pixels: u64,
     pub coverage: f64,
@@ -78,6 +85,7 @@ fn label_components(binary: &[u8], width: usize, height: usize) -> (u64, u64) {
     (components, largest)
 }
 
+/// Assess a mask against the coverage and dominance gates.
 pub fn assess_mask(mask: &GrayImage) -> MaskAssessment {
     let width = mask.width as usize;
     let height = mask.height as usize;
@@ -287,6 +295,7 @@ fn choose_mask(masks: &[DecodedMask]) -> &DecodedMask {
     best
 }
 
+/// The winning attempt's mask, the full attempt log, and billed usage.
 pub struct AttemptsOutcome {
     pub mask_image: GrayImage,
     pub phrase: String,

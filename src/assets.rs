@@ -15,13 +15,20 @@ use crate::image::{
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Prefix of every asset handle (`asset://<id>`).
 pub const HANDLE_PREFIX: &str = "asset://";
 
+/// Asset kind: an ingested source photo.
 pub const KIND_SOURCE: &str = "source_photo";
+/// Asset kind: a cut-out foreground PNG.
 pub const KIND_FOREGROUND: &str = "foreground_png";
+/// Asset kind: a segmentation mask PNG.
 pub const KIND_MASK: &str = "mask_png";
+/// Asset kind: a generated background plate.
 pub const KIND_PLATE: &str = "background_plate";
+/// Asset kind: a composited (staged) image.
 pub const KIND_COMPOSITE: &str = "composite";
+/// Asset kind: a mask overlay preview.
 pub const KIND_OVERLAY: &str = "mask_overlay";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -44,6 +51,8 @@ pub struct AssetRecord {
     pub color_profile_sha256: Option<String>,
 }
 
+/// The on-disk asset store: image files under the data dir, indexed
+/// by `assets.json`.
 pub struct AssetStore {
     pub data_dir: PathBuf,
     pub assets_dir: PathBuf,

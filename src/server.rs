@@ -136,6 +136,7 @@ fn plan_cut(store: &AssetStore, handle: &str) -> Result<Value, String> {
     Ok(result)
 }
 
+/// The `identify` tool handler: ingest, identify, shape the result JSON.
 pub fn tool_identify(image: &str) -> Result<Value, String> {
     let store = store();
     let handle = ingest::ingest(image, &store)?;
@@ -173,6 +174,8 @@ pub fn tool_identify(image: &str) -> Result<Value, String> {
     }))
 }
 
+/// The `cut_out` tool handler: ingest, segment the concept, shape the
+/// result JSON.
 pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, String> {
     let store = store();
     let handle = ingest::ingest(image, &store)?;

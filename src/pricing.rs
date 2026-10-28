@@ -2,6 +2,7 @@
 //! version string, same contract: unknown models raise, cached tokens
 //! are a subset of input, negative counts raise).
 
+/// Version of the pricing table below; bumped on any rate change.
 pub const PRICING_TABLE_VERSION: &str = "2026-10-26.2";
 
 #[derive(Default, Clone, Copy)]
@@ -46,6 +47,8 @@ fn per_1000_images_price(model: &str) -> Option<f64> {
     }
 }
 
+/// True when the model has a pricing-table entry; unknown models are
+/// refused, never priced at zero.
 pub fn is_known_model(model: &str) -> bool {
     token_prices(model).is_some()
         || per_image_price(model).is_some()

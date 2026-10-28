@@ -15,7 +15,9 @@ use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_SOURCE};
 use crate::image::{decode_image, encode_png_rgba, DecodedImage, RgbaImage};
 use base64::Engine;
 
+/// Default ingest size limit for a source image, in bytes.
 pub const DEFAULT_MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+/// Default ingest pixel-count limit for a source image.
 pub const DEFAULT_MAX_PIXELS: u64 = 40_000_000;
 const FETCH_TIMEOUT_SECONDS: u64 = 15;
 

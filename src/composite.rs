@@ -19,6 +19,8 @@ use crate::assets::{
 use crate::image::{describe_color_profile, GrayImage, RgbaImage};
 use serde_json::{json, Map, Value};
 
+/// A foreground pixel counts as opaque product only at this alpha
+/// (255: fully opaque), in receipts and fidelity checks alike.
 pub const OPAQUE_ALPHA_THRESHOLD: u8 = 255;
 
 /// Pillow's fast divide-by-255: `(((a >> 8) + a) >> 8)`.

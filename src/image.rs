@@ -93,6 +93,7 @@ impl GrayImage {
     }
 }
 
+/// Lowercase hex SHA-256 of the given bytes.
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -406,10 +407,12 @@ fn encode_png(width: u32, height: u32, color_type: u8, bpp: usize, rows: &[u8], 
     out
 }
 
+/// Encode an RGBA image as PNG bytes.
 pub fn encode_png_rgba(img: &RgbaImage) -> Vec<u8> {
     encode_png(img.width, img.height, 6, 4, &img.pixels, img.icc_profile.as_deref())
 }
 
+/// Encode a grayscale image as PNG bytes.
 pub fn encode_png_gray(img: &GrayImage) -> Vec<u8> {
     encode_png(img.width, img.height, 0, 1, &img.pixels, img.icc_profile.as_deref())
 }

@@ -12,6 +12,8 @@ use fs2::FileExt;
 use serde_json::json;
 use std::io::Write;
 
+/// One billed call's outcome: its ids, projected vs actual cost, and
+/// the provider usage the cost rests on.
 pub struct BillingSummary {
     pub call_id: String,
     pub projected_usd: f64,
