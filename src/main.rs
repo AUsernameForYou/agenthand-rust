@@ -17,6 +17,15 @@
 //!   reports sha256 + byte counts only (the mode used for
 //!   `corpus/real/`). Grid composition is NOT implemented (pending
 //!   scope widening; see the rust-100 milestone docs).
+//! - `agenthand room-run --photos P ... [--video V ...]
+//!   [--narrated-video V | --narrated-audio A] [--items "a, b" |
+//!   --auto] [--scene TEXT] [--out DIR] [--room-id ID]
+//!   [--budget-usd N] [--frame-every S] [--max-frames-per-video N]
+//!   [--first-success-only] [--data-dir DIR] [--ledger PATH]` —
+//!   the room runner (port of scripts/room_run.py): one staged,
+//!   verified listing per item from a whole room; manifest + summary
+//!   land in the output dir. Exit 0 when every item staged, 1 when
+//!   any item did not stage, 2 on refusal/usage errors.
 
 use agenthand::assets::AssetStore;
 use agenthand::composite;
@@ -48,6 +57,7 @@ fn main() -> ExitCode {
         }
         Some("measure") => run_measure(&args[2..]),
         Some("heic-extract") => run_heic_extract(&args[2..]),
+        Some("room-run") => run_room_run(&args[2..]),
         Some("verify") => {
             let (Some(source), Some(final_), Some(mask)) = (args.get(2), args.get(3), args.get(4))
             else {
@@ -74,7 +84,7 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             eprintln!(
-                "unknown subcommand {other:?} (expected: serve | parity | verify | measure | heic-extract)"
+                "unknown subcommand {other:?} (expected: serve | parity | verify | measure | heic-extract | room-run)"
             );
             ExitCode::from(2)
         }
@@ -580,5 +590,256 @@ fn run_heic_extract(args: &[String]) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// Port of scripts/room_run.py: run one room (stills + optional
+/// videos + optional narration) and write the manifest + summary.
+fn run_room_run(args: &[String]) -> ExitCode {
+    use agenthand::roomrun::{run_room, summarize_manifest, RoomRunOptions};
+    use std::path::PathBuf;
+
+    let mut photos: Vec<PathBuf> = Vec::new();
+    let mut videos: Vec<PathBuf> = Vec::new();
+    let mut narrated_videos: Vec<PathBuf> = Vec::new();
+    let mut narrated_audios: Vec<PathBuf> = Vec::new();
+    let mut narration_max_usd: f64 = 0.25;
+    let mut items_arg: Option<String> = None;
+    let mut auto = false;
+    let mut scene: Option<String> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut room_id: Option<String> = None;
+    let mut budget_usd: f64 = 1.00;
+    let mut frame_every: f64 = 2.0;
+    let mut max_frames: usize = 8;
+    let mut first_success_only = false;
+    let mut data_dir: Option<PathBuf> = None;
+    let mut ledger: Option<PathBuf> = None;
+
+    let usage = "usage: agenthand room-run --photos PHOTO [PHOTO ...] [--video VIDEO ...] \
+                 [--narrated-video VIDEO] [--narrated-audio AUDIO] [--items \"a, b\"] [--auto] \
+                 [--out DIR] [--budget-usd N]";
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        // Value-taking flags: `--photos` and `--video` swallow every
+        // following non-flag value (argparse nargs="+"), the rest
+        // take exactly one value.
+        let take_values = |i: &mut usize, min: usize| -> Option<Vec<String>> {
+            let mut values = Vec::new();
+            while *i + 1 < args.len() && !args[*i + 1].starts_with("--") {
+                *i += 1;
+                values.push(args[*i].clone());
+            }
+            if values.len() < min {
+                None
+            } else {
+                Some(values)
+            }
+        };
+        match arg {
+            "--photos" => match take_values(&mut i, 1) {
+                Some(values) => photos.extend(values.into_iter().map(PathBuf::from)),
+                None => {
+                    eprintln!("room-run: --photos needs at least one value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--video" => match take_values(&mut i, 1) {
+                Some(values) => videos.extend(values.into_iter().map(PathBuf::from)),
+                None => {
+                    eprintln!("room-run: --video needs at least one value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--narrated-video" => match take_values(&mut i, 1) {
+                Some(values) => narrated_videos.extend(values.into_iter().map(PathBuf::from)),
+                None => {
+                    eprintln!("room-run: --narrated-video needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--narrated-audio" => match take_values(&mut i, 1) {
+                Some(values) => narrated_audios.extend(values.into_iter().map(PathBuf::from)),
+                None => {
+                    eprintln!("room-run: --narrated-audio needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--items" => match take_values(&mut i, 1) {
+                Some(mut values) => items_arg = Some(values.remove(0)),
+                None => {
+                    eprintln!("room-run: --items needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--narration-max-usd" => match take_values(&mut i, 1) {
+                Some(mut values) => match values.remove(0).parse::<f64>() {
+                    Ok(v) => narration_max_usd = v,
+                    Err(_) => {
+                        eprintln!("room-run: --narration-max-usd must be a number");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("room-run: --narration-max-usd needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--scene" => match take_values(&mut i, 1) {
+                Some(mut values) => scene = Some(values.remove(0)),
+                None => {
+                    eprintln!("room-run: --scene needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--out" => match take_values(&mut i, 1) {
+                Some(mut values) => out = Some(PathBuf::from(values.remove(0))),
+                None => {
+                    eprintln!("room-run: --out needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--room-id" => match take_values(&mut i, 1) {
+                Some(mut values) => room_id = Some(values.remove(0)),
+                None => {
+                    eprintln!("room-run: --room-id needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--budget-usd" => match take_values(&mut i, 1) {
+                Some(mut values) => match values.remove(0).parse::<f64>() {
+                    Ok(v) => budget_usd = v,
+                    Err(_) => {
+                        eprintln!("room-run: --budget-usd must be a number");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("room-run: --budget-usd needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--frame-every" => match take_values(&mut i, 1) {
+                Some(mut values) => match values.remove(0).parse::<f64>() {
+                    Ok(v) => frame_every = v,
+                    Err(_) => {
+                        eprintln!("room-run: --frame-every must be a number");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("room-run: --frame-every needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--max-frames-per-video" => match take_values(&mut i, 1) {
+                Some(mut values) => match values.remove(0).parse::<usize>() {
+                    Ok(v) => max_frames = v,
+                    Err(_) => {
+                        eprintln!("room-run: --max-frames-per-video must be an integer");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("room-run: --max-frames-per-video needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--data-dir" => match take_values(&mut i, 1) {
+                Some(mut values) => data_dir = Some(PathBuf::from(values.remove(0))),
+                None => {
+                    eprintln!("room-run: --data-dir needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--ledger" => match take_values(&mut i, 1) {
+                Some(mut values) => ledger = Some(PathBuf::from(values.remove(0))),
+                None => {
+                    eprintln!("room-run: --ledger needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--auto" => auto = true,
+            "--first-success-only" => first_success_only = true,
+            other => {
+                eprintln!("room-run: unknown argument {other:?}\n{usage}");
+                return ExitCode::from(2);
+            }
+        }
+        i += 1;
+    }
+
+    let item_names: Vec<String> = items_arg
+        .as_deref()
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !auto && item_names.is_empty() && narrated_videos.is_empty() && narrated_audios.is_empty() {
+        eprintln!(
+            "room-run: name the items (--items \"straw hat, suitcase\"), pass --auto to \
+             take the photo plans' concepts, or narrate them (--narrated-video / --narrated-audio)"
+        );
+        return ExitCode::from(2);
+    }
+    if photos.is_empty() && videos.is_empty() {
+        eprintln!("room-run: at least one --photos or --video source is required");
+        return ExitCode::from(2);
+    }
+    if let Some(dir) = &data_dir {
+        std::env::set_var("AGENTHAND_DATA_DIR", dir);
+    }
+    let room_id = room_id.unwrap_or_else(|| {
+        let uuid = uuid::Uuid::new_v4().simple().to_string();
+        format!("room-{}", &uuid[..8])
+    });
+    let out_dir = out.unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(format!("roomrun-{room_id}"))
+    });
+    let mut opts = RoomRunOptions {
+        item_names,
+        auto,
+        room_id: Some(room_id),
+        budget_usd,
+        frame_every_seconds: frame_every,
+        max_frames_per_video: max_frames,
+        probe_all_candidates: !first_success_only,
+        narrated_videos,
+        narrated_audios,
+        narration_max_projected_usd: narration_max_usd,
+        ledger_path: ledger,
+        ..RoomRunOptions::default()
+    };
+    if let Some(scene) = scene {
+        opts.scene = scene;
+    }
+    match run_room(&photos, &videos, &out_dir, opts) {
+        Ok(manifest) => {
+            print!("{}", summarize_manifest(&manifest));
+            println!("manifest: {}", out_dir.join("manifest.json").display());
+            let items = manifest
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let all_staged = items
+                .iter()
+                .all(|item| item.get("status").and_then(Value::as_str) == Some("staged"));
+            if all_staged {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(exc) => {
+            eprintln!("ROOM RUN REFUSED: {exc}");
+            ExitCode::from(2)
+        }
     }
 }
