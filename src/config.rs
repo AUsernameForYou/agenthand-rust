@@ -71,9 +71,11 @@ pub fn get_ledger_path() -> PathBuf {
 
 /// Which ledger store `billing::billed_call` writes to, selected by
 /// `AGENTHAND_LEDGER`:
-/// - unset / `jsonl` / `jsonl:<path>` — the JSONL ledger (default);
-/// - `sqlite` — `ledger.sqlite3` in the data dir;
-/// - `sqlite:<path>` — the SQLite ledger at that path.
+/// - unset / `sqlite` — the SQLite ledger, `ledger.sqlite3` in the
+///   data dir (the shipped default);
+/// - `sqlite:<path>` — the SQLite ledger at that path;
+/// - `jsonl` / `jsonl:<path>` — the JSONL ledger, still selectable,
+///   and importable into SQLite via `sqlledger::import_jsonl`.
 /// An unrecognized value is an error: a store we cannot identify
 /// must stop spend, not silently pick one.
 pub enum LedgerStore {
@@ -83,7 +85,10 @@ pub enum LedgerStore {
 
 pub fn get_ledger_store() -> Result<LedgerStore, String> {
     let raw = env_trimmed("AGENTHAND_LEDGER");
-    if raw.is_empty() || raw == "jsonl" {
+    if raw.is_empty() || raw == "sqlite" {
+        return Ok(LedgerStore::Sqlite(get_data_dir().join("ledger.sqlite3")));
+    }
+    if raw == "jsonl" {
         return Ok(LedgerStore::Jsonl(get_ledger_path()));
     }
     if let Some(path) = raw.strip_prefix("jsonl:") {
@@ -94,9 +99,6 @@ pub fn get_ledger_store() -> Result<LedgerStore, String> {
             );
         }
         return Ok(LedgerStore::Jsonl(PathBuf::from(shellexpand_home(path))));
-    }
-    if raw == "sqlite" {
-        return Ok(LedgerStore::Sqlite(get_data_dir().join("ledger.sqlite3")));
     }
     if let Some(path) = raw.strip_prefix("sqlite:") {
         if path.trim().is_empty() {
