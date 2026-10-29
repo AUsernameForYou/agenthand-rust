@@ -1,0 +1,19 @@
+agenthand is an MCP server for AI agents that help people sell. A seller walks a room, names what goes, and gets a staged photo of each named item, with a receipt proving the item itself was never touched. A single item works the same way: the seller hands their agent a messy photo, and the agent gets back a staged image, listing copy, and proof.
+
+The proof is a count anyone can re-run. On our verified run, 580,613 product pixels were checked and 0 changed, because the image model only ever generates the background while code places the stored product layer into the scene untouched. The receipt travels with the image, the verifier runs free in a browser, and flipping a single pixel makes it fail. The counterpoint was measured on photographs of real physical products (an orange suitcase and a gray storage box, three runs each, measured October 28, 2026): Muse Image 1.0's own full-frame edit mode, instructed to keep the product exactly as-is, changed 223,599–223,600 of the suitcase's 223,600 product pixels and 31,858–31,932 of the box's 31,932 at the receipt's zero-tolerance standard, and 212,823–215,878 (suitcase) and 16,369–29,577 (box) beyond a ±16 per-channel tolerance, where each item's Fidelity Lock composite changed 0. A prototype measuring tool rounds out the kit the same honest way: it answers with a size range, or refuses when the photo cannot support one.
+
+The room run is a matter of record. On October 28, 2026, agenthand ran over two photos and a walkthrough video of one real room, with six items named in advance: a straw hat, a black hat, an Escher book, a gray storage box, an orange suitcase, and a WINIX air purifier. All six were staged, each with its own Fidelity Lock receipt. An independent verifier then recounted every item from the stored files: 352,597 product pixels checked across the six distinct items, 0 changed. Items that appeared in more than one photo were staged once each. The run cost $0.184487. One item needed a same-day correction, recorded in the run's own files: the first-pass hat cutout duplicated the straw hat, and the black fedora was re-cut from the still photo and re-verified before these numbers were quoted. The run can also be driven by voice: the seller narrates the walkthrough, and the items named for sale in that narration drive the run; a merely mentioned item is staged only when the photos confirm it, and a mention the photos cannot support fails honestly with NO_MATCH rather than becoming a listing.
+
+**Built twice, measured side by side.** agenthand exists twice: the reference server in Python, and a second implementation in Rust, written as a single binary. Both were run against the same frozen proof run and measured side by side. The two builds agree exactly: same output pixel hash (sha256 8b8defea…e802), same count (580,613 opaque pixels checked, 0 changed), and the same total billed cost, $0.020044 to the micro-dollar. What differs is how fast the local work runs:
+
+| Operation | Python | Rust |
+|---|---|---|
+| Cold start to initialize response | 1,291.5 ms | 2.4 ms (about 540x) |
+| Verify over the proof images | 569.7 ms | 91.4 ms (about 6.2x) |
+| Estimator run | 2,824.4 ms | 1,802.3 ms (about 1.6x) |
+
+Measured on the same machine (a 2 vCPU AMD EPYC VM), medians of interleaved runs. One honest note: on a real tool call, Meta API latency dominates, so the commercially real win here is cold start, because every MCP client spawns the server fresh for each session.
+
+**It reads photos.** The Rust build decodes HEIC itself (no decoding library), and on every real camera photo tested (iPhone, Canon, Samsung originals) its output matched the reference decoders pixel for pixel.
+
+On the roadmap, the same lock runs in reverse: real nearby listings, their photos untouched, placed into a photo of your own room or location with asking prices attached, so a space can be filled as honestly as it was emptied.
