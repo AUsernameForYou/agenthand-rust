@@ -35,10 +35,8 @@ const V2_ONLY_FIELDS: [&str; 9] = [
 
 fn temp_store() -> (AssetStore, std::path::PathBuf) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "agenthand-rust-schema-{}-{n}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("agenthand-rust-schema-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     (AssetStore::new(&dir), dir)
 }
@@ -104,14 +102,22 @@ fn seeded_store_mask_asset() -> (AssetStore, std::path::PathBuf, String) {
 fn draw_stamps_the_current_schema_marker() {
     let (store, _dir, _photo, fg) = seeded_store_alpha_mask();
     let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
-    assert_eq!(receipt["receipt_schema"], json!(composite::RECEIPT_SCHEMA_VERSION));
+    assert_eq!(
+        receipt["receipt_schema"],
+        json!(composite::RECEIPT_SCHEMA_VERSION)
+    );
     assert_eq!(receipt["receipt_schema"], json!(2));
     // The persisted copy carries the marker too.
     let persisted = store.load_receipt(&handle).unwrap().unwrap();
     assert_eq!(persisted["receipt_schema"], json!(2));
     // And the stamped receipt verifies as current.
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
 }
 
 #[test]
@@ -120,10 +126,7 @@ fn stripped_marker_on_a_current_receipt_is_refused() {
     let (handle, mut receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     // The downgrade attack: remove ONLY the marker, keep every
     // current-schema field. The legacy policy must not apply.
-    receipt
-        .as_object_mut()
-        .unwrap()
-        .remove("receipt_schema");
+    receipt.as_object_mut().unwrap().remove("receipt_schema");
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
     assert_eq!(report["ok"], json!(false));
     assert_eq!(report["checks"]["receipt_shape"], json!(false));
@@ -137,12 +140,8 @@ fn stripped_marker_on_a_current_receipt_is_refused() {
     let (store2, _dir2, fg2) = seeded_store_mask_asset();
     let (handle2, mut receipt2) =
         composite::draw_product(&store2, &fg2, "a regal room", None).unwrap();
-    receipt2
-        .as_object_mut()
-        .unwrap()
-        .remove("receipt_schema");
-    let report2 =
-        composite::verify_receipt_from_disk(&store2, &handle2, Some(&receipt2)).unwrap();
+    receipt2.as_object_mut().unwrap().remove("receipt_schema");
+    let report2 = composite::verify_receipt_from_disk(&store2, &handle2, Some(&receipt2)).unwrap();
     assert_eq!(report2["ok"], json!(false));
     assert_eq!(report2["checks"]["receipt_shape"], json!(false));
 }
@@ -175,8 +174,7 @@ fn lowered_or_raised_marker_is_unsupported() {
     for bad in [json!(1), json!(3), json!("2"), json!(2.0), json!(true)] {
         let mut forged = receipt.clone();
         forged["receipt_schema"] = bad.clone();
-        let report =
-            composite::verify_receipt_from_disk(&store, &handle, Some(&forged)).unwrap();
+        let report = composite::verify_receipt_from_disk(&store, &handle, Some(&forged)).unwrap();
         assert_eq!(report["ok"], json!(false), "marker {bad} must fail");
         assert_eq!(report["checks"]["receipt_shape"], json!(false));
         let problems = report["problems"].to_string();
@@ -199,7 +197,12 @@ fn genuine_v1_shape_still_verifies() {
         obj.remove(field);
     }
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
 
     // Mask-asset path: the v1 shape names the mask asset without
     // pinning its hashes, so the verifier falls back to the mask
@@ -213,8 +216,12 @@ fn genuine_v1_shape_still_verifies() {
         obj2.remove(field);
     }
     assert!(receipt2["mask_asset"].is_string());
-    let report2 =
-        composite::verify_receipt_from_disk(&store2, &handle2, Some(&receipt2)).unwrap();
-    assert_eq!(report2["ok"], json!(true), "problems: {}", report2["problems"]);
+    let report2 = composite::verify_receipt_from_disk(&store2, &handle2, Some(&receipt2)).unwrap();
+    assert_eq!(
+        report2["ok"],
+        json!(true),
+        "problems: {}",
+        report2["problems"]
+    );
     assert_eq!(report2["checks"]["mask_asset_integrity"], json!(true));
 }
