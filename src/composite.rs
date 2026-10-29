@@ -13,8 +13,8 @@
 //!   alongside the pixel hashes.
 
 use crate::assets::{
-    AssetRecord, AssetStore, HANDLE_PREFIX, KIND_COMPOSITE, KIND_FOREGROUND, KIND_MASK, KIND_PLATE,
-    KIND_SOURCE,
+    png_text_of_bytes, AssetRecord, AssetStore, HANDLE_PREFIX, KIND_COMPOSITE, KIND_FOREGROUND,
+    KIND_MASK, KIND_PLATE, KIND_SOURCE, MASK_PROVENANCE_PNG_KEY,
 };
 use crate::image::{describe_color_profile, GrayImage, RgbaImage};
 use serde_json::{json, Map, Value};
@@ -282,6 +282,66 @@ pub fn validate_foreground(
     Ok(chain)
 }
 
+/// The mask scale methods cut_out can record
+/// (`segmentation::MASK_SCALE_*`; the strings are receipt wire
+/// values, pinned here like "asset" / "foreground_alpha" are for
+/// mask_source).
+pub const MASK_SCALE_METHODS: [&str; 2] = ["none", "bilinear_threshold_128"];
+
+/// Optional current-schema receipt fields: mask provenance
+/// (decisions 68/69). Receipts carry them when the mask asset
+/// recorded provenance (every cut_out since the SAM scaling change
+/// does); older receipts and foreground_alpha receipts do not.
+/// Absence is accepted; presence is validated as a complete,
+/// self-consistent set (see `receipt_schema_problems`).
+pub const RECEIPT_FIELDS_V2_OPTIONAL: [&str; 5] = [
+    "mask_source_width",
+    "mask_source_height",
+    "mask_sam_width",
+    "mask_sam_height",
+    "mask_scale_method",
+];
+
+/// A receipt count field's shape: a non-negative integer (the
+/// Python verifier's `_is_count`; JSON bools and floats are not
+/// integers here).
+fn is_count(v: &Value) -> bool {
+    v.as_u64().is_some()
+}
+
+/// The mask asset's recorded provenance, or None when absent.
+///
+/// cut_out writes the provenance (source frame, SAM frame, scale
+/// method) as a PNG text chunk inside the mask file; draw republishes
+/// it in the receipt as mask_source_width / mask_source_height /
+/// mask_sam_width / mask_sam_height / mask_scale_method. Anything
+/// missing or malformed reads as absent: provenance is evidence, not
+/// a gate, and a mask written before it existed must still draw — the
+/// receipt simply carries no provenance fields, which the verifier
+/// accepts.
+pub fn mask_provenance_of(store: &AssetStore, mask_handle: &str) -> Option<Value> {
+    let bytes = store.read_bytes(mask_handle).ok()?;
+    let raw = png_text_of_bytes(&bytes)
+        .get(MASK_PROVENANCE_PNG_KEY)?
+        .clone();
+    let parsed: Value = serde_json::from_str(&raw).ok()?;
+    let obj = parsed.as_object()?;
+    let mut provenance = Map::new();
+    for name in ["source_width", "source_height", "sam_width", "sam_height"] {
+        let value = obj.get(name)?;
+        if !is_count(value) {
+            return None;
+        }
+        provenance.insert(name.to_string(), value.clone());
+    }
+    let method = obj.get("scale_method")?.as_str()?;
+    if !MASK_SCALE_METHODS.contains(&method) {
+        return None;
+    }
+    provenance.insert("scale_method".to_string(), Value::String(method.to_string()));
+    Some(Value::Object(provenance))
+}
+
 /// Composite a stored foreground into a scene; (handle, receipt).
 pub fn draw_product(
     store: &AssetStore,
@@ -337,6 +397,14 @@ pub fn draw_product_with_plate_kind(
             }
         };
 
+    let mask_provenance = if mask_source == "asset" {
+        mask_asset
+            .as_ref()
+            .and_then(|h| mask_provenance_of(store, h))
+    } else {
+        None
+    };
+
     let (plate, plate_source, plate_asset, plate_sha256, plate_pixel_sha256) = match plate_handle {
         Some(handle) => {
             let plate_record = store.get_record(handle)?;
@@ -374,7 +442,7 @@ pub fn draw_product_with_plate_kind(
     let color_profile_preserved =
         source_record.color_profile_sha256 == composite_record.color_profile_sha256;
 
-    let receipt = json!({
+    let mut receipt = json!({
         "receipt_schema": RECEIPT_SCHEMA_VERSION,
         "source_asset": HANDLE_PREFIX.to_string() + &source_record.asset_id,
         "source_sha256": source_record.sha256,
@@ -428,6 +496,18 @@ pub fn draw_product_with_plate_kind(
         },
         "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match."
     });
+    if let Some(provenance) = &mask_provenance {
+        // Mask provenance (decisions 68/69): the receipt states the
+        // frame the mask was cut from, the frame SAM actually saw,
+        // and how the mask was mapped between them — so a "0 changed"
+        // receipt never silently rests on a working-resolution
+        // selection.
+        receipt["mask_source_width"] = provenance["source_width"].clone();
+        receipt["mask_source_height"] = provenance["source_height"].clone();
+        receipt["mask_sam_width"] = provenance["sam_width"].clone();
+        receipt["mask_sam_height"] = provenance["sam_height"].clone();
+        receipt["mask_scale_method"] = provenance["scale_method"].clone();
+    }
     // Persist the receipt beside the composite, as the Python
     // compositor does: a receipt that exists only in the tool's
     // return value is gone if the client drops it. The server layer
@@ -441,7 +521,7 @@ pub fn draw_product_with_plate_kind(
 /// the Python `_RECEIPT_FIELDS_V2` set minus `mask_asset` (v1
 /// receipts name the mask asset too; they just do not pin its
 /// hashes).
-const V2_ONLY_FIELDS: [&str; 9] = [
+const V2_ONLY_FIELDS: [&str; 14] = [
     "color_profile_foreground_sha256",
     "mask_sha256",
     "mask_pixel_sha256",
@@ -451,6 +531,13 @@ const V2_ONLY_FIELDS: [&str; 9] = [
     "count_sample",
     "product_layer_scaled",
     "output_format",
+    // The optional mask-provenance fields are current-schema too:
+    // an unmarked receipt carrying them gets no legacy grading.
+    "mask_source_width",
+    "mask_source_height",
+    "mask_sam_width",
+    "mask_sam_height",
+    "mask_scale_method",
 ];
 
 /// The schema-marker policy of the Python verifier's
@@ -498,6 +585,67 @@ fn receipt_schema_problems(receipt: &Value) -> Vec<String> {
              legacy v1 policy"
                 .to_string(),
         );
+    }
+    if strict
+        && RECEIPT_FIELDS_V2_OPTIONAL
+            .iter()
+            .any(|f| receipt.get(f).is_some())
+    {
+        // Optional provenance fields: validated when present (the
+        // Python `_validate_receipt` policy). Provenance is an
+        // all-or-nothing, self-consistent statement: a partial or
+        // contradictory set is a forged or torn receipt, not a
+        // weaker claim.
+        for name in RECEIPT_FIELDS_V2_OPTIONAL {
+            let valid = match receipt.get(name) {
+                Some(v) if name == "mask_scale_method" => {
+                    v.as_str().map(|s| MASK_SCALE_METHODS.contains(&s)).unwrap_or(false)
+                }
+                Some(v) => is_count(v),
+                None => true,
+            };
+            if !valid {
+                problems.push(format!(
+                    "field {name} has the wrong type or shape: {}",
+                    serde_json::to_string(&receipt[name]).unwrap_or_default()
+                ));
+            }
+        }
+        if problems.is_empty() {
+            let missing: Vec<&str> = RECEIPT_FIELDS_V2_OPTIONAL
+                .iter()
+                .filter(|f| receipt.get(f).is_none())
+                .copied()
+                .collect();
+            if !missing.is_empty() {
+                let mut missing = missing;
+                missing.sort_unstable();
+                problems.push(format!(
+                    "mask provenance is partial; missing fields: {}",
+                    missing.join(", ")
+                ));
+            } else {
+                let sam_w = receipt["mask_sam_width"].as_u64().unwrap_or(0);
+                let sam_h = receipt["mask_sam_height"].as_u64().unwrap_or(0);
+                let src_w = receipt["mask_source_width"].as_u64().unwrap_or(0);
+                let src_h = receipt["mask_source_height"].as_u64().unwrap_or(0);
+                if sam_w > src_w || sam_h > src_h {
+                    problems.push(
+                        "mask SAM frame exceeds the mask source frame; the \
+                         SAM-bound copy is only ever downscaled"
+                            .to_string(),
+                    );
+                }
+                let unscaled = sam_w == src_w && sam_h == src_h;
+                if (receipt["mask_scale_method"].as_str() == Some("none")) != unscaled {
+                    problems.push(
+                        "mask_scale_method disagrees with the recorded \
+                         SAM and source frames"
+                            .to_string(),
+                    );
+                }
+            }
+        }
     }
     problems
 }

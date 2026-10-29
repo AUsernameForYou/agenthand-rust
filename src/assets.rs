@@ -34,6 +34,50 @@ pub const KIND_OVERLAY: &str = "mask_overlay";
 /// listing chain can identify the item in isolation.
 pub const KIND_CROP: &str = "item_crop";
 
+/// PNG text key carrying a mask asset's provenance JSON (source
+/// frame, SAM frame, scale method), written by cut_out and read by
+/// draw's receipt builder.
+pub const MASK_PROVENANCE_PNG_KEY: &str = "agenthand_mask_provenance";
+
+/// The text chunks embedded in PNG bytes (empty map when none / not
+/// a PNG). Port of the Python `png_text_of_bytes`: mask assets carry
+/// their provenance as a tEXt chunk inside the file whose hashes the
+/// asset record pins, so the provenance is as tamper-evident as the
+/// mask itself. Best-effort by design: a mask written before
+/// provenance existed simply has no chunk.
+pub fn png_text_of_bytes(data: &[u8]) -> std::collections::BTreeMap<String, String> {
+    let mut text = std::collections::BTreeMap::new();
+    if data.len() < 8 || &data[..8] != b"\x89PNG\r\n\x1a\n" {
+        return text;
+    }
+    let mut pos = 8usize;
+    while pos + 12 <= data.len() {
+        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+            as usize;
+        let kind = &data[pos + 4..pos + 8];
+        let start = pos + 8;
+        let Some(end) = start.checked_add(len) else {
+            break;
+        };
+        if end > data.len() {
+            break;
+        }
+        if kind == b"tEXt" {
+            let chunk = &data[start..end];
+            if let Some(sep) = chunk.iter().position(|&b| b == 0) {
+                let key = String::from_utf8_lossy(&chunk[..sep]).into_owned();
+                let value = String::from_utf8_lossy(&chunk[sep + 1..]).into_owned();
+                text.insert(key, value);
+            }
+        }
+        if kind == b"IEND" {
+            break;
+        }
+        pos = end + 4; // skip CRC
+    }
+    text
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AssetRecord {
     pub asset_id: String,

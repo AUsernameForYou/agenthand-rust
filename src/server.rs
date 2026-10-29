@@ -13,7 +13,6 @@ use crate::assets::{AssetStore, KIND_MASK, KIND_OVERLAY};
 use crate::billing::{self, BillingSummary};
 use crate::composite;
 use crate::config;
-use crate::image::encode_png_gray;
 use crate::ingest;
 use crate::meta::{self, IdentifyError, CUT_OUT_MODEL, DRAW_BACKGROUND_MODEL, IDENTIFY_MODEL};
 use crate::segmentation;
@@ -247,7 +246,21 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
     phrases.extend(alternates.iter().take(meta::SAM_MAX_ATTEMPTS - 1).cloned());
     let projected = meta::project_cut_out_cost_usd(CUT_OUT_MODEL, phrases.len())?;
     let client = meta::build_client()?;
-    let png_bytes = store.read_bytes(&handle)?;
+    // SAM working resolution (decisions 68/69): past the proven cap,
+    // only the SAM-bound copy is downscaled; the stored photo keeps
+    // its full resolution and the returned mask is mapped back onto
+    // it below.
+    let sam_payload =
+        segmentation::prepare_sam_png(&source_image, &store.read_bytes(&handle)?, None);
+    let mask_provenance = json!({
+        "source_width": source_image.width,
+        "source_height": source_image.height,
+        "sam_width": sam_payload.sam_width,
+        "sam_height": sam_payload.sam_height,
+        "scale_method": sam_payload.scale_method,
+    });
+    let png_bytes = sam_payload.png_bytes;
+    let (sam_width, sam_height) = (sam_payload.sam_width, sam_payload.sam_height);
     let outcome_cell: RefCell<Option<segmentation::AttemptsOutcome>> = RefCell::new(None);
     let err_cell: RefCell<Option<segmentation::CutOutError>> = RefCell::new(None);
     let call_id = new_call_id();
@@ -264,8 +277,8 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
             &png_bytes,
             &phrases,
             CUT_OUT_MODEL,
-            source_image.width,
-            source_image.height,
+            sam_width,
+            sam_height,
         ) {
             Ok(outcome) => {
                 let usage = outcome.usage;
@@ -294,24 +307,44 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
     };
     let outcome = outcome_cell.into_inner().expect("outcome set on success");
 
-    let mask_bytes = encode_png_gray(&outcome.mask_image);
+    // The winning mask is in the SAM frame; map it onto the full
+    // source frame before anything is cut, reviewed, or stored, so
+    // every downstream artifact (mask asset, foreground, overlay) is
+    // at the photo's own resolution and the Fidelity Lock binds
+    // those pixels. The mask PNG carries the provenance JSON as a
+    // text chunk; draw republishes it in the receipt.
+    let full_mask = segmentation::map_mask_to_frame(
+        &outcome.mask_image,
+        source_image.width,
+        source_image.height,
+    );
+    let provenance_json = serde_json::to_string(&mask_provenance).unwrap_or_default();
+    let mask_bytes = crate::image::encode_png_gray_with_text(
+        &full_mask,
+        crate::assets::MASK_PROVENANCE_PNG_KEY,
+        &provenance_json,
+    );
     let mask_handle = store.put_bytes(
         &mask_bytes,
         KIND_MASK,
         ".png",
         Some(&source_record.asset_id),
     )?;
-    let foreground = segmentation::extract_foreground(&source_image, &outcome.mask_image);
+    let foreground = segmentation::extract_foreground(&source_image, &full_mask);
+    // The lineage is a chain: mask parented to the source photo,
+    // foreground parented to the mask (as in the Python server).
+    // draw walks the foreground's ancestry for the mask, so this
+    // shape is what lets the fidelity receipt name and pin it.
+    let mask_record = store.get_record(&mask_handle)?;
     let foreground_handle = store.put_image(
         &foreground,
         crate::assets::KIND_FOREGROUND,
-        Some(&source_record.asset_id),
+        Some(&mask_record.asset_id),
     )?;
     let foreground_record = store.get_record(&foreground_handle)?;
-    let mask_record = store.get_record(&mask_handle)?;
-    let overlay = segmentation::mask_overlay_image(&source_image, &outcome.mask_image)?;
+    let overlay = segmentation::mask_overlay_image(&source_image, &full_mask)?;
     let overlay_handle = store.put_image(&overlay, KIND_OVERLAY, Some(&source_record.asset_id))?;
-    let mask_review = segmentation::review_mask(&outcome.mask_image);
+    let mask_review = segmentation::review_mask(&full_mask);
 
     Ok(json!({
         "status": "ok",
@@ -326,6 +359,7 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         "mask_asset": mask_handle,
         "mask_overlay_asset": overlay_handle,
         "mask_review": mask_review,
+        "mask_provenance": mask_provenance,
         "hashes": {
             "source": {
                 "sha256": source_record.sha256,

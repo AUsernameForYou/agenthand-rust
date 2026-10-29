@@ -25,6 +25,132 @@ pub const MIN_DOMINANT_FRACTION: f64 = 0.75;
 /// Outline color of the mask overlay (the logo cyan, #00AFE1).
 pub const OVERLAY_OUTLINE_RGBA: [u8; 4] = [0, 175, 225, 255];
 
+/// The SAM working-resolution cap (decisions 68/69). SAM is sent the
+/// stored photo as-is up to this many pixels; past it, only the
+/// SAM-bound copy is downscaled (`prepare_sam_png`) and the returned
+/// mask is mapped back onto the full frame (`map_mask_to_frame`)
+/// before anything is cut.
+///
+/// The number is the pipeline's proven envelope, not a guessed
+/// provider limit: every still the room runs ever sent SAM was
+/// 1206x1608 = 1,939,248 px (dozens of accepted calls across the
+/// v1/v2, narrated, and acceptance runs in both builds, plus the M5
+/// working-resolution pass), and every video frame was 720x1280,
+/// below it. The failure this cap answers is measured too: the
+/// 4284x5712 (24 MP) original of IMG_1340 drew HTTP 413 from SAM's
+/// /responses endpoint (M5 live proof). The cap math below maps that
+/// exact original back onto 1206x1608, the frame size already proven
+/// live.
+pub const SAM_MAX_PIXELS: u64 = 1_939_248; // 1206 * 1608
+
+/// Mask provenance value: SAM saw the source frame itself, the mask
+/// needed no mapping.
+pub const MASK_SCALE_NONE: &str = "none";
+/// Mask provenance value: SAM saw a downscaled copy and its mask was
+/// mapped back onto the source frame by a bilinear resize
+/// thresholded at 128 (bilinear on the soft mask + threshold, never
+/// nearest on binary, so the mapped edge is a measured blend).
+pub const MASK_SCALE_BILINEAR_THRESHOLD: &str = "bilinear_threshold_128";
+
+/// The frame SAM sees for a source of (width, height): unchanged
+/// when the source fits the working cap; otherwise the largest
+/// same-aspect frame that fits it. Mirrors the Python
+/// `sam_frame_size` exactly, including the decrement loop that keeps
+/// the result inside the cap when float rounding lands a pixel over.
+pub fn sam_frame_size(width: u32, height: u32, max_pixels: Option<u64>) -> (u32, u32) {
+    let max_pixels = max_pixels.unwrap_or(SAM_MAX_PIXELS);
+    if (width as u64) * (height as u64) <= max_pixels {
+        return (width, height);
+    }
+    let scale = ((max_pixels as f64) / ((width as u64 * height as u64) as f64)).sqrt();
+    let mut w = ((width as f64 * scale) as u32).max(1);
+    let mut h = ((height as f64 * scale) as u32).max(1);
+    while (w as u64) * (h as u64) > max_pixels {
+        if w >= h {
+            w -= 1;
+        } else {
+            h -= 1;
+        }
+    }
+    (w, h)
+}
+
+/// The SAM-bound payload for one source photo.
+pub struct SamPayload {
+    /// What `segment_image` sends.
+    pub png_bytes: Vec<u8>,
+    /// The frame the returned masks are decoded against.
+    pub sam_width: u32,
+    pub sam_height: u32,
+    /// The mask-provenance value for the receipt.
+    pub scale_method: &'static str,
+}
+
+/// Build the SAM-bound payload for one source photo (port of the
+/// Python `prepare_sam_png`). Inside the cap the stored bytes pass
+/// through byte-identical, so the common path is exactly the
+/// pre-scaling pipeline; past it, a Lanczos downscale of the decoded
+/// source becomes the SAM copy. The stored photo itself is never
+/// resized — the downscale exists only in this payload.
+pub fn prepare_sam_png(
+    source_image: &RgbaImage,
+    stored_png_bytes: &[u8],
+    max_pixels: Option<u64>,
+) -> SamPayload {
+    let (width, height) = (source_image.width, source_image.height);
+    let (sam_width, sam_height) = sam_frame_size(width, height, max_pixels);
+    if (sam_width, sam_height) == (width, height) {
+        return SamPayload {
+            png_bytes: stored_png_bytes.to_vec(),
+            sam_width: width,
+            sam_height: height,
+            scale_method: MASK_SCALE_NONE,
+        };
+    }
+    let small = crate::resample::resize_rgba(
+        source_image,
+        sam_width,
+        sam_height,
+        crate::resample::ResampleFilter::Lanczos,
+    );
+    SamPayload {
+        png_bytes: crate::image::encode_png_rgba(&small),
+        sam_width,
+        sam_height,
+        scale_method: MASK_SCALE_BILINEAR_THRESHOLD,
+    }
+}
+
+/// Map a SAM-frame mask onto the full source frame (port of the
+/// Python `map_mask_to_frame`). Identity when the sizes already
+/// match. Otherwise a bilinear upscale of the (binary) mask,
+/// thresholded at 128 back to binary: a full-frame pixel is on
+/// exactly when its bilinear sample of the SAM mask is at least half
+/// on. The foreground is then cut from the full-resolution source
+/// through this mask, so the receipt binds full-resolution pixels,
+/// not the working copy's.
+pub fn map_mask_to_frame(mask: &GrayImage, frame_width: u32, frame_height: u32) -> GrayImage {
+    if mask.width == frame_width && mask.height == frame_height {
+        return mask.clone();
+    }
+    let soft = crate::resample::resize_gray(
+        mask,
+        frame_width,
+        frame_height,
+        crate::resample::ResampleFilter::Bilinear,
+    );
+    GrayImage {
+        width: frame_width,
+        height: frame_height,
+        pixels: soft
+            .pixels
+            .iter()
+            .map(|&v| if v >= 128 { 255 } else { 0 })
+            .collect(),
+        icc_profile: None,
+    }
+}
+
 #[derive(Debug)]
 pub struct CutOutError {
     pub code: String, // NO_MATCH | POOR_MASK | BAD_MODEL_RESPONSE

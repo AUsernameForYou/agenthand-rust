@@ -114,6 +114,24 @@ Emitted by `draw`:
 | `backdrop` | For `code_rendered` plates, the backdrop that was rendered: `{"kind": "wallpaper", "motif_diameter_px": 72, "opacity": 0.4, "shadow": false}` or `{"kind": "studio_gray"}`. `null` for model-generated and placeholder plates. Absent on older receipts. |
 | `claim` | The fidelity claim sentence, carried in the receipt itself. |
 
+Optional mask-provenance fields (decisions 68/69), emitted by `draw`
+when the mask asset recorded provenance — every `cut_out` since the
+SAM working-resolution change writes it as a text chunk inside the
+mask PNG. Absent on older receipts and on `foreground_alpha`
+receipts; verifiers accept both shapes. When any one is present the
+set must be complete and self-consistent (the SAM frame never
+exceeds the source frame, and `mask_scale_method` is `none` exactly
+when the two frames are equal), or the receipt fails shape
+validation:
+
+| Field | Meaning |
+|---|---|
+| `mask_source_width` | Width of the full-resolution source frame the mask was cut from, in pixels. |
+| `mask_source_height` | Height of that source frame, in pixels. |
+| `mask_sam_width` | Width of the frame SAM actually saw: the source frame itself, or the working-resolution downscale of it (only the SAM-bound copy is ever downscaled). |
+| `mask_sam_height` | Height of the frame SAM actually saw. |
+| `mask_scale_method` | How the returned mask was mapped from the SAM frame onto the source frame: `none` when SAM saw the source frame, `bilinear_threshold_128` when its mask was bilinearly upscaled and thresholded at 128. |
+
 Added by the server layer to the persisted receipt:
 
 | Field | Meaning |

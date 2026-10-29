@@ -130,24 +130,48 @@ pub fn decode_image(data: &[u8]) -> Result<DecodedImage, String> {
         })
     } else if data.starts_with(&[0xFF, 0xD8]) {
         decode_jpeg(data).map(DecodedImage::Rgba)
-    } else if crate::heic::decode::is_heic(data) {
-        decode_heic_image(data).map(DecodedImage::Rgba)
+    } else if let Some(img) = decode_heic_image(data) {
+        img.map(DecodedImage::Rgba)
     } else {
         Err("unsupported image format (PNG, JPEG and HEIC only)".to_string())
     }
 }
 
-fn decode_heic_image(data: &[u8]) -> Result<RgbaImage, String> {
-    // Untrusted-input boundary (M5): seller photos are arbitrary
-    // bytes. The decoder is written to refuse malformed input, and
-    // this catch is the guarantee that even an unforeseen panic in
-    // the decode path surfaces as an ordinary ingest error, never
-    // as a dead server.
-    let img = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::heic::decode::decode_heic(data)
+/// The HEIC branch of `decode_image`, returning `None` when the
+/// bytes are not HEIC at all (the caller's unsupported-format
+/// error then applies).
+fn decode_heic_image(data: &[u8]) -> Option<Result<RgbaImage, String>> {
+    // Untrusted-input boundary (M5, widened by the M5 fix lane):
+    // seller photos are arbitrary bytes, so the ENTIRE HEIC path —
+    // the `is_heic` sniff, the budget-checked decode, the `to_rgb8`
+    // conversion, and the RGBA packing — runs inside this one
+    // `catch_unwind`. The decoder is written to refuse malformed
+    // input with error values; this catch is the guarantee that
+    // even an unforeseen panic anywhere on that path surfaces as
+    // an ordinary ingest error, never as a dead server. The
+    // guarantee holds only under the unwind panic strategy, which
+    // `lib.rs` pins with a `compile_error!` guard.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !crate::heic::decode::is_heic(data) {
+            return None;
+        }
+        Some(decode_heic_image_caught(data))
     }))
-    .map_err(|_| "HEIC decode failed (decoder fault contained at the ingest boundary)".to_string())?
-    .map_err(|e| format!("HEIC decode: {e}"))?;
+    .unwrap_or_else(|_| {
+        Some(Err(
+            "HEIC decode failed (decoder fault contained at the ingest boundary)".to_string(),
+        ))
+    })
+}
+
+fn decode_heic_image_caught(data: &[u8]) -> Result<RgbaImage, String> {
+    // The product pixel budget is passed into the decoder, which
+    // refuses an over-budget primary from its declared dimensions
+    // (grid canvas / SPS conformance window) before decoding —
+    // the post-decode cap in `ingest::normalize_image_bytes` is
+    // the backstop, not the first check (M5 fix lane).
+    let img = crate::heic::decode::decode_heic_with_budget(data, crate::ingest::max_pixels())
+        .map_err(|e| format!("HEIC decode: {e}"))?;
     let rgb = crate::heic::decode::to_rgb8(&img);
     let (w, h) = (img.planes.width as u32, img.planes.height as u32);
     let mut pixels = Vec::with_capacity((w * h * 4) as usize);
@@ -392,6 +416,7 @@ fn encode_png(
     bpp: usize,
     rows: &[u8],
     icc: Option<&[u8]>,
+    text: Option<(&str, &str)>,
 ) -> Vec<u8> {
     let row_len = width as usize * bpp;
     assert_eq!(rows.len(), row_len * height as usize);
@@ -446,6 +471,15 @@ fn encode_png(
         iccp.extend_from_slice(&compressed_profile);
         write_chunk(&mut out, b"iCCP", &iccp);
     }
+    if let Some((key, value)) = text {
+        // tEXt: keyword, null separator, value (Latin-1; the one
+        // caller writes ASCII JSON).
+        let mut chunk = Vec::with_capacity(key.len() + 1 + value.len());
+        chunk.extend_from_slice(key.as_bytes());
+        chunk.push(0);
+        chunk.extend_from_slice(value.as_bytes());
+        write_chunk(&mut out, b"tEXt", &chunk);
+    }
     write_chunk(&mut out, b"IDAT", &compressed);
     write_chunk(&mut out, b"IEND", &[]);
     out
@@ -460,6 +494,7 @@ pub fn encode_png_rgba(img: &RgbaImage) -> Vec<u8> {
         4,
         &img.pixels,
         img.icc_profile.as_deref(),
+        None,
     )
 }
 
@@ -472,6 +507,21 @@ pub fn encode_png_gray(img: &GrayImage) -> Vec<u8> {
         1,
         &img.pixels,
         img.icc_profile.as_deref(),
+        None,
+    )
+}
+
+/// Encode a grayscale image as PNG bytes carrying one tEXt chunk
+/// (the mask provenance carrier; see `assets::MASK_PROVENANCE_PNG_KEY`).
+pub fn encode_png_gray_with_text(img: &GrayImage, key: &str, value: &str) -> Vec<u8> {
+    encode_png(
+        img.width,
+        img.height,
+        0,
+        1,
+        &img.pixels,
+        img.icc_profile.as_deref(),
+        Some((key, value)),
     )
 }
 

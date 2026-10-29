@@ -21,7 +21,7 @@
 //!   horizontal pass only processes the source rows the vertical pass
 //!   will actually read (bounds shifted accordingly).
 
-use crate::image::RgbaImage;
+use crate::image::{GrayImage, RgbaImage};
 
 /// Pillow's PRECISION_BITS for 8-bit resampling.
 const PRECISION_BITS: i32 = 32 - 8 - 2;
@@ -43,7 +43,63 @@ fn bicubic_filter(x: f64) -> f64 {
     0.0
 }
 
-const BICUBIC_SUPPORT: f64 = 2.0;
+fn bilinear_filter(x: f64) -> f64 {
+    let x = if x < 0.0 { -x } else { x };
+    if x < 1.0 {
+        1.0 - x
+    } else {
+        0.0
+    }
+}
+
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        let x = x * std::f64::consts::PI;
+        x.sin() / x
+    }
+}
+
+fn lanczos_filter(x: f64) -> f64 {
+    // Pillow's lanczos_filter: the a=3 windowed sinc; the resampler
+    // only ever evaluates it inside its support.
+    if x == 0.0 {
+        1.0
+    } else if (-3.0..3.0).contains(&x) {
+        sinc(x) * sinc(x / 3.0)
+    } else {
+        0.0
+    }
+}
+
+/// The resampling filters Pillow's `Resample.c` implements for 8-bit
+/// images and this pipeline uses: BICUBIC for the plate fit, BILINEAR
+/// for the SAM mask map-back, LANCZOS for the SAM-bound downscale.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ResampleFilter {
+    Bicubic,
+    Bilinear,
+    Lanczos,
+}
+
+impl ResampleFilter {
+    fn support(self) -> f64 {
+        match self {
+            ResampleFilter::Bicubic => 2.0,
+            ResampleFilter::Bilinear => 1.0,
+            ResampleFilter::Lanczos => 3.0,
+        }
+    }
+
+    fn eval(self, x: f64) -> f64 {
+        match self {
+            ResampleFilter::Bicubic => bicubic_filter(x),
+            ResampleFilter::Bilinear => bilinear_filter(x),
+            ResampleFilter::Lanczos => lanczos_filter(x),
+        }
+    }
+}
 
 struct Coeffs {
     ksize: usize,
@@ -53,13 +109,19 @@ struct Coeffs {
     kk: Vec<f64>,
 }
 
-/// Port of `precompute_coeffs` for the BICUBIC filter.
-fn precompute_coeffs(in_size: i32, in0: f32, in1: f32, out_size: i32) -> Coeffs {
+/// Port of `precompute_coeffs` for one resampling filter.
+fn precompute_coeffs(
+    filter: ResampleFilter,
+    in_size: i32,
+    in0: f32,
+    in1: f32,
+    out_size: i32,
+) -> Coeffs {
     // C: filterscale = scale = (double)(in1 - in0) / outSize — the
     // subtraction happens in float, the division in double.
     let scale = (in1 - in0) as f64 / out_size as f64;
     let filterscale = if scale < 1.0 { 1.0 } else { scale };
-    let support = BICUBIC_SUPPORT * filterscale;
+    let support = filter.support() * filterscale;
     let ksize = (support.ceil() as i32 * 2 + 1) as usize;
 
     let mut bounds = vec![(0i32, 0i32); out_size as usize];
@@ -81,7 +143,7 @@ fn precompute_coeffs(in_size: i32, in0: f32, in1: f32, out_size: i32) -> Coeffs 
         xmax -= xmin;
         let base = xx as usize * ksize;
         for x in 0..xmax {
-            let w = bicubic_filter(((x + xmin) as f64 - center + 0.5) * inv_filterscale);
+            let w = filter.eval(((x + xmin) as f64 - center + 0.5) * inv_filterscale);
             kk[base + x as usize] = w;
             ww += w;
         }
@@ -175,9 +237,10 @@ fn resample_vertical(
     out
 }
 
-/// Port of `ImagingResampleInner` for 8-bit data (BICUBIC only).
+/// Port of `ImagingResampleInner` for 8-bit data.
 /// `bx` is the source box as f32, exactly as the C API receives it.
 fn resample_inner(
+    filter: ResampleFilter,
     data: &[u8],
     in_w: usize,
     in_h: usize,
@@ -198,7 +261,7 @@ fn resample_inner(
 
     let mut coeffs_vert: Option<Coeffs> = None;
     if (need_horizontal && horizontal_first) || need_vertical {
-        coeffs_vert = Some(precompute_coeffs(in_h as i32, bx[1], bx[3], out_h as i32));
+        coeffs_vert = Some(precompute_coeffs(filter, in_h as i32, bx[1], bx[3], out_h as i32));
     }
 
     let mut cur: Vec<u8> = data.to_vec();
@@ -222,7 +285,7 @@ fn resample_inner(
                     .collect(),
                 kk: cv.kk.clone(),
             };
-            let coeffs_h = precompute_coeffs(in_w as i32, bx[0], bx[2], out_w as i32);
+            let coeffs_h = precompute_coeffs(filter, in_w as i32, bx[0], bx[2], out_w as i32);
             let kk_h = normalize_coeffs(&coeffs_h);
             let img = ByteImage {
                 width: in_w,
@@ -263,7 +326,7 @@ fn resample_inner(
             cur_h = out_h;
         }
         if need_horizontal {
-            let coeffs_h = precompute_coeffs(in_w as i32, bx[0], bx[2], out_w as i32);
+            let coeffs_h = precompute_coeffs(filter, in_w as i32, bx[0], bx[2], out_w as i32);
             let kk_h = normalize_coeffs(&coeffs_h);
             let img = ByteImage {
                 width: cur_w,
@@ -330,6 +393,7 @@ pub fn resize_bicubic_box(img: &RgbaImage, out_w: u32, out_h: u32, bx: [f32; 4])
     }
     let premultiplied = premultiply(&img.pixels);
     let data = resample_inner(
+        ResampleFilter::Bicubic,
         &premultiplied,
         img.width as usize,
         img.height as usize,
@@ -373,4 +437,55 @@ pub fn fit(img: &RgbaImage, out_w: u32, out_h: u32) -> RgbaImage {
         (crop_top + crop_h) as f32,
     ];
     resize_bicubic_box(img, out_w, out_h, bx)
+}
+
+/// `Image.resize(size, filter)` over the full frame for an RGBA
+/// image (premultiplied resampling, like `resize_bicubic_box`).
+pub fn resize_rgba(img: &RgbaImage, out_w: u32, out_h: u32, filter: ResampleFilter) -> RgbaImage {
+    if img.width == out_w && img.height == out_h {
+        return img.clone();
+    }
+    let bx = [0.0, 0.0, img.width as f32, img.height as f32];
+    let premultiplied = premultiply(&img.pixels);
+    let data = resample_inner(
+        filter,
+        &premultiplied,
+        img.width as usize,
+        img.height as usize,
+        4,
+        out_w as usize,
+        out_h as usize,
+        bx,
+    );
+    RgbaImage {
+        width: out_w,
+        height: out_h,
+        pixels: unpremultiply(&data),
+        icc_profile: img.icc_profile.clone(),
+    }
+}
+
+/// `Image.resize(size, filter)` over the full frame for a grayscale
+/// (L) image: single-channel resampling, no premultiply.
+pub fn resize_gray(img: &GrayImage, out_w: u32, out_h: u32, filter: ResampleFilter) -> GrayImage {
+    if img.width == out_w && img.height == out_h {
+        return img.clone();
+    }
+    let bx = [0.0, 0.0, img.width as f32, img.height as f32];
+    let data = resample_inner(
+        filter,
+        &img.pixels,
+        img.width as usize,
+        img.height as usize,
+        1,
+        out_w as usize,
+        out_h as usize,
+        bx,
+    );
+    GrayImage {
+        width: out_w,
+        height: out_h,
+        pixels: data,
+        icc_profile: img.icc_profile.clone(),
+    }
 }
