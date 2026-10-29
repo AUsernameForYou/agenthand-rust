@@ -615,10 +615,13 @@ fn run_room_run(args: &[String]) -> ExitCode {
     let mut first_success_only = false;
     let mut data_dir: Option<PathBuf> = None;
     let mut ledger: Option<PathBuf> = None;
+    let mut stage_mode: String = agenthand::backdrop::STAGE_MODE_SCENE.to_string();
+    let mut comps_path: Option<PathBuf> = None;
 
     let usage = "usage: agenthand room-run --photos PHOTO [PHOTO ...] [--video VIDEO ...] \
                  [--narrated-video VIDEO] [--narrated-audio AUDIO] [--items \"a, b\"] [--auto] \
-                 [--out DIR] [--budget-usd N]";
+                 [--out DIR] [--budget-usd N] [--stage-mode scene|wallpaper|studio_gray] \
+                 [--comps PATH]";
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -760,6 +763,30 @@ fn run_room_run(args: &[String]) -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            "--stage-mode" => match take_values(&mut i, 1) {
+                Some(mut values) => {
+                    let value = values.remove(0);
+                    if agenthand::backdrop::STAGE_MODES.contains(&value.as_str()) {
+                        stage_mode = value;
+                    } else {
+                        eprintln!(
+                            "room-run: --stage-mode must be one of scene, wallpaper, studio_gray"
+                        );
+                        return ExitCode::from(2);
+                    }
+                }
+                None => {
+                    eprintln!("room-run: --stage-mode needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--comps" => match take_values(&mut i, 1) {
+                Some(mut values) => comps_path = Some(PathBuf::from(values.remove(0))),
+                None => {
+                    eprintln!("room-run: --comps needs a value\n{usage}");
+                    return ExitCode::from(2);
+                }
+            },
             "--auto" => auto = true,
             "--first-success-only" => first_success_only = true,
             other => {
@@ -802,6 +829,19 @@ fn run_room_run(args: &[String]) -> ExitCode {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(format!("roomrun-{room_id}"))
     });
+    let comps: Option<Value> = match &comps_path {
+        Some(path) => match std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string()))
+        {
+            Ok(doc) => Some(doc),
+            Err(e) => {
+                eprintln!("room-run: cannot read --comps {}: {e}", path.display());
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
     let mut opts = RoomRunOptions {
         item_names,
         auto,
@@ -814,6 +854,8 @@ fn run_room_run(args: &[String]) -> ExitCode {
         narrated_audios,
         narration_max_projected_usd: narration_max_usd,
         ledger_path: ledger,
+        stage_mode,
+        comps,
         ..RoomRunOptions::default()
     };
     if let Some(scene) = scene {

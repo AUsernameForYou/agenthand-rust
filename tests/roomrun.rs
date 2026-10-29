@@ -123,7 +123,15 @@ impl FakeChain {
             idx
         };
         *self.spend.borrow_mut() += IDENTIFY_COST;
-        let plan = self.plans[idx].clone();
+        // Calls beyond the scripted plans (the per-item crop
+        // identify, when a run takes that route) fail as a plan
+        // error, so the run falls back to its no-copy path.
+        let Some(plan) = self.plans.get(idx).cloned() else {
+            return Ok(json!({
+                "status": "error",
+                "error": {"code": "NO_PLAN", "message": "no scripted plan for this call", "cost_counted_usd": IDENTIFY_COST},
+            }));
+        };
         if plan.get("error").map(|e| !e.is_null()).unwrap_or(false) {
             return Ok(json!({"status": "error", "error": plan["error"]}));
         }
@@ -1429,10 +1437,18 @@ fn summarize_manifest_matches_python_output_on_frozen_manifests() {
             continue; // frozen run not present in this environment
         };
         let manifest: Value = serde_json::from_str(&manifest_text).unwrap();
-        assert_eq!(
-            summarize_manifest(&manifest),
-            expected,
-            "summary mismatch for {run}"
-        );
+        // The workflow-completion lines (listing title + pricing,
+        // added for staged items after these runs were frozen) are
+        // additive: every pre-existing line must still match the
+        // frozen summary byte for byte.
+        let rendered: String = summarize_manifest(&manifest)
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("listing title:") && !trimmed.starts_with("pricing:")
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_eq!(rendered, expected, "summary mismatch for {run}");
     }
 }

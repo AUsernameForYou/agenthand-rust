@@ -289,6 +289,23 @@ pub fn draw_product(
     scene_prompt: &str,
     plate_handle: Option<&str>,
 ) -> Result<(String, Value), String> {
+    draw_product_with_plate_kind(store, foreground_handle, scene_prompt, plate_handle, None)
+}
+
+/// `draw_product` with an explicit plate classification for the
+/// receipt's `plate_kind` / `backdrop` fields. Without an override
+/// the classification follows the plate's origin: a stored plate is
+/// `model_generated`, the local dev plate is `local_placeholder`,
+/// and both carry a null `backdrop`. Code-rendered backdrop plates
+/// pass `("code_rendered", backdrop_json)` so the receipt records
+/// which backdrop was rendered and with what parameters.
+pub fn draw_product_with_plate_kind(
+    store: &AssetStore,
+    foreground_handle: &str,
+    scene_prompt: &str,
+    plate_handle: Option<&str>,
+    plate_kind_override: Option<(&str, Value)>,
+) -> Result<(String, Value), String> {
     let chain = validate_foreground(store, foreground_handle)?;
     let record = chain[0].clone();
     let source_record = chain[chain.len() - 1].clone();
@@ -395,6 +412,20 @@ pub fn draw_product(
         "plate_asset": plate_asset,
         "plate_sha256": plate_sha256,
         "plate_pixel_sha256": plate_pixel_sha256,
+        "plate_kind": match &plate_kind_override {
+            Some((kind, _)) => json!(kind),
+            None => {
+                if plate_handle.is_some() {
+                    json!("model_generated")
+                } else {
+                    json!("local_placeholder")
+                }
+            }
+        },
+        "backdrop": match &plate_kind_override {
+            Some((_, backdrop)) => backdrop.clone(),
+            None => Value::Null,
+        },
         "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match."
     });
     // Persist the receipt beside the composite, as the Python

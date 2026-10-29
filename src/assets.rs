@@ -30,6 +30,9 @@ pub const KIND_PLATE: &str = "background_plate";
 pub const KIND_COMPOSITE: &str = "composite";
 /// Asset kind: a mask overlay preview.
 pub const KIND_OVERLAY: &str = "mask_overlay";
+/// Asset kind: a cropped region of a source photo, stored so the
+/// listing chain can identify the item in isolation.
+pub const KIND_CROP: &str = "item_crop";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AssetRecord {

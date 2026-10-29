@@ -33,12 +33,12 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::assets::AssetStore;
+use crate::assets::{AssetStore, KIND_CROP, KIND_PLATE};
 use crate::meta::{
     project_cut_out_cost_usd, project_draw_cost_usd, project_identify_cost_usd, CUT_OUT_MODEL,
     DRAW_BACKGROUND_MODEL, IDENTIFY_MAX_ATTEMPTS, IDENTIFY_MODEL,
 };
-use crate::{composite, config, ingest, ledger};
+use crate::{backdrop, composite, config, ingest, ledger, market_pricing};
 
 pub const MAX_PHOTOS_PER_ITEM: usize = 3;
 pub const MAX_SAM_CALLS_PER_ITEM: usize = 6;
@@ -1280,6 +1280,7 @@ pub struct RunContext<'a> {
     pub store: AssetStore,
     pub chain: RoomChain,
     pub scene: String,
+    pub stage_mode: String,
     pub verify_fn: &'a VerifyFn,
     pub max_photos_per_item: usize,
     pub max_sam_calls_per_item: usize,
@@ -1501,11 +1502,191 @@ fn run_verification(ctx: &RunContext, handle: &str) -> Value {
     })
 }
 
+/// Pixel rectangle for an item crop: the foreground's normalized
+/// bbox expanded by a 10% margin on each side (10% of the bbox's
+/// own width horizontally, of its height vertically), clamped to
+/// the frame. Computed in pixel space, as the reference build
+/// does. Returns (x0, y0, x1, y1) in pixels, or None when the bbox
+/// is missing or the rectangle is empty.
+pub fn expanded_crop_rect(
+    bbox_normalized: Option<&Value>,
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    let b = bbox_vec(bbox_normalized)?;
+    let (w, h) = (width as f64, height as f64);
+    let box_w = (b[2] - b[0]) * w;
+    let box_h = (b[3] - b[1]) * h;
+    let px0 = ((b[0] * w - 0.10 * box_w).floor()).max(0.0) as u32;
+    let py0 = ((b[1] * h - 0.10 * box_h).floor()).max(0.0) as u32;
+    let px1 = ((b[2] * w + 0.10 * box_w).ceil() as u32).min(width);
+    let py1 = ((b[3] * h + 0.10 * box_h).ceil() as u32).min(height);
+    if px1 <= px0 || py1 <= py0 {
+        return None;
+    }
+    Some((px0, py0, px1, py1))
+}
+
+/// Crop an RGBA image to a pixel rectangle.
+pub fn crop_image(
+    img: &crate::image::RgbaImage,
+    rect: (u32, u32, u32, u32),
+) -> crate::image::RgbaImage {
+    let (x0, y0, x1, y1) = rect;
+    let w = x1 - x0;
+    let h = y1 - y0;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        let src = (((y0 + y) * img.width + x0) * 4) as usize;
+        let dst = (y * w * 4) as usize;
+        pixels[dst..dst + (w * 4) as usize]
+            .copy_from_slice(&img.pixels[src..src + (w * 4) as usize]);
+    }
+    crate::image::RgbaImage {
+        width: w,
+        height: h,
+        pixels,
+        icc_profile: img.icc_profile.clone(),
+    }
+}
+
+/// The no-copy note every empty listing carries; the crop path
+/// appends its specific failure reason to it.
+pub const NO_COPY_NOTE: &str = "the source photo's identify plan described a different primary \
+    subject; per-item listing copy was not generated rather than \
+    borrowed from another item";
+
+fn none_listing(reason: &str) -> Value {
+    json!({
+        "title": Value::Null,
+        "bullets": [],
+        "condition_notes": Value::Null,
+        "source": "none",
+        "note": format!("{NO_COPY_NOTE}; {reason}"),
+        "crop_asset": Value::Null,
+    })
+}
+
+/// Listing copy from the item's own crop: crop the primary source
+/// image to the item foreground's bbox (plus margin), store the
+/// crop, and run the chain's identify on it. Returns the listing
+/// record and the identify cost; any failure degrades to the
+/// honest "none" record with the reason appended to its note, and
+/// a billed failure's counted cost still rides back so the item's
+/// cost stays honest.
+fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource) -> (Value, f64) {
+    let bbox = primary.get("bbox_normalized");
+    let bbox_missing = bbox
+        .and_then(Value::as_array)
+        .map(|a| a.is_empty())
+        .unwrap_or(true);
+    if bbox_missing || primary_source.handle.is_none() {
+        return (
+            none_listing("no foreground box was recorded for the item crop"),
+            0.0,
+        );
+    }
+    let handle = primary_source.handle.as_deref().expect("checked above");
+    let Ok(source_image) = ctx.store.read_image(handle) else {
+        return (
+            none_listing("the item crop could not be read from the source photo"),
+            0.0,
+        );
+    };
+    let Some(rect) = expanded_crop_rect(bbox, source_image.width, source_image.height) else {
+        return (none_listing("the item crop box was empty"), 0.0);
+    };
+    let cropped = crop_image(&source_image, rect);
+    let source_asset_id = AssetStore::parse_handle(handle).ok();
+    let Ok(crop_handle) = ctx
+        .store
+        .put_image(&cropped, KIND_CROP, source_asset_id.as_deref())
+    else {
+        return (none_listing("the item crop could not be stored"), 0.0);
+    };
+    let result = match (ctx.chain.identify)(&crop_handle) {
+        Ok(result) => result,
+        Err(_) => return (none_listing("the item-crop identify attempt failed"), 0.0),
+    };
+    let cost = call_cost(&result);
+    let title = result.get("suggested_title");
+    if result.get("status").and_then(Value::as_str) == Some("ok")
+        && title.map(py_truthy).unwrap_or(false)
+    {
+        let bullets = result
+            .get("listing_bullets")
+            .filter(|b| py_truthy(b))
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        return (
+            json!({
+                "title": title.cloned().unwrap_or(Value::Null),
+                "bullets": bullets,
+                "condition_notes": result.get("condition_notes").cloned().unwrap_or(Value::Null),
+                "source": "item_crop",
+                "note": Value::Null,
+                "crop_asset": crop_handle,
+            }),
+            cost,
+        );
+    }
+    (none_listing("the item-crop identify attempt failed"), cost)
+}
+
+/// Draw one foreground against a code-rendered backdrop plate:
+/// the plate is rendered at the foreground's frame size, stored as
+/// a plate asset, and composited through the production draw path
+/// so the receipt pins its hashes. No model call; the returned
+/// result is shaped like the chain's draw result with cost 0.
+fn backdrop_draw(ctx: &RunContext, fg_handle: &str) -> Value {
+    let fail = |message: String| {
+        json!({
+            "status": "error",
+            "error": {"code": "DRAW_FAILED", "message": message},
+        })
+    };
+    let foreground = match ctx.store.read_image(fg_handle) {
+        Ok(img) => img,
+        Err(e) => return fail(e),
+    };
+    let Some(plate) = backdrop::render_plate(&ctx.stage_mode, foreground.width, foreground.height)
+    else {
+        return fail(format!("unknown stage mode {:?}", ctx.stage_mode));
+    };
+    let plate_handle = match ctx.store.put_image(&plate, KIND_PLATE, None) {
+        Ok(handle) => handle,
+        Err(e) => return fail(e),
+    };
+    match composite::draw_product_with_plate_kind(
+        &ctx.store,
+        fg_handle,
+        &ctx.scene,
+        Some(&plate_handle),
+        Some((
+            "code_rendered",
+            backdrop::backdrop_receipt_value(&ctx.stage_mode),
+        )),
+    ) {
+        Ok((handle, receipt)) => json!({
+            "status": "ok",
+            "output_asset": handle,
+            "fidelity_receipt": receipt,
+            "cost_usd": 0.0,
+        }),
+        Err(e) => fail(e),
+    }
+}
+
 pub struct WorkItem {
     pub name: String,
     pub candidate_photo_indices: Vec<usize>,
     pub flags: Vec<String>,
     pub narration: Option<Value>,
+    /// How the item entered the run: "named" (typed by the seller
+    /// or found by auto mode), "narration_selling" (named for sale
+    /// in the narration), or "narration_mentioned" (mentioned in
+    /// passing; the visual pipeline confirms or refutes it).
+    pub origin: String,
 }
 
 /// One item end to end: probe, pick the strongest sighting, draw,
@@ -1524,6 +1705,9 @@ fn process_item(
         "stage_reached": "probe",
         "failure": Value::Null,
         "narration": item.narration,
+        "origin": item.origin,
+        "stage_mode": ctx.stage_mode,
+        "pricing": Value::Null,
         "sightings": [],
         "primary_photo_index": Value::Null,
         "also_seen_in": [],
@@ -1567,10 +1751,16 @@ fn process_item(
             .find(|s| s.get("status").and_then(Value::as_str) == Some("error"))
             .and_then(|s| s.get("error"))
             .filter(|e| py_truthy(e));
-        let code = match first_error {
+        let mut code = match first_error {
             Some(error) => error.get("code").cloned().unwrap_or(json!("NO_MATCH")),
             None => json!("NO_MATCH"),
         };
+        if item.origin == "narration_mentioned" {
+            // A mentioned item the photos refute is a NO_MATCH by
+            // definition: it was probed and not found. The
+            // underlying probe code stays visible in the sightings.
+            code = json!("NO_MATCH");
+        }
         record["failure"] = json!({
             "stage": "cut_out",
             "code": code,
@@ -1608,11 +1798,14 @@ fn process_item(
         .map(|s| s.get("photo_index").cloned().unwrap_or(Value::Null))
         .filter(|idx| *idx != json!(primary_index))
         .collect::<Vec<_>>());
-    // Listing copy comes only from the primary photo's own plan, and
-    // only when that plan actually describes THIS item. If the plan
-    // was about something else, the listing stays empty with the
-    // reason recorded — inventing or borrowing copy is exactly the
-    // failure mode the whole product exists to refuse.
+    // Listing copy comes only from this item's own primary
+    // sighting. First route: the primary photo's own plan, when
+    // that plan actually describes THIS item. Second route: crop
+    // the primary source image to the item's foreground and
+    // identify the crop. If neither yields copy, the listing stays
+    // empty with the reason recorded — inventing or borrowing copy
+    // is exactly the failure mode the whole product exists to
+    // refuse.
     let primary_source = &sources[primary_index];
     if plan_matches_item(primary_source.plan.as_ref(), &name) {
         let plan = primary_source.plan.as_ref().expect("plan matched");
@@ -1627,17 +1820,12 @@ fn process_item(
             "condition_notes": plan.get("condition_notes").cloned().unwrap_or(Value::Null),
             "source": "photo_plan",
             "note": Value::Null,
+            "crop_asset": Value::Null,
         });
     } else {
-        record["listing"] = json!({
-            "title": Value::Null,
-            "bullets": [],
-            "condition_notes": Value::Null,
-            "source": "none",
-            "note": "the source photo's identify plan described a different primary \
-                     subject; per-item listing copy was not generated rather than \
-                     borrowed from another item",
-        });
+        let (listing, crop_cost) = crop_listing(ctx, primary, primary_source);
+        item_cost += crop_cost;
+        record["listing"] = listing;
     }
     // Draw stage: the receipt is the product; the picture is evidence.
     record["stage_reached"] = json!("draw");
@@ -1646,7 +1834,11 @@ fn process_item(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let draw_result = (ctx.chain.draw)(&fg_handle, &ctx.scene)?;
+    let draw_result = if backdrop::is_backdrop_mode(&ctx.stage_mode) {
+        backdrop_draw(ctx, &fg_handle)
+    } else {
+        (ctx.chain.draw)(&fg_handle, &ctx.scene)?
+    };
     item_cost += call_cost(&draw_result);
     if draw_result.get("status").and_then(Value::as_str) != Some("ok") {
         // Python dict.get semantics: the error dict (or {} when the
@@ -1689,6 +1881,11 @@ fn process_item(
             .get("color_profile_preserved")
             .cloned()
             .unwrap_or(Value::Null),
+        "plate_kind": receipt_src
+            .get("plate_kind")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "backdrop": receipt_src.get("backdrop").cloned().unwrap_or(Value::Null),
         "cost_usd": draw_result.get("cost_usd").cloned().unwrap_or(Value::Null),
     });
     let output_handle = record["output_asset"].as_str().unwrap_or("").to_string();
@@ -1970,6 +2167,11 @@ pub struct RoomRunOptions {
     pub narrated_audios: Vec<PathBuf>,
     pub narration_fn: Option<NarrationFn>,
     pub narration_max_projected_usd: f64,
+    /// Stage mode: "scene" (model-generated plate, the default),
+    /// "wallpaper" or "studio_gray" (code-rendered plates, $0).
+    pub stage_mode: String,
+    /// Parsed comps document for market pricing, when supplied.
+    pub comps: Option<Value>,
 }
 
 impl Default for RoomRunOptions {
@@ -1993,6 +2195,8 @@ impl Default for RoomRunOptions {
             narrated_audios: Vec::new(),
             narration_fn: None,
             narration_max_projected_usd: NARRATION_DEFAULT_MAX_PROJECTED_USD,
+            stage_mode: backdrop::STAGE_MODE_SCENE.to_string(),
+            comps: None,
         }
     }
 }
@@ -2057,6 +2261,9 @@ fn attach_narrated(
                     "kind": kind,
                     "source": source_path,
                 }));
+                if existing.origin == "narration_mentioned" && kind == "named" {
+                    existing.origin = "narration_selling".to_string();
+                }
             }
             return;
         }
@@ -2077,6 +2284,11 @@ fn attach_narrated(
             "kind": kind,
             "source": source_path,
         })),
+        origin: if kind == "mentioned" {
+            "narration_mentioned".to_string()
+        } else {
+            "narration_selling".to_string()
+        },
     });
 }
 
@@ -2312,9 +2524,14 @@ fn run_room_body(
     if n_items_estimate == 0 {
         n_items_estimate = sources.len();
     }
+    let draw_projection = if backdrop::is_backdrop_mode(&opts.stage_mode) {
+        0.0 // code-rendered plates make no model call
+    } else {
+        project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?
+    };
     let per_item_projection = MAX_SAM_CALLS_PER_ITEM as f64
         * project_cut_out_cost_usd(CUT_OUT_MODEL, 1)?
-        + project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
+        + draw_projection;
     let worst_case = identify_projection + n_items_estimate as f64 * per_item_projection;
     if worst_case > opts.budget_usd {
         return Err(format!(
@@ -2395,6 +2612,7 @@ fn run_room_body(
                 candidate_photo_indices: group.photo_indices,
                 flags: group.flags,
                 narration: None,
+                origin: "named".to_string(),
             });
         }
     } else {
@@ -2404,6 +2622,7 @@ fn run_room_body(
                 name: name.clone(),
                 flags: Vec::new(),
                 narration: None,
+                origin: "named".to_string(),
             });
         }
     }
@@ -2411,8 +2630,17 @@ fn run_room_body(
     // seller's own sale list; "mentioned" items are hypotheses the
     // visual pipeline confirms or refutes. A name that matches an
     // existing item annotates it instead of duplicating the work.
+    // For-sale names attach first, then passing mentions (the
+    // reference build's order).
     for (name, source_path, kind) in &narrated_names {
-        attach_narrated(&mut items_work, &sources, name, source_path, kind);
+        if *kind == "named" {
+            attach_narrated(&mut items_work, &sources, name, source_path, kind);
+        }
+    }
+    for (name, source_path, kind) in &narrated_names {
+        if *kind == "mentioned" {
+            attach_narrated(&mut items_work, &sources, name, source_path, kind);
+        }
     }
     if !narration_records.is_empty() && !opts.auto && !had_typed_items {
         mode = "narrated";
@@ -2427,6 +2655,7 @@ fn run_room_body(
         store,
         chain,
         scene: opts.scene.clone(),
+        stage_mode: opts.stage_mode.clone(),
         verify_fn: &verify_fn,
         max_photos_per_item: opts.max_photos_per_item,
         max_sam_calls_per_item: MAX_SAM_CALLS_PER_ITEM,
@@ -2452,6 +2681,9 @@ fn run_room_body(
                     ),
                 },
                 "narration": item.narration,
+                "origin": item.origin,
+                "stage_mode": opts.stage_mode,
+                "pricing": Value::Null,
                 "sightings": [],
                 "primary_photo_index": Value::Null,
                 "also_seen_in": [],
@@ -2476,6 +2708,16 @@ fn run_room_body(
         )?);
     }
     flag_cross_item_duplicates(&mut item_records);
+    // Market pricing: every item record carries a pricing entry,
+    // priced from the supplied comps or marked as unsupplied.
+    for record in item_records.iter_mut() {
+        let item_name = record
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        record["pricing"] = market_pricing::pricing_for_item(opts.comps.as_ref(), &item_name);
+    }
     let total_cost = python_round(spend_probe()? - spend_before, 6);
 
     // ---- narration section (Baseten pool, kept OUT of the room total) -
@@ -2543,10 +2785,20 @@ fn run_room_body(
         }
     }
 
+    let pricing_source = opts.comps.as_ref().map(|doc| {
+        json!({
+            "source": market_pricing::PRICING_SOURCE,
+            "area": doc.get("area").cloned().unwrap_or(Value::Null),
+            "radius_mi": doc.get("radius_mi").cloned().unwrap_or(Value::Null),
+            "pulled_at": doc.get("pulled_at").cloned().unwrap_or(Value::Null),
+        })
+    });
     let manifest = json!({
         "room_id": room_id,
         "created_at": iso_now_micros(),
         "mode": mode,
+        "stage_mode": opts.stage_mode,
+        "pricing_source": pricing_source,
         "room_style": opts.scene,
         "budget_usd": opts.budget_usd,
         "ledger_path": room_ledger.to_string_lossy(),
@@ -2562,6 +2814,9 @@ fn run_room_body(
         "items": item_records,
         "notes": notes,
     });
+    if let Some(comps_doc) = &opts.comps {
+        market_pricing::write_priced_artifacts(out_dir, &manifest, comps_doc, &ctx.store)?;
+    }
     let manifest_path = out_dir.join("manifest.json");
     let serialized = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     std::fs::write(&manifest_path, serialized).map_err(|e| e.to_string())?;
@@ -2739,6 +2994,38 @@ pub fn summarize_manifest(manifest: &Value) -> String {
                         .unwrap_or(&Value::Null)
                 ),
             ));
+            // Every staged item carries its listing title and its
+            // pricing outcome (the reference renderer's lines).
+            let listing_title = item
+                .get("listing")
+                .and_then(|l| l.get("title"))
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .unwrap_or("\u{2014}");
+            lines.push(format!("          listing title: {listing_title}"));
+            let pricing = item.get("pricing").cloned().unwrap_or(Value::Null);
+            match pricing.get("status").and_then(Value::as_str) {
+                Some("priced") => {
+                    let range = pricing.get("range").cloned().unwrap_or(Value::Null);
+                    lines.push(format!(
+                        "          pricing: ${}\u{2013}${} range, suggested ${} ({}, {} comps)",
+                        py_str(range.get("quick").unwrap_or(&Value::Null)),
+                        py_str(range.get("premium").unwrap_or(&Value::Null)),
+                        py_str(pricing.get("suggested").unwrap_or(&Value::Null)),
+                        py_str(pricing.get("confidence").unwrap_or(&Value::Null)),
+                        py_str(pricing.get("comps_used").unwrap_or(&Value::Null)),
+                    ));
+                }
+                Some("unpriced_thin_market") => {
+                    lines.push(format!(
+                        "          pricing: not priced \u{2014} thin market ({} comps)",
+                        py_str(pricing.get("comps_used").unwrap_or(&Value::Null)),
+                    ));
+                }
+                _ => {
+                    lines.push("          pricing: no comps supplied".to_string());
+                }
+            }
         } else if status == "verify_failed" {
             let failure = item.get("failure").cloned().unwrap_or(Value::Null);
             lines.push(format!(

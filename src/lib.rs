@@ -29,6 +29,7 @@
 //!   STATUS.md).
 
 pub mod assets;
+pub mod backdrop;
 pub mod billing;
 pub mod composite;
 pub mod config;
@@ -36,6 +37,7 @@ pub mod heic;
 pub mod image;
 pub mod ingest;
 pub mod ledger;
+pub mod market_pricing;
 pub mod measure;
 pub mod meta;
 pub mod pricing;

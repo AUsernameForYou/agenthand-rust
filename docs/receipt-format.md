@@ -110,6 +110,8 @@ Emitted by `draw`:
 | `plate_source` | `asset` when a stored plate was reused, `local_placeholder` for the deterministic offline dev plate. |
 | `plate_sha256` | File hash of the plate, or `null` when no plate was stored. |
 | `plate_pixel_sha256` | Pixel hash of the plate, or `null` on the same condition. |
+| `plate_kind` | How the plate was produced: `model_generated` for a stored plate from the image model, `code_rendered` for a backdrop plate rendered by code (wallpaper / studio gray stage modes), `local_placeholder` for the deterministic offline dev plate. Absent on older receipts. |
+| `backdrop` | For `code_rendered` plates, the backdrop that was rendered: `{"kind": "wallpaper", "motif_diameter_px": 72, "opacity": 0.4, "shadow": false}` or `{"kind": "studio_gray"}`. `null` for model-generated and placeholder plates. Absent on older receipts. |
 | `claim` | The fidelity claim sentence, carried in the receipt itself. |
 
 Added by the server layer to the persisted receipt:
@@ -134,6 +136,14 @@ a weaker grading. The frozen run's receipt is unmarked: the run
 predates the marker. This Rust build stamps `receipt_schema: 2` as
 the receipt's first field, and its verifier mirrors the downgrade
 guard.
+
+The `plate_kind` and `backdrop` fields (section 5) are additive:
+they appear on receipts issued since the backdrop stage modes
+landed and are absent from older receipts, including the frozen
+run's. They are not part of the current-schema field set the
+downgrade guard grades on, and the verifier accepts receipts with
+or without them; they record how the plate was produced, never a
+claim the recount grades.
 
 ## 7. What the verifier recomputes
 
