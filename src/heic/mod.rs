@@ -13,6 +13,20 @@
 //! grid composition (the `grid` module: canvas assembly from
 //! decoded tile pictures) is in scope and implemented; what M3.5
 //! still owes is the bit-exact tile decode feeding it.
+//!
+//! M2: `bitreader` (RBSP bit access), `params` (VPS/SPS/PPS and
+//! slice segment headers), `cabac` (the §9.3 arithmetic engine and
+//! context models), `syntax` (the slice-data syntax walk used for
+//! terminating-bin / trace verification ahead of M3 reconstruction).
 
+pub mod bitreader;
+pub mod cabac;
 pub mod container;
+pub mod decode;
+pub mod filters;
 pub mod grid;
+pub mod params;
+pub mod recon;
+pub mod sao;
+pub mod syntax;
+pub mod values;

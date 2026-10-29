@@ -115,8 +115,13 @@ impl DecodedImage {
     }
 }
 
-/// Decode PNG or JPEG bytes into a normalized image (Pillow semantics:
-/// `Image.open(...).convert("RGBA")`, with the ICC profile extracted).
+/// Decode PNG, JPEG, or HEIC bytes into a normalized image (Pillow
+/// semantics: `Image.open(...).convert("RGBA")`, with the ICC
+/// profile extracted). HEIC is sniffed by content (the `ftyp`
+/// brands) and decoded by our own from-scratch decoder
+/// (`heic::decode`); a HEIC file outside the decoder's subset
+/// refuses with the subset's message — there is no external
+/// fallback.
 pub fn decode_image(data: &[u8]) -> Result<DecodedImage, String> {
     if data.starts_with(&[0x89, b'P', b'N', b'G']) {
         decode_png(data).map(|png| match png {
@@ -125,9 +130,27 @@ pub fn decode_image(data: &[u8]) -> Result<DecodedImage, String> {
         })
     } else if data.starts_with(&[0xFF, 0xD8]) {
         decode_jpeg(data).map(DecodedImage::Rgba)
+    } else if crate::heic::decode::is_heic(data) {
+        decode_heic_image(data).map(DecodedImage::Rgba)
     } else {
-        Err("unsupported image format (PNG and JPEG only)".to_string())
+        Err("unsupported image format (PNG, JPEG and HEIC only)".to_string())
     }
+}
+
+fn decode_heic_image(data: &[u8]) -> Result<RgbaImage, String> {
+    let img = crate::heic::decode::decode_heic(data).map_err(|e| format!("HEIC decode: {e}"))?;
+    let rgb = crate::heic::decode::to_rgb8(&img);
+    let (w, h) = (img.planes.width as u32, img.planes.height as u32);
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for px in rgb.as_chunks::<3>().0 {
+        pixels.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    }
+    Ok(RgbaImage {
+        width: w,
+        height: h,
+        pixels,
+        icc_profile: img.icc_profile.clone(),
+    })
 }
 
 enum PngDecoded {

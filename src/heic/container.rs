@@ -189,18 +189,36 @@ pub struct HvcC {
 #[derive(Debug, Clone, Serialize)]
 pub enum Property {
     HvcC(HvcC),
-    Ispe { width: u32, height: u32 },
-    Pixi { bits_per_channel: Vec<u8> },
-    Irot { angle: u8 },
+    Ispe {
+        width: u32,
+        height: u32,
+    },
+    Pixi {
+        bits_per_channel: Vec<u8>,
+    },
+    Irot {
+        angle: u8,
+    },
     ColrNclx {
         primaries: u16,
         transfer: u16,
         matrix: u16,
         full_range: bool,
     },
-    ColrOther { colour_type: String },
-    AuxC { aux_type: String },
-    Other { typ: String, size: usize },
+    ColrOther {
+        colour_type: String,
+        /// Remaining box payload after the colour type (for `prof`,
+        /// the ICC profile bytes themselves; retained from M5 so the
+        /// pipeline can carry the profile identity into receipts).
+        data: Vec<u8>,
+    },
+    AuxC {
+        aux_type: String,
+    },
+    Other {
+        typ: String,
+        size: usize,
+    },
 }
 
 impl Property {
@@ -324,10 +342,53 @@ impl HeifFile {
             if a.index == 0 {
                 continue;
             }
-            if let Some(Property::AuxC { aux_type }) =
+            if let Some(Property::AuxC { aux_type }) = self.properties.get((a.index - 1) as usize) {
+                return Some(aux_type.clone());
+            }
+        }
+        None
+    }
+    /// The item's `irot` property, if any: the raw 2-bit angle
+    /// field. Per ISO/IEC 23008-12 the displayed image is the
+    /// stored image rotated `angle * 90` degrees counter-clockwise.
+    /// Rotation is a container/display transform — the decoder's
+    /// parity metric is on native planes, pre-rotation.
+    pub fn item_irot(&self, item: &Item) -> Option<u8> {
+        for a in &item.properties {
+            if a.index == 0 {
+                continue;
+            }
+            if let Some(Property::Irot { angle }) = self.properties.get((a.index - 1) as usize) {
+                return Some(*angle);
+            }
+        }
+        None
+    }
+    /// Whether the item carries an embedded ICC colour profile
+    /// (a `colr` property of type `prof`). Presence is recorded;
+    /// no colour conversion is applied or claimed.
+    pub fn item_has_prof(&self, item: &Item) -> bool {
+        item.properties.iter().any(|a| {
+            a.index != 0
+                && matches!(
+                    self.properties.get((a.index - 1) as usize),
+                    Some(Property::ColrOther { colour_type, .. }) if colour_type == "prof"
+                )
+        })
+    }
+    /// The item's embedded ICC profile bytes (the payload of its
+    /// `colr`/`prof` property), if it carries one.
+    pub fn item_icc_profile(&self, item: &Item) -> Option<Vec<u8>> {
+        for a in &item.properties {
+            if a.index == 0 {
+                continue;
+            }
+            if let Some(Property::ColrOther { colour_type, data }) =
                 self.properties.get((a.index - 1) as usize)
             {
-                return Some(aux_type.clone());
+                if colour_type == "prof" && !data.is_empty() {
+                    return Some(data.clone());
+                }
             }
         }
         None
@@ -467,7 +528,14 @@ fn parse_property(d: &[u8], b: &BoxRef) -> Res<Property> {
                     full_range: fr >> 7 == 1,
                 }
             } else {
-                Property::ColrOther { colour_type }
+                let mut rest = Vec::new();
+                while c.remaining() > 0 {
+                    rest.push(c.u8()?);
+                }
+                Property::ColrOther {
+                    colour_type,
+                    data: rest,
+                }
             }
         }
         "auxC" => {
@@ -546,11 +614,7 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
             }
             "pitm" => {
                 let v = c.fullbox_version()?;
-                primary_item_id = Some(if v == 0 {
-                    c.u16()? as u32
-                } else {
-                    c.u32()?
-                });
+                primary_item_id = Some(if v == 0 { c.u16()? as u32 } else { c.u32()? });
             }
             "iinf" => {
                 let v = c.fullbox_version()?;
@@ -567,11 +631,7 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                     let hidden = data[ib.content + 3] & 1 == 1;
                     match iv {
                         2 | 3 => {
-                            let item_id = if iv == 2 {
-                                ic.u16()? as u32
-                            } else {
-                                ic.u32()?
-                            };
+                            let item_id = if iv == 2 { ic.u16()? as u32 } else { ic.u32()? };
                             let _protection = ic.u16()?;
                             let item_type = ic.fourcc()?;
                             let mut name = Vec::new();
@@ -584,16 +644,20 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                             }
                             item_types.insert(
                                 item_id,
-                                (item_type, String::from_utf8_lossy(&name).into_owned(), hidden),
+                                (
+                                    item_type,
+                                    String::from_utf8_lossy(&name).into_owned(),
+                                    hidden,
+                                ),
                             );
                         }
                         0 | 1 => {
                             // Legacy infe: no item_type field; record id
                             // with an empty type rather than guessing.
                             let item_id = ic.u16()? as u32;
-                            item_types.entry(item_id).or_insert_with(|| {
-                                (String::new(), String::new(), false)
-                            });
+                            item_types
+                                .entry(item_id)
+                                .or_insert_with(|| (String::new(), String::new(), false));
                         }
                         other => {
                             return malformed(format!("infe version {other} unsupported"));
@@ -613,17 +677,9 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                 } else {
                     0
                 };
-                let item_count = if v < 2 {
-                    c.u16()? as u32
-                } else {
-                    c.u32()?
-                };
+                let item_count = if v < 2 { c.u16()? as u32 } else { c.u32()? };
                 for _ in 0..item_count {
-                    let item_id = if v < 2 {
-                        c.u16()? as u32
-                    } else {
-                        c.u32()?
-                    };
+                    let item_id = if v < 2 { c.u16()? as u32 } else { c.u32()? };
                     let construction_method = if v == 1 || v == 2 {
                         c.u16()? & 0xfff
                     } else {
@@ -662,18 +718,13 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                 for sb in &subs {
                     match sb.typ.as_str() {
                         "ipco" => {
-                            let props = walk_boxes(
-                                data,
-                                sb.content,
-                                sb.content + sb.content_len,
-                            )?;
+                            let props = walk_boxes(data, sb.content, sb.content + sb.content_len)?;
                             for pb in &props {
                                 properties.push(parse_property(data, pb)?);
                             }
                         }
                         "ipma" => {
-                            let mut ac =
-                                Cur::new(data, sb.content, sb.content + sb.content_len);
+                            let mut ac = Cur::new(data, sb.content, sb.content + sb.content_len);
                             let v = ac.u8()?;
                             let flags = {
                                 let f1 = ac.u8()?;
@@ -687,11 +738,7 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                             // only the item_ID width follows version.
                             let entry_count = ac.u32()?;
                             for _ in 0..entry_count {
-                                let item_id = if v < 1 {
-                                    ac.u16()? as u32
-                                } else {
-                                    ac.u32()?
-                                };
+                                let item_id = if v < 1 { ac.u16()? as u32 } else { ac.u32()? };
                                 let assoc_count = ac.u8()? as usize;
                                 let mut list = Vec::new();
                                 for _ in 0..assoc_count {
@@ -716,8 +763,7 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                 let v = rc.fullbox_version()?;
                 let refs = walk_boxes(data, rc.pos, b.content + b.content_len)?;
                 for rb in &refs {
-                    let mut rcur =
-                        Cur::new(data, rb.content, rb.content + rb.content_len);
+                    let mut rcur = Cur::new(data, rb.content, rb.content + rb.content_len);
                     let (from, count) = if v == 0 {
                         (rcur.u16()? as u32, rcur.u16()? as usize)
                     } else {
@@ -959,6 +1005,33 @@ pub fn walk_nals(item_data: &[u8], length_size: u8) -> Res<Vec<(u8, usize)>> {
     Ok(out)
 }
 
+/// Split a length-prefixed HEVC item bitstream into borrowed NAL
+/// units: (nal_unit_type, unit bytes including the 2-byte header).
+pub fn split_nals<'a>(item_data: &'a [u8], length_size: u8) -> Res<Vec<(u8, &'a [u8])>> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos < item_data.len() {
+        if pos + length_size as usize > item_data.len() {
+            return malformed("truncated NAL length prefix");
+        }
+        let mut len: usize = 0;
+        for i in 0..length_size as usize {
+            len = (len << 8) | item_data[pos + i] as usize;
+        }
+        pos += length_size as usize;
+        if pos + len > item_data.len() || len < 2 {
+            return malformed(format!(
+                "NAL unit at {pos} claims {len} bytes, {} available",
+                item_data.len() - pos
+            ));
+        }
+        let nal_type = (item_data[pos] >> 1) & 0x3f;
+        out.push((nal_type, &item_data[pos..pos + len]));
+        pos += len;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1012,7 +1085,10 @@ mod tests {
         ispe.extend_from_slice(&64u32.to_be_bytes());
         ispe.extend_from_slice(&48u32.to_be_bytes());
 
-        let ipco = box_("ipco", &[box_("hvcC", &hvcc), fullbox("ispe", 0, &ispe[4..])].concat());
+        let ipco = box_(
+            "ipco",
+            &[box_("hvcC", &hvcc), fullbox("ispe", 0, &ispe[4..])].concat(),
+        );
         // ipma v1, flags 0 (7-bit indices): item 1 -> props 1 (ess), 2
         let mut ipma_c = Vec::new();
         ipma_c.extend_from_slice(&1u32.to_be_bytes());
@@ -1072,15 +1148,8 @@ mod tests {
         let iloc = fullbox("iloc", 1, &iloc_c);
 
         let idat = box_("idat", &payload);
-        let meta = fullbox(
-            "meta",
-            0,
-            &[hdlr, pitm, iinf, iprp, idat, iloc].concat(),
-        );
-        let ftyp = box_(
-            "ftyp",
-            &[b"heic" as &[u8], &[0u8; 4], b"mif1heic"].concat(),
-        );
+        let meta = fullbox("meta", 0, &[hdlr, pitm, iinf, iprp, idat, iloc].concat());
+        let ftyp = box_("ftyp", &[b"heic" as &[u8], &[0u8; 4], b"mif1heic"].concat());
         let mut file = [ftyp, meta].concat();
         // item 2's method-0 payload: 4 raw bytes at the very end of
         // the file, at the offset the caller computed.

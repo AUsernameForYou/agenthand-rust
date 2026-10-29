@@ -24,6 +24,8 @@
 //! Sample storage is u16 with values as decoded (8-bit samples in
 //! the low bits), matching the hash convention in MILESTONE-M0.md.
 
+use sha2::{Digest, Sha256};
+
 use super::container::{GridHeader, HeicError};
 
 type Res<T> = Result<T, HeicError>;
@@ -161,6 +163,83 @@ pub fn compose_grid(tiles: &[PicturePlanes], grid: &GridHeader) -> Res<PicturePl
     })
 }
 
+/// SHA-256 of one plane of a composed (already tightly cropped)
+/// picture, rows packed: 1 byte per sample at 8-bit depth, 2 bytes
+/// little-endian (value in the low bits) above 8 bits — the same
+/// byte convention as `recon::Picture::plane_hash`.
+pub fn plane_hash(plane: &[u16], width: usize, height: usize, bit_depth: u32) -> String {
+    assert_eq!(plane.len(), width * height, "plane length vs dims");
+    let mut hasher = Sha256::new();
+    for row in 0..height {
+        let line = &plane[row * width..(row + 1) * width];
+        if bit_depth <= 8 {
+            let bytes: Vec<u8> = line.iter().map(|&v| v as u8).collect();
+            hasher.update(bytes);
+        } else {
+            let mut bytes = Vec::with_capacity(line.len() * 2);
+            for &v in line {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            hasher.update(bytes);
+        }
+    }
+    let digest = hasher.finalize();
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Hash all three planes of a composed picture (luma at
+/// `bit_depth_luma`, chroma at `bit_depth_chroma`).
+pub fn picture_hashes(
+    p: &PicturePlanes,
+    bit_depth_luma: u32,
+    bit_depth_chroma: u32,
+) -> [String; 3] {
+    let (cw, ch) = p.chroma_dims();
+    [
+        plane_hash(&p.y, p.width, p.height, bit_depth_luma),
+        plane_hash(&p.cb, cw, ch, bit_depth_chroma),
+        plane_hash(&p.cr, cw, ch, bit_depth_chroma),
+    ]
+}
+
+/// Rotate a picture by `quarter_turns * 90` degrees
+/// counter-clockwise (the HEIF `irot` display transform). This is
+/// a container-stage operation: parity is measured on native
+/// planes pre-rotation; rotation exists so the displayed
+/// dimensions/orientation can be verified against the oracle's.
+pub fn rotate_ccw(p: &PicturePlanes, quarter_turns: u8) -> PicturePlanes {
+    let turns = quarter_turns & 0x3;
+    if turns == 0 {
+        return p.clone();
+    }
+    let rotate_plane = |plane: &[u16], w: usize, h: usize| -> (Vec<u16>, usize, usize) {
+        // One CCW turn: out(x, y) = in(w - 1 - y, x); dims swap.
+        let (mut cur, mut cw, mut ch) = (plane.to_vec(), w, h);
+        for _ in 0..turns {
+            let mut out = vec![0u16; cw * ch];
+            for y in 0..cw {
+                for x in 0..ch {
+                    out[y * ch + x] = cur[x * cw + (cw - 1 - y)];
+                }
+            }
+            cur = out;
+            std::mem::swap(&mut cw, &mut ch);
+        }
+        (cur, cw, ch)
+    };
+    let (y, w, h) = rotate_plane(&p.y, p.width, p.height);
+    let (cw0, ch0) = p.chroma_dims();
+    let (cb, _, _) = rotate_plane(&p.cb, cw0, ch0);
+    let (cr, _, _) = rotate_plane(&p.cr, cw0, ch0);
+    PicturePlanes {
+        width: w,
+        height: h,
+        y,
+        cb,
+        cr,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +292,27 @@ mod tests {
     }
 
     #[test]
+    fn rotate_ccw_swaps_dims_and_moves_samples() {
+        // 4x2 luma (chroma 2x1), distinct values per sample.
+        let mut p = PicturePlanes::new_filled(4, 2, 0);
+        p.y = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        p.cb = vec![10, 11];
+        p.cr = vec![12, 13];
+        let r = rotate_ccw(&p, 1);
+        assert_eq!((r.width, r.height), (2, 4));
+        // CCW: the stored top-right sample (3) becomes top-left.
+        assert_eq!(r.y, vec![3, 7, 2, 6, 1, 5, 0, 4]);
+        assert_eq!(r.cb, vec![11, 10]);
+        // Two turns = 180: dims restored, order reversed.
+        let r2 = rotate_ccw(&p, 2);
+        assert_eq!((r2.width, r2.height), (4, 2));
+        assert_eq!(r2.y, vec![7, 6, 5, 4, 3, 2, 1, 0]);
+        // Four turns = identity; three turns swaps back.
+        assert_eq!(rotate_ccw(&p, 4), p);
+        assert_eq!((rotate_ccw(&p, 3).width, rotate_ccw(&p, 3).height), (2, 4));
+    }
+
+    #[test]
     fn wrong_tile_count_and_mixed_sizes_refuse() {
         let tiles = vec![PicturePlanes::new_filled(4, 4, 0)];
         match compose_grid(&tiles, &grid(2, 2, 8, 8)) {
@@ -227,9 +327,8 @@ mod tests {
             Err(HeicError::Refused(m)) => assert!(m.contains("non-uniform")),
             other => panic!("expected refusal, got {other:?}"),
         }
-        let tiles: Vec<PicturePlanes> = (0..4)
-            .map(|_| PicturePlanes::new_filled(4, 4, 0))
-            .collect();
+        let tiles: Vec<PicturePlanes> =
+            (0..4).map(|_| PicturePlanes::new_filled(4, 4, 0)).collect();
         match compose_grid(&tiles, &grid(2, 2, 9, 8)) {
             Err(HeicError::Refused(m)) => assert!(m.contains("does not fit canvas")),
             other => panic!("expected refusal, got {other:?}"),

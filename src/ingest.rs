@@ -8,8 +8,9 @@
 //! EXIF orientation is applied for JPEG inputs (a minimal TIFF
 //! parse of the APP1 segment) and for PNG inputs (the eXIf chunk,
 //! whose payload is a bare TIFF header — Pillow's `exif_transpose`
-//! reads both). HEIC inputs are not handled (HEIC needs pillow-heif
-//! on the Python side and would break the single static binary).
+//! reads both). HEIC inputs decode with the in-tree from-scratch
+//! decoder (M5), which applies the container's `irot` itself, so
+//! no EXIF step runs for them.
 
 use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_SOURCE};
 use crate::image::{decode_image, encode_png_rgba, DecodedImage, RgbaImage};
