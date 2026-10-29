@@ -46,6 +46,9 @@ pub const MAX_VARIANTS_PER_PHOTO: usize = 2;
 pub const MERGE_SIMILARITY: f64 = 0.6;
 pub const GREY_ZONE_LOW: f64 = 0.4;
 pub const MASK_IOU_FLAG: f64 = 0.9;
+/// Two primary masks on one photo are the same physical object when
+/// their overlap reaches this fraction of the smaller mask.
+pub const COLLISION_MASK_OVERLAP: f64 = 0.95;
 pub const DEFAULT_SCENE: &str = "a bright, calm room with a plain warm-white wall and a light wooden table surface, soft daylight";
 pub const DEFAULT_BUDGET_USD: f64 = 1.00;
 
@@ -1360,6 +1363,40 @@ pub fn rank_photos(item_name: &str, sources: &[PhotoSource]) -> Vec<usize> {
     order
 }
 
+/// Apply the per-item candidate cap with still coverage: every
+/// still photo is always in the candidate set, and video frames
+/// fill the remaining cap slots in rank order. The returned list
+/// keeps the ranking's probe order. (The acceptance run's black
+/// hat: the cap filled with video frames and the one still holding
+/// the fedora was never probed, so the item staged a different hat
+/// from a frame instead.)
+pub fn apply_candidate_coverage(
+    ranked: &[usize],
+    sources: &[PhotoSource],
+    cap: usize,
+) -> Vec<usize> {
+    let mut chosen: HashSet<usize> = ranked
+        .iter()
+        .copied()
+        .filter(|&idx| sources[idx].origin == "still")
+        .collect();
+    let mut count = chosen.len();
+    for &idx in ranked {
+        if count >= cap {
+            break;
+        }
+        if sources[idx].origin != "still" {
+            chosen.insert(idx);
+            count += 1;
+        }
+    }
+    ranked
+        .iter()
+        .copied()
+        .filter(|idx| chosen.contains(idx))
+        .collect()
+}
+
 /// Probe one item against one photo: SAM gets a small, ordered set of
 /// concept phrasings and a hard per-item call budget shared across
 /// photos. A "photo does not contain it" answer is a sighting row.
@@ -1570,11 +1607,17 @@ fn none_listing(reason: &str) -> Value {
 /// Listing copy from the item's own crop: crop the primary source
 /// image to the item foreground's bbox (plus margin), store the
 /// crop, and run the chain's identify on it. Returns the listing
-/// record and the identify cost; any failure degrades to the
+/// record, the identify cost, and the crop-identify plan itself
+/// when it supplied the copy (the collision post-pass reads it as
+/// the item's listing evidence); any failure degrades to the
 /// honest "none" record with the reason appended to its note, and
 /// a billed failure's counted cost still rides back so the item's
 /// cost stays honest.
-fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource) -> (Value, f64) {
+fn crop_listing(
+    ctx: &RunContext,
+    primary: &Value,
+    primary_source: &PhotoSource,
+) -> (Value, f64, Option<Value>) {
     let bbox = primary.get("bbox_normalized");
     let bbox_missing = bbox
         .and_then(Value::as_array)
@@ -1584,6 +1627,7 @@ fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource)
         return (
             none_listing("no foreground box was recorded for the item crop"),
             0.0,
+            None,
         );
     }
     let handle = primary_source.handle.as_deref().expect("checked above");
@@ -1591,10 +1635,11 @@ fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource)
         return (
             none_listing("the item crop could not be read from the source photo"),
             0.0,
+            None,
         );
     };
     let Some(rect) = expanded_crop_rect(bbox, source_image.width, source_image.height) else {
-        return (none_listing("the item crop box was empty"), 0.0);
+        return (none_listing("the item crop box was empty"), 0.0, None);
     };
     let cropped = crop_image(&source_image, rect);
     let source_asset_id = AssetStore::parse_handle(handle).ok();
@@ -1602,11 +1647,17 @@ fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource)
         .store
         .put_image(&cropped, KIND_CROP, source_asset_id.as_deref())
     else {
-        return (none_listing("the item crop could not be stored"), 0.0);
+        return (none_listing("the item crop could not be stored"), 0.0, None);
     };
     let result = match (ctx.chain.identify)(&crop_handle) {
         Ok(result) => result,
-        Err(_) => return (none_listing("the item-crop identify attempt failed"), 0.0),
+        Err(_) => {
+            return (
+                none_listing("the item-crop identify attempt failed"),
+                0.0,
+                None,
+            )
+        }
     };
     let cost = call_cost(&result);
     let title = result.get("suggested_title");
@@ -1628,9 +1679,14 @@ fn crop_listing(ctx: &RunContext, primary: &Value, primary_source: &PhotoSource)
                 "crop_asset": crop_handle,
             }),
             cost,
+            Some(result),
         );
     }
-    (none_listing("the item-crop identify attempt failed"), cost)
+    (
+        none_listing("the item-crop identify attempt failed"),
+        cost,
+        None,
+    )
 }
 
 /// Draw one foreground against a code-rendered backdrop plate:
@@ -1680,6 +1736,11 @@ fn backdrop_draw(ctx: &RunContext, fg_handle: &str) -> Value {
 pub struct WorkItem {
     pub name: String,
     pub candidate_photo_indices: Vec<usize>,
+    /// True when the candidate list is a full rank_photos ordering
+    /// (named and narration items): the still-coverage rule applies
+    /// to those. Auto-mode groups carry only the photos whose plans
+    /// named the concept, and keep their list as built.
+    pub ranked_candidates: bool,
     pub flags: Vec<String>,
     pub narration: Option<Value>,
     /// How the item entered the run: "named" (typed by the seller
@@ -1697,7 +1758,7 @@ fn process_item(
     item: &WorkItem,
     sources: &[PhotoSource],
     probe_all_candidates: bool,
-) -> Result<Value, String> {
+) -> Result<(Value, Option<Value>), String> {
     let name = item.name.clone();
     let mut record = json!({
         "name": name,
@@ -1771,7 +1832,7 @@ fn process_item(
             ),
         });
         record["cost_usd"] = json!(item_cost);
-        return Ok(record);
+        return Ok((record, None));
     }
     // Python max() semantics: the FIRST sighting with the greatest
     // (opaque_pixels, is_still) key wins; strictly-greater replaces.
@@ -1798,16 +1859,57 @@ fn process_item(
         .map(|s| s.get("photo_index").cloned().unwrap_or(Value::Null))
         .filter(|idx| *idx != json!(primary_index))
         .collect::<Vec<_>>());
-    // Listing copy comes only from this item's own primary
-    // sighting. First route: the primary photo's own plan, when
-    // that plan actually describes THIS item. Second route: crop
-    // the primary source image to the item's foreground and
-    // identify the crop. If neither yields copy, the listing stays
-    // empty with the reason recorded — inventing or borrowing copy
-    // is exactly the failure mode the whole product exists to
-    // refuse.
+    let outcome = stage_from_primary(ctx, &mut record, &name, sources, primary)?;
+    item_cost += outcome.cost;
+    record["cost_usd"] = json!(item_cost);
+    Ok((record, outcome.evidence))
+}
+
+/// What one staging pass spent, and the plan that supplied the
+/// item's listing copy (the photo plan for a photo_plan listing,
+/// the crop-identify plan for an item_crop listing, None when the
+/// listing is empty). The collision post-pass reads that plan as
+/// the item's own listing evidence.
+struct StageOutcome {
+    cost: f64,
+    evidence: Option<Value>,
+}
+
+/// Stage one item from one chosen sighting: listing copy from that
+/// sighting alone, then draw in the run's stage mode, the Fidelity
+/// Lock receipt, and the independent verification. Fills the
+/// record's listing, output, receipt and verification fields and
+/// its staged / verify_failed / draw-failure outcome; returns what
+/// the pass cost. Used for the primary sighting here and for a
+/// re-selected sighting in the collision post-pass, so both paths
+/// stage identically.
+fn stage_from_primary(
+    ctx: &RunContext,
+    record: &mut Value,
+    name: &str,
+    sources: &[PhotoSource],
+    primary: &Value,
+) -> Result<StageOutcome, String> {
+    let mut cost = 0.0f64;
+    let evidence: Option<Value>;
+    // Fresh-record staging state: a re-stage starts from the same
+    // not-staged-yet status process_item's new record carries, so
+    // a draw or verify failure below can never inherit "staged".
+    record["status"] = json!("failed");
+    record["failure"] = Value::Null;
+    // Listing copy comes only from this item's own chosen
+    // sighting. First route: that photo's own plan, when the plan
+    // actually describes THIS item. Second route: crop the source
+    // image to the item's foreground and identify the crop. If
+    // neither yields copy, the listing stays empty with the reason
+    // recorded — inventing or borrowing copy is exactly the
+    // failure mode the whole product exists to refuse.
+    let primary_index = primary
+        .get("photo_index")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
     let primary_source = &sources[primary_index];
-    if plan_matches_item(primary_source.plan.as_ref(), &name) {
+    if plan_matches_item(primary_source.plan.as_ref(), name) {
         let plan = primary_source.plan.as_ref().expect("plan matched");
         let bullets = plan
             .get("listing_bullets")
@@ -1822,9 +1924,11 @@ fn process_item(
             "note": Value::Null,
             "crop_asset": Value::Null,
         });
+        evidence = Some(plan.clone());
     } else {
-        let (listing, crop_cost) = crop_listing(ctx, primary, primary_source);
-        item_cost += crop_cost;
+        let (listing, crop_cost, plan) = crop_listing(ctx, primary, primary_source);
+        cost += crop_cost;
+        evidence = plan;
         record["listing"] = listing;
     }
     // Draw stage: the receipt is the product; the picture is evidence.
@@ -1839,7 +1943,7 @@ fn process_item(
     } else {
         (ctx.chain.draw)(&fg_handle, &ctx.scene)?
     };
-    item_cost += call_cost(&draw_result);
+    cost += call_cost(&draw_result);
     if draw_result.get("status").and_then(Value::as_str) != Some("ok") {
         // Python dict.get semantics: the error dict (or {} when the
         // result carries none), code defaulting to DRAW_FAILED and
@@ -1854,8 +1958,7 @@ fn process_item(
             "code": error.get("code").cloned().unwrap_or(json!("DRAW_FAILED")),
             "message": error.get("message").cloned().unwrap_or(json!("draw failed")),
         });
-        record["cost_usd"] = json!(item_cost);
-        return Ok(record);
+        return Ok(StageOutcome { cost, evidence });
     }
     let receipt_src = draw_result
         .get("fidelity_receipt")
@@ -1899,7 +2002,6 @@ fn process_item(
     record["stage_reached"] = json!("verify");
     let verification = run_verification(ctx, &output_handle);
     record["verification"] = verification.clone();
-    record["cost_usd"] = json!(item_cost);
     if verification.get("ok").map(py_truthy).unwrap_or(false) {
         record["status"] = json!("staged");
         record["stage_reached"] = json!("done");
@@ -1928,7 +2030,96 @@ fn process_item(
             ),
         });
     }
-    Ok(record)
+    Ok(StageOutcome { cost, evidence })
+}
+
+/// The successful sighting a record staged from, if any.
+fn primary_sighting_of(record: &Value) -> Option<Value> {
+    let primary_index = record.get("primary_photo_index").and_then(Value::as_u64)?;
+    record
+        .get("sightings")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|s| {
+            s.get("photo_index").and_then(Value::as_u64) == Some(primary_index)
+                && s.get("status").and_then(Value::as_str) == Some("ok")
+        })
+        .cloned()
+}
+
+/// Overlap of two foreground masks as a fraction of the smaller
+/// mask, computed from the stored foreground assets' alpha planes.
+/// None when either asset is unreadable, the frames differ in size
+/// (foregrounds from one photo share the photo's dimensions), or a
+/// mask has no opaque pixels.
+pub fn mask_overlap_ratio(
+    store: &AssetStore,
+    fg_a: Option<&str>,
+    fg_b: Option<&str>,
+) -> Option<f64> {
+    let a = store.read_image(fg_a?).ok()?;
+    let b = store.read_image(fg_b?).ok()?;
+    if a.width != b.width || a.height != b.height {
+        return None;
+    }
+    let (mut overlap, mut count_a, mut count_b) = (0u64, 0u64, 0u64);
+    for (alpha_a, alpha_b) in a.alpha_plane().iter().zip(b.alpha_plane().iter()) {
+        if *alpha_a > 0 {
+            count_a += 1;
+            if *alpha_b > 0 {
+                overlap += 1;
+            }
+        }
+        if *alpha_b > 0 {
+            count_b += 1;
+        }
+    }
+    let smaller = count_a.min(count_b);
+    if smaller == 0 {
+        return None;
+    }
+    Some(overlap as f64 / smaller as f64)
+}
+
+fn record_name(record: &Value) -> String {
+    record
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn push_flag(record: &mut Value, flag: String) {
+    if let Some(flags) = record.get_mut("flags").and_then(Value::as_array_mut) {
+        if !flags.iter().any(|f| f.as_str() == Some(flag.as_str())) {
+            flags.push(json!(flag));
+        }
+    }
+}
+
+/// Link two records as possible duplicates of each other (the
+/// de-dup record's shape: a name in each record's
+/// possible_duplicate_of, never a merge).
+fn link_possible_duplicates(records: &mut [Value], a: usize, b: usize) {
+    let name_a = record_name(&records[a]);
+    let name_b = record_name(&records[b]);
+    for (idx, other) in [(a, name_b), (b, name_a)] {
+        let current = records[idx]
+            .get("possible_duplicate_of")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !current.contains(&other) {
+            let mut next = current;
+            next.push(other);
+            records[idx]["possible_duplicate_of"] = json!(next);
+        }
+    }
 }
 
 /// Cross-item duplicate flags. Same foreground hash on two items, or
@@ -2084,6 +2275,452 @@ fn flag_cross_item_duplicates(records: &mut [Value]) {
             }
         }
     }
+    // One item's primary against the OTHER item's non-primary
+    // sightings on the same photo. The primary-only comparison
+    // above misses the case where the duplicate's own primary sits
+    // on a different photo while one of its sightings is the very
+    // mask the other item staged (the acceptance run's two hats:
+    // the straw hat's primary was a still, its frame sighting was
+    // the black hat item's primary). The reference build flags the
+    // pair whenever the two names segment one object; this is the
+    // same evidence read across sightings.
+    for &a in &staged {
+        let Some(primary_a) = primary_sighting_of(&records[a]) else {
+            continue;
+        };
+        let photo_a = primary_a
+            .get("photo_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        for &b in &staged {
+            if a == b {
+                continue;
+            }
+            let primary_b_index = records[b]
+                .get("primary_photo_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let sightings_b = records[b]
+                .get("sightings")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for sighting in &sightings_b {
+                if sighting.get("status").and_then(Value::as_str) != Some("ok") {
+                    continue;
+                }
+                let photo = sighting
+                    .get("photo_index")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                if photo != photo_a || photo == primary_b_index {
+                    continue;
+                }
+                let iou = bbox_iou(
+                    sighting.get("bbox_normalized"),
+                    primary_a.get("bbox_normalized"),
+                );
+                if iou < MASK_IOU_FLAG {
+                    continue;
+                }
+                let name_a = record_name(&records[a]);
+                let name_b = record_name(&records[b]);
+                link_possible_duplicates(records, a, b);
+                push_flag(
+                    &mut records[a],
+                    format!(
+                        "a sighting of {} on photo {photo} overlaps this item's \
+                         primary mask with IoU {iou:.2}; kept separate",
+                        py_repr_str(&name_b)
+                    ),
+                );
+                push_flag(
+                    &mut records[b],
+                    format!(
+                        "this item's sighting on photo {photo} overlaps {}'s \
+                         primary mask with IoU {iou:.2}; kept separate",
+                        py_repr_str(&name_a)
+                    ),
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// Whether an item's listing evidence (the plan that supplied its
+/// listing copy) is about the given item name, judged by the same
+/// plan_matches_item machinery the listing routes use.
+fn evidence_matches(evidence: &Option<Value>, item_name: &str) -> bool {
+    evidence
+        .as_ref()
+        .map(|plan| plan_matches_item(Some(plan), item_name))
+        .unwrap_or(false)
+}
+
+/// Projected cost of one re-stage (listing identify plus draw),
+/// with the run gate's own projection conventions.
+fn projected_restage_cost(
+    ctx: &RunContext,
+    sources: &[PhotoSource],
+    name: &str,
+    sighting: &Value,
+) -> f64 {
+    let photo_index = sighting
+        .get("photo_index")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let source = &sources[photo_index];
+    let listing_cost = if plan_matches_item(source.plan.as_ref(), name) {
+        0.0
+    } else {
+        project_identify_cost_usd(IDENTIFY_MODEL, source.width, source.height).unwrap_or(0.0)
+            * IDENTIFY_MAX_ATTEMPTS as f64
+    };
+    let draw_cost = if backdrop::is_backdrop_mode(&ctx.stage_mode) {
+        0.0
+    } else {
+        project_draw_cost_usd(DRAW_BACKGROUND_MODEL).unwrap_or(0.0)
+    };
+    listing_cost + draw_cost
+}
+
+/// The displaced item's re-selection candidate: its largest
+/// successful non-primary sighting (most opaque pixels; ties to a
+/// still over a video frame, then the lower photo index) whose
+/// foreground does not collide with the keeper's primary. A
+/// sighting on a different photo cannot collide with the keeper's
+/// primary here; one on the keeper's photo must prove its mask is
+/// a different object.
+fn choose_alternate_sighting(
+    store: &AssetStore,
+    record: &Value,
+    sources: &[PhotoSource],
+    old_primary_photo: u64,
+    keeper_photo: u64,
+    keeper_fg: Option<&str>,
+) -> Option<Value> {
+    let mut alternates: Vec<Value> = record
+        .get("sightings")
+        .and_then(Value::as_array)
+        .map(|sightings| {
+            sightings
+                .iter()
+                .filter(|s| {
+                    s.get("status").and_then(Value::as_str) == Some("ok")
+                        && s.get("photo_index").and_then(Value::as_u64) != Some(old_primary_photo)
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    alternates.sort_by(|s1, s2| {
+        let key = |s: &Value| {
+            let idx = s.get("photo_index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            (
+                s.get("opaque_pixels").and_then(Value::as_i64).unwrap_or(0),
+                sources[idx].origin == "still",
+            )
+        };
+        key(s2).cmp(&key(s1)).then_with(|| {
+            s1.get("photo_index")
+                .and_then(Value::as_u64)
+                .cmp(&s2.get("photo_index").and_then(Value::as_u64))
+        })
+    });
+    alternates.into_iter().find(|sighting| {
+        let photo = sighting
+            .get("photo_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        if photo != keeper_photo {
+            return true;
+        }
+        matches!(
+            mask_overlap_ratio(
+                store,
+                sighting.get("foreground_asset").and_then(Value::as_str),
+                keeper_fg,
+            ),
+            Some(ratio) if ratio < COLLISION_MASK_OVERLAP
+        )
+    })
+}
+
+/// A re-selected primary that collides with a third staged item is
+/// flagged as a possible duplicate of that item, never iterated:
+/// the post-pass runs once.
+fn flag_third_item_collisions(
+    store: &AssetStore,
+    records: &mut [Value],
+    staged: &[usize],
+    displaced: usize,
+    keeper: usize,
+    new_photo: u64,
+) {
+    let new_primary = primary_sighting_of(&records[displaced]);
+    for &other in staged {
+        if other == displaced || other == keeper {
+            continue;
+        }
+        let (Some(new_sight), Some(other_sight)) =
+            (new_primary.clone(), primary_sighting_of(&records[other]))
+        else {
+            continue;
+        };
+        if new_sight.get("photo_index") != other_sight.get("photo_index") {
+            continue;
+        }
+        let overlap = mask_overlap_ratio(
+            store,
+            new_sight.get("foreground_asset").and_then(Value::as_str),
+            other_sight.get("foreground_asset").and_then(Value::as_str),
+        );
+        if matches!(overlap, Some(ratio) if ratio >= COLLISION_MASK_OVERLAP) {
+            let other_name = record_name(&records[other]);
+            link_possible_duplicates(records, displaced, other);
+            push_flag(
+                &mut records[displaced],
+                format!(
+                    "re-selected primary on photo {new_photo} also \
+                     overlaps {}; flagged as a possible duplicate, \
+                     not re-selected again",
+                    py_repr_str(&other_name)
+                ),
+            );
+        }
+    }
+}
+
+/// Collision re-selection post-pass (run level, after de-dup).
+///
+/// A collision is two STAGED items whose primary foregrounds come
+/// from the same source photo and whose masks overlap at least
+/// COLLISION_MASK_OVERLAP of the smaller mask: both items staged
+/// one physical object. When exactly one item's listing evidence
+/// matches its own name and not the other's, that item is the
+/// keeper and the other is displaced to its largest successful
+/// sighting that does not collide with the keeper's primary,
+/// re-staged from that sighting with a fresh receipt, independent
+/// verification and recomputed listing. When the evidence is
+/// ambiguous, or no clean alternate exists, or the re-stage would
+/// cross the run budget, the primaries stand and the flags say
+/// why. A failed re-stage reverts to the original staged result.
+/// The pass runs once: a re-selected primary that collides with a
+/// third item is flagged as a possible duplicate, not iterated.
+/// Returns the run-level notes the pass recorded.
+#[allow(clippy::too_many_arguments)]
+fn resolve_primary_collisions(
+    ctx: &RunContext,
+    records: &mut [Value],
+    sources: &[PhotoSource],
+    evidence: &mut [Option<Value>],
+    spend_probe: &SpendProbe,
+    spend_before: f64,
+    budget_usd: f64,
+) -> Result<Vec<String>, String> {
+    let mut notes: Vec<String> = Vec::new();
+    let staged: Vec<usize> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.get("status").and_then(Value::as_str) == Some("staged"))
+        .map(|(i, _)| i)
+        .collect();
+    // Colliding pairs, read from the primaries as staged.
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    for x in 0..staged.len() {
+        for y in (x + 1)..staged.len() {
+            let (a, b) = (staged[x], staged[y]);
+            let (Some(sight_a), Some(sight_b)) = (
+                primary_sighting_of(&records[a]),
+                primary_sighting_of(&records[b]),
+            ) else {
+                continue;
+            };
+            if sight_a.get("photo_index") != sight_b.get("photo_index") {
+                continue;
+            }
+            let overlap = mask_overlap_ratio(
+                &ctx.store,
+                sight_a.get("foreground_asset").and_then(Value::as_str),
+                sight_b.get("foreground_asset").and_then(Value::as_str),
+            );
+            if matches!(overlap, Some(ratio) if ratio >= COLLISION_MASK_OVERLAP) {
+                pairs.push((a, b));
+            }
+        }
+    }
+    let mut displaced_attempted: HashSet<usize> = HashSet::new();
+    let mut reselected: HashSet<usize> = HashSet::new();
+    for (a, b) in pairs {
+        // A confirmed mask collision is de-dup evidence in its own
+        // right, whatever the evidence judgment below decides.
+        link_possible_duplicates(records, a, b);
+        if reselected.contains(&a) || reselected.contains(&b) {
+            continue; // a re-selected primary is not iterated
+        }
+        let name_a = record_name(&records[a]);
+        let name_b = record_name(&records[b]);
+        let a_keeper =
+            evidence_matches(&evidence[a], &name_a) && !evidence_matches(&evidence[a], &name_b);
+        let b_keeper =
+            evidence_matches(&evidence[b], &name_b) && !evidence_matches(&evidence[b], &name_a);
+        let (keeper, displaced) = match (a_keeper, b_keeper) {
+            (true, false) => (a, b),
+            (false, true) => (b, a),
+            _ => continue, // neither or both: flags stand, no re-selection
+        };
+        if displaced_attempted.contains(&displaced) {
+            continue;
+        }
+        displaced_attempted.insert(displaced);
+        let keeper_name = record_name(&records[keeper]);
+        let displaced_name = record_name(&records[displaced]);
+        let keeper_primary = primary_sighting_of(&records[keeper]).expect("pair member staged");
+        let keeper_photo = keeper_primary
+            .get("photo_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let keeper_fg = keeper_primary
+            .get("foreground_asset")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let old_primary_photo = records[displaced]
+            .get("primary_photo_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let chosen = choose_alternate_sighting(
+            &ctx.store,
+            &records[displaced],
+            sources,
+            old_primary_photo,
+            keeper_photo,
+            keeper_fg.as_deref(),
+        );
+        let Some(chosen) = chosen else {
+            push_flag(
+                &mut records[displaced],
+                format!(
+                    "primary on photo {old_primary_photo} is the same object as {}'s \
+                     primary, but no non-colliding alternate sighting exists; \
+                     primary kept",
+                    py_repr_str(&keeper_name)
+                ),
+            );
+            notes.push(format!(
+                "item {}: primary collides with {} and no non-colliding alternate \
+                 sighting exists; primary kept",
+                py_repr_str(&displaced_name),
+                py_repr_str(&keeper_name)
+            ));
+            continue;
+        };
+        let new_photo = chosen
+            .get("photo_index")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        // The re-stage spends real money; it counts into the item
+        // and the run budget, and is skipped when it would cross.
+        let projected = projected_restage_cost(ctx, sources, &displaced_name, &chosen);
+        if (spend_probe()? - spend_before) + projected > budget_usd {
+            push_flag(
+                &mut records[displaced],
+                format!(
+                    "primary re-selection after the collision with {} was skipped: \
+                     the projected re-stage cost would exceed the run budget; \
+                     primary kept",
+                    py_repr_str(&keeper_name)
+                ),
+            );
+            notes.push(format!(
+                "item {}: primary re-selection after the collision with {} skipped \
+                 (projected re-stage cost would exceed the ${budget_usd:.2} run budget)",
+                py_repr_str(&displaced_name),
+                py_repr_str(&keeper_name)
+            ));
+            continue;
+        }
+        // Re-stage from the alternate sighting. A failure reverts
+        // to the original staged result; its spend still counts.
+        let snapshot = records[displaced].clone();
+        let old_cost = snapshot
+            .get("cost_usd")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        records[displaced]["primary_photo_index"] = json!(new_photo);
+        records[displaced]["also_seen_in"] = json!(snapshot
+            .get("sightings")
+            .and_then(Value::as_array)
+            .map(|sightings| {
+                sightings
+                    .iter()
+                    .filter(|s| {
+                        s.get("status").and_then(Value::as_str) == Some("ok")
+                            && s.get("photo_index").and_then(Value::as_u64) != Some(new_photo)
+                    })
+                    .map(|s| s.get("photo_index").cloned().unwrap_or(Value::Null))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default());
+        let attempt = stage_from_primary(
+            ctx,
+            &mut records[displaced],
+            &displaced_name,
+            sources,
+            &chosen,
+        );
+        match attempt {
+            Ok(outcome) if records[displaced]["status"] == json!("staged") => {
+                records[displaced]["cost_usd"] = json!(old_cost + outcome.cost);
+                evidence[displaced] = outcome.evidence;
+                reselected.insert(displaced);
+                push_flag(
+                    &mut records[displaced],
+                    "primary_reselected_after_duplicate_collision".to_string(),
+                );
+                notes.push(format!(
+                    "item {}: primary re-selected from photo {old_primary_photo} to \
+                     photo {new_photo} after a duplicate collision with {}",
+                    py_repr_str(&displaced_name),
+                    py_repr_str(&keeper_name)
+                ));
+                flag_third_item_collisions(
+                    &ctx.store, records, &staged, displaced, keeper, new_photo,
+                );
+            }
+            attempt => {
+                let detail = match &attempt {
+                    Ok(_) => records[displaced]
+                        .pointer("/failure/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("the re-stage did not verify")
+                        .to_string(),
+                    Err(exc) => exc.clone(),
+                };
+                let attempt_cost = match &attempt {
+                    Ok(outcome) => outcome.cost,
+                    Err(_) => 0.0,
+                };
+                records[displaced] = snapshot;
+                records[displaced]["cost_usd"] = json!(old_cost + attempt_cost);
+                push_flag(
+                    &mut records[displaced],
+                    format!(
+                        "primary re-selection after the collision with {} failed \
+                         ({detail}); the original staged result was kept",
+                        py_repr_str(&keeper_name)
+                    ),
+                );
+                notes.push(format!(
+                    "item {}: primary re-selection after the collision with {} \
+                     failed ({detail}); the original staged result was kept",
+                    py_repr_str(&displaced_name),
+                    py_repr_str(&keeper_name)
+                ));
+            }
+        }
+    }
+    Ok(notes)
 }
 
 pub struct Candidate {
@@ -2279,6 +2916,7 @@ fn attach_narrated(
     items.push(WorkItem {
         name: name.to_string(),
         candidate_photo_indices: rank_photos(name, sources),
+        ranked_candidates: true,
         flags,
         narration: Some(json!({
             "kind": kind,
@@ -2610,6 +3248,7 @@ fn run_room_body(
             items_work.push(WorkItem {
                 name: group.name,
                 candidate_photo_indices: group.photo_indices,
+                ranked_candidates: false,
                 flags: group.flags,
                 narration: None,
                 origin: "named".to_string(),
@@ -2619,6 +3258,7 @@ fn run_room_body(
         for name in &opts.item_names {
             items_work.push(WorkItem {
                 candidate_photo_indices: rank_photos(name, &sources),
+                ranked_candidates: true,
                 name: name.clone(),
                 flags: Vec::new(),
                 narration: None,
@@ -2647,7 +3287,12 @@ fn run_room_body(
     }
     let candidate_cap = opts.max_photos_per_item.min(MAX_PHOTOS_PER_ITEM);
     for item in items_work.iter_mut() {
-        item.candidate_photo_indices.truncate(candidate_cap);
+        if item.ranked_candidates {
+            item.candidate_photo_indices =
+                apply_candidate_coverage(&item.candidate_photo_indices, &sources, candidate_cap);
+        } else {
+            item.candidate_photo_indices.truncate(candidate_cap);
+        }
     }
 
     // ---- per-item processing ------------------------------------------
@@ -2662,6 +3307,7 @@ fn run_room_body(
         sam_calls: std::cell::Cell::new(0),
     };
     let mut item_records: Vec<Value> = Vec::new();
+    let mut item_evidence: Vec<Option<Value>> = Vec::new();
     let mut budget_stopped = false;
     for item in &items_work {
         if (spend_probe()? - spend_before) > opts.budget_usd {
@@ -2696,18 +3342,30 @@ fn run_room_body(
                 "flags": item.flags,
                 "cost_usd": 0.0,
             }));
+            item_evidence.push(None);
             continue;
         }
         // The SAM budget is per item, not per run.
         ctx.sam_calls.set(0);
-        item_records.push(process_item(
-            &ctx,
-            item,
-            &sources,
-            opts.probe_all_candidates,
-        )?);
+        let (record, evidence) = process_item(&ctx, item, &sources, opts.probe_all_candidates)?;
+        item_records.push(record);
+        item_evidence.push(evidence);
     }
     flag_cross_item_duplicates(&mut item_records);
+    // Collision re-selection: two staged items whose primaries are
+    // the same physical object get one chance to separate, when
+    // the listing evidence names a keeper and the displaced item
+    // has a clean alternate sighting.
+    let collision_notes = resolve_primary_collisions(
+        &ctx,
+        &mut item_records,
+        &sources,
+        &mut item_evidence,
+        &spend_probe,
+        spend_before,
+        opts.budget_usd,
+    )?;
+    notes.extend(collision_notes);
     // Market pricing: every item record carries a pricing entry,
     // priced from the supplied comps or marked as unsupplied.
     for record in item_records.iter_mut() {

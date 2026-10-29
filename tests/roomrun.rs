@@ -13,7 +13,7 @@
 //! test that runs a room takes the ENV_LOCK.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -23,10 +23,10 @@ use std::sync::Mutex;
 use agenthand::assets::{AssetStore, KIND_COMPOSITE, KIND_FOREGROUND};
 use agenthand::image::{encode_png_rgba, RgbaImage};
 use agenthand::roomrun::{
-    bbox_iou, concept_variants, group_candidates, narration_cost_usd, parse_narration_reply,
-    probe_wav, project_narration_cost_usd, py_repr_str, rank_photos, run_room, sample_video_frames,
-    token_similarity, Candidate, NarrationFn, PhotoSource, RoomChain, RoomRunOptions, VerifyFn,
-    NARRATION_MODEL,
+    apply_candidate_coverage, bbox_iou, concept_variants, group_candidates, narration_cost_usd,
+    parse_narration_reply, probe_wav, project_narration_cost_usd, py_repr_str, rank_photos,
+    run_room, sample_video_frames, token_similarity, Candidate, NarrationFn, PhotoSource,
+    RoomChain, RoomRunOptions, VerifyFn, NARRATION_MODEL,
 };
 use agenthand::{composite, config, ingest, ledger};
 use serde_json::{json, Value};
@@ -85,6 +85,7 @@ struct FakeChain {
     plans: Vec<Value>,
     contents: HashMap<(usize, String), String>,
     draw_fail_objects: HashSet<String>,
+    crop_plans: RefCell<VecDeque<Value>>,
     opaque_by_object: HashMap<String, i64>,
     photo_handles: RefCell<HashMap<String, usize>>,
     fg_object: RefCell<HashMap<String, String>>,
@@ -105,6 +106,7 @@ impl FakeChain {
             plans,
             contents,
             draw_fail_objects: HashSet::new(),
+            crop_plans: RefCell::new(VecDeque::new()),
             opaque_by_object: HashMap::new(),
             photo_handles: RefCell::new(HashMap::new()),
             fg_object: RefCell::new(HashMap::new()),
@@ -123,10 +125,22 @@ impl FakeChain {
             idx
         };
         *self.spend.borrow_mut() += IDENTIFY_COST;
-        // Calls beyond the scripted plans (the per-item crop
-        // identify, when a run takes that route) fail as a plan
-        // error, so the run falls back to its no-copy path.
+        // Calls beyond the scripted plans are per-item crop
+        // identifies: they answer from the crop-plan queue when one
+        // is scripted, and fail as a plan error otherwise, so the
+        // run falls back to its no-copy path.
         let Some(plan) = self.plans.get(idx).cloned() else {
+            if let Some(crop_plan) = self.crop_plans.borrow_mut().pop_front() {
+                let mut result = json!({
+                    "status": "ok",
+                    "image": image_ref,
+                    "cost_usd": IDENTIFY_COST,
+                });
+                for (key, value) in crop_plan.as_object().unwrap() {
+                    result[key] = value.clone();
+                }
+                return Ok(result);
+            }
             return Ok(json!({
                 "status": "error",
                 "error": {"code": "NO_PLAN", "message": "no scripted plan for this call", "cost_counted_usd": IDENTIFY_COST},
@@ -1412,6 +1426,381 @@ fn narrated_video_without_audio_track_is_a_row() {
     assert_eq!(record["error"]["code"], "NO_AUDIO_TRACK");
     assert!(narration.calls.borrow().is_empty());
     assert_eq!(manifest["items"][0]["status"], "staged");
+}
+
+// ---------------------------------------------------------------------------
+// F1: candidate still coverage + collision re-selection post-pass
+// ---------------------------------------------------------------------------
+
+fn make_video(dir: &Path, name: &str, seconds: u32) -> PathBuf {
+    let video = dir.join(name);
+    let status = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("testsrc=duration={seconds}:size=64x64:rate=5"),
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&video)
+        .arg("-y")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    video
+}
+
+fn flags_of(item: &Value) -> Vec<String> {
+    item["flags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn candidate_coverage_keeps_every_still() {
+    let mk = |origin: &'static str| PhotoSource {
+        path: PathBuf::from("x.jpg"),
+        origin,
+        video_path: None,
+        timestamp_s: None,
+        handle: None,
+        width: None,
+        height: None,
+        plan: None,
+        plan_error: None,
+    };
+    let sources = vec![
+        mk("still"),
+        mk("still"),
+        mk("video_frame"),
+        mk("video_frame"),
+        mk("video_frame"),
+    ];
+    // Ranking put every frame ahead of both stills; the cap of 3
+    // still leaves room for exactly one frame, and probe order
+    // stays the ranking's order.
+    assert_eq!(
+        apply_candidate_coverage(&[2, 3, 4, 0, 1], &sources, 3),
+        vec![2, 0, 1]
+    );
+    // Stills alone can exceed the cap: coverage wins over the cap.
+    let sources = vec![
+        mk("still"),
+        mk("still"),
+        mk("still"),
+        mk("still"),
+        mk("video_frame"),
+    ];
+    assert_eq!(
+        apply_candidate_coverage(&[4, 0, 1, 2, 3], &sources, 2),
+        vec![0, 1, 2, 3]
+    );
+}
+
+#[test]
+fn still_coverage_probes_the_still_the_cap_would_have_dropped() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let root = temp_root("coverage");
+    let photos = vec![
+        photo(&root, "shelf.png", [120, 60, 20, 255]),
+        photo(&root, "case.png", [200, 90, 10, 255]),
+    ];
+    // A 5s walkthrough samples frames at 0/2/4s (indices 2..4);
+    // every frame plan names the black hat, so the ranking spends
+    // the whole 3-photo cap on frames — the still that actually
+    // holds the fedora (photo 0) is probed only because still
+    // coverage guarantees it a slot.
+    let video = make_video(&root, "walk.mp4", 5);
+    let fake = FakeChain::new(
+        &root,
+        vec![
+            plan("white bookcase"),
+            plan("orange suitcase"),
+            plan("black hat"),
+            plan("black hat"),
+            plan("black hat"),
+        ],
+        contents(&[((0, "black hat"), "fedora")]),
+    );
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged");
+    assert_eq!(item["primary_photo_index"], 0);
+    let probed: Vec<u64> = item["sightings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["photo_index"].as_u64().unwrap())
+        .collect();
+    assert_eq!(probed, vec![2, 0, 1]); // one frame fills the cap, both stills probed
+}
+
+/// The miniature acceptance scenario: two hat items, both primaries
+/// the same straw-hat mask on a video frame, the fedora a distinct
+/// mask on the still. The crop identifies name what each crop
+/// actually shows, so the straw hat is the keeper and the black hat
+/// must re-stage from the still.
+fn two_hat_run(tag: &str, crop_plans: Vec<Value>) -> (PathBuf, Rc<FakeChain>, Value) {
+    let root = temp_root(tag);
+    let photos = vec![
+        photo(&root, "shelf.png", [120, 60, 20, 255]),
+        photo(&root, "case.png", [200, 90, 10, 255]),
+    ];
+    let video = make_video(&root, "walk.mp4", 1);
+    let mut fake = FakeChain::new(
+        &root,
+        vec![
+            plan("white bookcase"),
+            plan("orange suitcase"),
+            plan("room corner"),
+        ],
+        contents(&[
+            ((0, "black hat"), "fedora"),
+            ((2, "straw hat"), "straw"),
+            ((2, "hat"), "straw"),
+        ]),
+    );
+    {
+        let fake_mut = Rc::get_mut(&mut fake).unwrap();
+        fake_mut.opaque_by_object.insert("straw".to_string(), 400);
+        fake_mut.opaque_by_object.insert("fedora".to_string(), 200);
+    }
+    for crop_plan in crop_plans {
+        fake.crop_plans.borrow_mut().push_back(crop_plan);
+    }
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["straw hat".to_string(), "black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    (root, fake, manifest)
+}
+
+#[test]
+fn collision_reselection_restages_the_displaced_item_from_its_still() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let (_root, _fake, manifest) = two_hat_run(
+        "collision",
+        vec![
+            plan("straw hat"),
+            plan("straw hat"),
+            plan("black fedora hat"),
+        ],
+    );
+    let items = items_by_name(&manifest);
+    let straw = &items["straw hat"];
+    assert_eq!(straw["status"], "staged");
+    assert_eq!(straw["primary_photo_index"], 2); // the keeper keeps the frame primary
+    assert!(!flags_of(straw).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+
+    let black = &items["black hat"];
+    assert_eq!(black["status"], "staged");
+    assert_eq!(black["primary_photo_index"], 0); // re-staged from the still
+    assert_eq!(black["also_seen_in"], json!([2]));
+    assert!(flags_of(black).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    // The duplicate flags from the de-dup pass stand.
+    assert!(black["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+    // The listing was recomputed from the new primary's own crop.
+    assert_eq!(black["listing"]["source"], "item_crop");
+    assert_eq!(black["listing"]["title"], "Listing: black fedora hat");
+    assert_eq!(black["verification"]["ok"], true);
+    // A run-level note names the collision partner.
+    assert!(manifest["notes"].as_array().unwrap().iter().any(|n| {
+        let n = n.as_str().unwrap();
+        n.contains("'black hat'") && n.contains("'straw hat'") && n.contains("re-selected")
+    }));
+}
+
+#[test]
+fn collision_without_an_alternate_sighting_keeps_the_primary_and_flags() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let root = temp_root("noalternate");
+    let photos = vec![photo(&root, "shelf.png", [120, 60, 20, 255])];
+    let video = make_video(&root, "walk.mp4", 1);
+    let mut fake = FakeChain::new(
+        &root,
+        vec![plan("white bookcase"), plan("room corner")],
+        contents(&[((1, "straw hat"), "straw"), ((1, "hat"), "straw")]),
+    );
+    Rc::get_mut(&mut fake)
+        .unwrap()
+        .opaque_by_object
+        .insert("straw".to_string(), 400);
+    for crop_plan in [plan("straw hat"), plan("straw hat")] {
+        fake.crop_plans.borrow_mut().push_back(crop_plan);
+    }
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["straw hat".to_string(), "black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    let items = items_by_name(&manifest);
+    let black = &items["black hat"];
+    assert_eq!(black["status"], "staged");
+    assert_eq!(black["primary_photo_index"], 1); // kept: its only sighting is the collision
+    assert!(!flags_of(black).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    assert!(flags_of(black)
+        .iter()
+        .any(|f| f.contains("no non-colliding alternate sighting exists")));
+    assert!(black["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+}
+
+#[test]
+fn collision_with_ambiguous_evidence_is_not_reselected() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    // Both crops identify as the bare noun "hat": the evidence
+    // matches neither item's full name at the plan-match bar, so
+    // there is no keeper and both primaries stand.
+    let (_root, _fake, manifest) = two_hat_run("ambiguous", vec![plan("hat"), plan("hat")]);
+    let items = items_by_name(&manifest);
+    for name in ["straw hat", "black hat"] {
+        let item = &items[name];
+        assert_eq!(item["status"], "staged");
+        assert_eq!(item["primary_photo_index"], 2);
+        assert!(
+            !flags_of(item).contains(&"primary_reselected_after_duplicate_collision".to_string())
+        );
+    }
+    assert!(items["black hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+}
+
+#[test]
+fn failed_reselection_reverts_to_the_original_staged_result() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let root = temp_root("restagefail");
+    let photos = vec![
+        photo(&root, "shelf.png", [120, 60, 20, 255]),
+        photo(&root, "case.png", [200, 90, 10, 255]),
+    ];
+    let video = make_video(&root, "walk.mp4", 1);
+    let mut fake = FakeChain::new(
+        &root,
+        vec![
+            plan("white bookcase"),
+            plan("orange suitcase"),
+            plan("room corner"),
+        ],
+        contents(&[
+            ((0, "black hat"), "fedora"),
+            ((2, "straw hat"), "straw"),
+            ((2, "hat"), "straw"),
+        ]),
+    );
+    {
+        let fake_mut = Rc::get_mut(&mut fake).unwrap();
+        fake_mut.opaque_by_object.insert("straw".to_string(), 400);
+        fake_mut.opaque_by_object.insert("fedora".to_string(), 200);
+        fake_mut.draw_fail_objects.insert("fedora".to_string());
+    }
+    for crop_plan in [
+        plan("straw hat"),
+        plan("straw hat"),
+        plan("black fedora hat"),
+    ] {
+        fake.crop_plans.borrow_mut().push_back(crop_plan);
+    }
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["straw hat".to_string(), "black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    let items = items_by_name(&manifest);
+    let black = &items["black hat"];
+    assert_eq!(black["status"], "staged"); // the original staged result stands
+    assert_eq!(black["primary_photo_index"], 2);
+    assert_eq!(black["listing"]["title"], "Listing: straw hat");
+    assert!(!flags_of(black).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    assert!(flags_of(black)
+        .iter()
+        .any(|f| f.contains("re-selection after the collision with 'straw hat' failed")));
+    // The failed attempt's spend (crop identify + refused draw)
+    // still counts into the item: probes 5 cuts + crop + draw,
+    // then the re-stage's crop + draw.
+    assert!(approx(
+        black["cost_usd"].as_f64().unwrap(),
+        5.0 * CUT_COST + 2.0 * IDENTIFY_COST + 2.0 * DRAW_COST
+    ));
+}
+
+#[test]
+fn duplicate_flag_reaches_a_sighting_that_is_not_a_primary() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    // The acceptance run's flag shape in the Rust build: the straw
+    // hat's primary is the still (its largest sighting), the black
+    // hat's primary is the frame — but the straw hat's frame
+    // sighting is the same mask the black hat staged, so the pair
+    // is flagged even though the primaries sit on different photos.
+    let root = temp_root("sightingdup");
+    let photos = vec![photo(&root, "shelf.png", [120, 60, 20, 255])];
+    let video = make_video(&root, "walk.mp4", 1);
+    let mut fake = FakeChain::new(
+        &root,
+        vec![plan("white bookcase"), plan("room corner")],
+        contents(&[
+            ((0, "straw hat"), "strawbig"),
+            ((1, "straw hat"), "straw"),
+            ((1, "hat"), "straw"),
+        ]),
+    );
+    {
+        let fake_mut = Rc::get_mut(&mut fake).unwrap();
+        fake_mut
+            .opaque_by_object
+            .insert("strawbig".to_string(), 500);
+        fake_mut.opaque_by_object.insert("straw".to_string(), 400);
+    }
+    for crop_plan in [plan("straw hat"), plan("straw hat")] {
+        fake.crop_plans.borrow_mut().push_back(crop_plan);
+    }
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["straw hat".to_string(), "black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    let items = items_by_name(&manifest);
+    assert_eq!(items["straw hat"]["primary_photo_index"], 0);
+    assert_eq!(items["black hat"]["primary_photo_index"], 1);
+    assert!(items["black hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+    assert!(items["straw hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("black hat")));
+    assert!(flags_of(&items["black hat"])
+        .iter()
+        .any(|f| f.contains("a sighting of 'straw hat' on photo 1")));
+    // No primary-primary collision, so no re-selection happened.
+    assert!(!flags_of(&items["black hat"])
+        .contains(&"primary_reselected_after_duplicate_collision".to_string()));
 }
 
 // ---------------------------------------------------------------------------
