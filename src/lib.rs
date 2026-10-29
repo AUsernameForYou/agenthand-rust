@@ -28,6 +28,18 @@
 //! - `heic` — the from-scratch HEIC decoder (in progress; see
 //!   STATUS.md).
 
+// Panic-strategy pin (M5 fix lane): the HEIC ingest boundary in
+// `image::decode_heic_image` contains decoder panics with
+// `catch_unwind`, which only works when this crate is built with
+// the unwind panic strategy. Refuse to build under
+// `panic = "abort"` — wherever the setting came from (a profile
+// edit, a `--config` override, a future default change) — instead
+// of letting the boundary's guarantee silently stop being true.
+#[cfg(not(panic = "unwind"))]
+compile_error!(
+    "agenthand must be built with panic = \"unwind\": the HEIC ingest boundary relies on catch_unwind to contain decoder panics"
+);
+
 pub mod assets;
 pub mod backdrop;
 pub mod billing;

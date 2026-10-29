@@ -44,9 +44,21 @@ fn refused<T>(msg: impl Into<String>) -> Res<T> {
 pub const MAX_CANVAS_PIXELS: u64 = 268_435_456;
 
 fn check_area(area: u64, kind: &str) -> Res<()> {
-    if area > MAX_CANVAS_PIXELS {
+    check_area_within(area, kind, MAX_CANVAS_PIXELS)
+}
+
+fn check_area_within(area: u64, kind: &str, limit: u64) -> Res<()> {
+    if area > limit {
+        // Name the binding limit honestly: the decoder's own
+        // ceiling when that is what binds, the caller's pixel
+        // budget when a tighter budget was passed in.
+        let what = if limit < MAX_CANVAS_PIXELS {
+            "pixel budget"
+        } else {
+            "decoder safety ceiling"
+        };
         return refused(format!(
-            "{kind} canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
+            "{kind} canvas {area} samples exceeds the {what} {limit}"
         ));
     }
     Ok(())
@@ -105,6 +117,7 @@ fn decode_picture_item(
     data: &[u8],
     f: &HeifFile,
     item: &Item,
+    limit: u64,
 ) -> Result<(Sps, recon::Picture), HeicError> {
     let ep = bitreader::remove_emulation_prevention;
     let Some(hvcc) = f.item_hvcc(item) else {
@@ -162,6 +175,16 @@ fn decode_picture_item(
     }
     for sps in sps_map.values() {
         check_canvas(sps)?;
+        // Declared-size budget (M5 fix lane): the SPS conformance
+        // window is the picture the caller receives; refuse a
+        // window over the caller's pixel budget here, at header
+        // time, before the slice walk or any plane allocation.
+        let declared = sps.crop_width() as u64 * sps.crop_height() as u64;
+        if declared > limit {
+            return refused(format!(
+                "picture conformance window {declared} samples exceeds the pixel budget {limit} (refused from header dimensions, before decode)"
+            ));
+        }
     }
     for (t, nal) in &nals {
         if *t > 21 {
@@ -249,6 +272,21 @@ fn crop_planes(sps: &Sps, pic: &recon::Picture) -> PicturePlanes {
 /// primaries decode directly. Anything outside the subset refuses
 /// with the subset's message.
 pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
+    decode_heic_with_budget(data, MAX_CANVAS_PIXELS)
+}
+
+/// `decode_heic` with a caller pixel budget (M5 fix lane). The
+/// budget is enforced from DECLARED dimensions, before the full
+/// picture is allocated or decoded: a grid primary is measured by
+/// its grid-header canvas (and its `ispe`, when present), a single
+/// picture by its SPS conformance window (checked inside
+/// `decode_picture_item`). The decoder's own safety ceiling
+/// (`MAX_CANVAS_PIXELS`) always applies on top: the effective
+/// limit is the smaller of the two. The shipped server path passes
+/// the product ingest cap here, so an over-cap upload refuses in
+/// header time instead of after a full decode.
+pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
+    let limit = max_pixels.min(MAX_CANVAS_PIXELS);
     let f = container::parse(data)?;
     let Some(primary) = f.primary_item() else {
         return refused("file has no primary item");
@@ -258,8 +296,13 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
         "grid" => {
             let gdata = container::extract_item_data_for(data, &primary)?;
             let header = container::parse_grid_header(&gdata)?;
+            check_area_within(
+                header.output_width as u64 * header.output_height as u64,
+                "grid",
+                limit,
+            )?;
             if let Some((ow, oh)) = f.item_ispe(&primary) {
-                check_area(ow as u64 * oh as u64, "grid")?;
+                check_area_within(ow as u64 * oh as u64, "grid", limit)?;
             }
             let tile_ids: Vec<u32> = primary
                 .references
@@ -281,7 +324,7 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
                 if icc.is_none() {
                     icc = f.item_icc_profile(&titem);
                 }
-                let (sps, pic) = decode_picture_item(data, &f, &titem)?;
+                let (sps, pic) = decode_picture_item(data, &f, &titem, limit)?;
                 if first.is_none() {
                     first = Some((pic.bit_depth_luma, pic.bit_depth_chroma, sps.vui));
                 }
@@ -292,7 +335,7 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
             (composed, bd_y, bd_c, vui, icc, tiles.len())
         }
         "hvc1" => {
-            let (sps, pic) = decode_picture_item(data, &f, &primary)?;
+            let (sps, pic) = decode_picture_item(data, &f, &primary, limit)?;
             let planes = crop_planes(&sps, &pic);
             (
                 planes,

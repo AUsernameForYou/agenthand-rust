@@ -29,7 +29,7 @@ fn max_image_bytes() -> usize {
         .unwrap_or(DEFAULT_MAX_IMAGE_BYTES)
 }
 
-fn max_pixels() -> u64 {
+pub(crate) fn max_pixels() -> u64 {
     std::env::var("AGENTHAND_MAX_PIXELS")
         .ok()
         .and_then(|v| v.trim().parse().ok())

@@ -10,8 +10,61 @@
 //! Prints one JSON object: per-channel max/mean absolute delta,
 //! counts of pixels with any-channel delta > 1 and > 2, and the
 //! dimension check. No image data is written anywhere.
+//!
+//! Negative control (M5 fix lane): with env
+//! `AGENTHAND_GATE5B_SABOTAGE=matrix|siting`, our side's
+//! conversion is deliberately broken before conversion — the
+//! matrix coefficients swapped for a wrong set, or the chroma
+//! planes shifted by one sample (wrong siting). The sabotage path
+//! decodes at the decoder ceiling via `decode_heic_with_budget`
+//! (the conversion code under test, `to_rgb8`, is identical);
+//! a functioning gate MUST fail these runs against the pinned
+//! criterion.
 
 use agenthand::image::decode_image;
+
+fn sabotaged_rgba(heic: &[u8], mode: &str) -> agenthand::image::RgbaImage {
+    let mut img = agenthand::heic::decode::decode_heic_with_budget(
+        heic,
+        agenthand::heic::decode::MAX_CANVAS_PIXELS,
+    )
+    .expect("decoder decode for sabotage control");
+    match mode {
+        "matrix" => {
+            // Swap in a wrong coefficient set (709 <-> 601 covers
+            // every corpus file's signalled matrix).
+            img.vui.matrix_coeffs = match img.vui.matrix_coeffs {
+                Some(6) => Some(1),
+                _ => Some(6),
+            };
+        }
+        "siting" => {
+            // Shift both chroma planes one sample horizontally:
+            // every chroma sample is read at its neighbour's
+            // position (wrong chroma siting).
+            let (cw, ch) = img.planes.chroma_dims();
+            for plane in [&mut img.planes.cb, &mut img.planes.cr] {
+                for row in 0..ch {
+                    let r = &mut plane[row * cw..(row + 1) * cw];
+                    r.rotate_right(1);
+                }
+            }
+        }
+        other => panic!("unknown sabotage mode {other}"),
+    }
+    let rgb = agenthand::heic::decode::to_rgb8(&img);
+    let (w, h) = (img.planes.width as u32, img.planes.height as u32);
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for px in rgb.as_chunks::<3>().0 {
+        pixels.extend_from_slice(&[px[0], px[1], px[2], 255]);
+    }
+    agenthand::image::RgbaImage {
+        width: w,
+        height: h,
+        pixels,
+        icc_profile: None,
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -29,7 +82,11 @@ fn main() {
     };
     let heic = std::fs::read(&args[1]).expect("read heic");
     let png = std::fs::read(&args[2]).expect("read ffmpeg png");
-    let ours_full = decode_image(&heic).expect("server decode path").into_rgba();
+    let sabotage = std::env::var("AGENTHAND_GATE5B_SABOTAGE").ok();
+    let ours_full = match &sabotage {
+        Some(mode) => sabotaged_rgba(&heic, mode),
+        None => decode_image(&heic).expect("server decode path").into_rgba(),
+    };
     let theirs = decode_image(&png).expect("ffmpeg png decode").into_rgba();
     let ours = if win_x == 0
         && win_y == 0
@@ -83,9 +140,13 @@ fn main() {
         }
     }
     let mean: Vec<f64> = sum.iter().map(|s| *s as f64 / n as f64).collect();
+    let sabotage_json = match &sabotage {
+        Some(m) => format!("\"{m}\""),
+        None => "null".to_string(),
+    };
     println!(
-        "{{\"file\": {:?}, \"dims\": [{}, {}], \"pixels\": {}, \"max_delta\": [{}, {}, {}], \"mean_delta\": [{:.4}, {:.4}, {:.4}], \"exact_px\": {}, \"px_over_1\": {}, \"px_over_2\": {}}}",
+        "{{\"file\": {:?}, \"dims\": [{}, {}], \"pixels\": {}, \"max_delta\": [{}, {}, {}], \"mean_delta\": [{:.4}, {:.4}, {:.4}], \"exact_px\": {}, \"px_over_1\": {}, \"px_over_2\": {}, \"sabotage\": {}}}",
         args[1], ours.width, ours.height, n, max[0], max[1], max[2], mean[0], mean[1], mean[2],
-        exact, over1, over2
+        exact, over1, over2, sabotage_json
     );
 }

@@ -43,6 +43,59 @@ fn truncated_heic_is_an_error_not_a_panic() {
     }
 }
 
+/// Pre-decode budget proof (M5 fix lane): the Samsung 200 MP
+/// primary declares a 12240x16320 grid canvas, over the 40 MP
+/// product cap. Through the shipped path it must refuse from
+/// those header dimensions, before decoding — at M5 this file
+/// decoded for ~53 s and ~1.8 GB before the post-decode cap
+/// fired. The bound below is two orders under that; the measured
+/// refusal time is in rust-100/M5-FIXES.md.
+#[test]
+fn over_cap_grid_canvas_refuses_before_decode() {
+    let Some(data) = corpus_file("real/samsung_200mp.heic") else {
+        return;
+    };
+    let t0 = std::time::Instant::now();
+    let r = decode_image(&data);
+    let elapsed = t0.elapsed();
+    let err = match r {
+        Ok(_) => panic!("a 200 MP primary is over the product pixel budget"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("pixel budget"),
+        "refusal must name the budget, got: {err}"
+    );
+    assert!(
+        elapsed.as_secs() < 5,
+        "over-cap refusal must be header-time, took {elapsed:?}"
+    );
+}
+
+/// The decoder-level budget plumbing (M5 fix lane): the same
+/// grid file IMG_1340 decodes at the default ceiling, and refuses
+/// from its declared grid canvas when the caller's budget is set
+/// below its 4284x5712 primary.
+#[test]
+fn decoder_budget_refuses_from_declared_grid_canvas() {
+    let Some(data) = corpus_file("real/IMG_1340.HEIC") else {
+        return;
+    };
+    let t0 = std::time::Instant::now();
+    let r = agenthand::heic::decode::decode_heic_with_budget(&data, 1_000_000);
+    let elapsed = t0.elapsed();
+    let err = r.expect_err("a 1 MP budget refuses a 24 MP grid canvas");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("grid canvas"),
+        "refusal must come from the declared grid canvas, got: {msg}"
+    );
+    assert!(
+        elapsed.as_secs() < 5,
+        "canvas refusal must be header-time, took {elapsed:?}"
+    );
+}
+
 /// Garbage with a HEIC-looking brand box is an error, not a panic.
 #[test]
 fn brand_only_garbage_is_an_error() {
