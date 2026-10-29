@@ -85,6 +85,7 @@ pub fn get_ledger_path() -> PathBuf {
 /// - `sqlite:<path>` — the SQLite ledger at that path;
 /// - `jsonl` / `jsonl:<path>` — the JSONL ledger, still selectable,
 ///   and importable into SQLite via `sqlledger::import_jsonl`.
+///
 /// An unrecognized value is an error: a store we cannot identify
 /// must stop spend, not silently pick one.
 ///
