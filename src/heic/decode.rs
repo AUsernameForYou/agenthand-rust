@@ -43,14 +43,17 @@ fn refused<T>(msg: impl Into<String>) -> Res<T> {
 /// and stricter.
 pub const MAX_CANVAS_PIXELS: u64 = 268_435_456;
 
-fn check_canvas(sps: &Sps) -> Res<()> {
-    let area = sps.width as u64 * sps.height as u64;
+fn check_area(area: u64, kind: &str) -> Res<()> {
     if area > MAX_CANVAS_PIXELS {
         return refused(format!(
-            "picture canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
+            "{kind} canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
         ));
     }
     Ok(())
+}
+
+fn check_canvas(sps: &Sps) -> Res<()> {
+    check_area(sps.width as u64 * sps.height as u64, "picture")
 }
 
 /// True when the bytes carry an `ftyp` box whose major or
@@ -77,9 +80,7 @@ pub fn is_heic(data: &[u8]) -> bool {
             data.len()
         }
     };
-    data[16..box_end]
-        .chunks_exact(4)
-        .any(|c| brand(c))
+    data[16..box_end].chunks_exact(4).any(brand)
 }
 
 /// One fully decoded HEIC picture, display orientation.
@@ -258,12 +259,7 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
             let gdata = container::extract_item_data_for(data, &primary)?;
             let header = container::parse_grid_header(&gdata)?;
             if let Some((ow, oh)) = f.item_ispe(&primary) {
-                let area = ow as u64 * oh as u64;
-                if area > MAX_CANVAS_PIXELS {
-                    return refused(format!(
-                        "grid canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
-                    ));
-                }
+                check_area(ow as u64 * oh as u64, "grid")?;
             }
             let tile_ids: Vec<u32> = primary
                 .references
@@ -361,11 +357,11 @@ pub fn to_rgb8(img: &HeicImage) -> Vec<u8> {
         acc / wsum
     };
     let (kr, kb) = match img.vui.matrix_coeffs {
-        Some(1) => (0.2126, 0.0722),       // BT.709
-        Some(9) => (0.2627, 0.0593),       // BT.2020
+        Some(1) => (0.2126, 0.0722),         // BT.709
+        Some(9) => (0.2627, 0.0593),         // BT.2020
         Some(5) | Some(6) => (0.299, 0.114), // BT.601 (625/525)
-        Some(0) => (0.0, 0.0),             // GBR identity (handled below)
-        _ => (0.299, 0.114),               // unspecified: BT.601
+        Some(0) => (0.0, 0.0),               // GBR identity (handled below)
+        _ => (0.299, 0.114),                 // unspecified: BT.601
     };
     let full = img.vui.video_full_range;
     let mut out = vec![0u8; w * h * 3];

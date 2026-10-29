@@ -17,10 +17,22 @@ fn main() {
             full_range,
         } = p
         {
-            println!("colr nclx [prop {}]: primaries={} transfer={} matrix={} full={}", i + 1, primaries, transfer, matrix, full_range);
+            println!(
+                "colr nclx [prop {}]: primaries={} transfer={} matrix={} full={}",
+                i + 1,
+                primaries,
+                transfer,
+                matrix,
+                full_range
+            );
         }
         if let Property::ColrOther { colour_type, data } = p {
-            println!("colr other [prop {}]: type={} bytes={}", i + 1, colour_type, data.len());
+            println!(
+                "colr other [prop {}]: type={} bytes={}",
+                i + 1,
+                colour_type,
+                data.len()
+            );
         }
     }
     match decode::decode_heic(&data) {

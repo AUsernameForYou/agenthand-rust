@@ -4,7 +4,9 @@
 //! Usage: heic_decode_one <file>
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: heic_decode_one <file>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: heic_decode_one <file>");
     let data = std::fs::read(&path).expect("read");
     match agenthand::heic::decode::decode_heic(&data) {
         Ok(_) => std::process::exit(0),

@@ -158,7 +158,7 @@ fn decode_heic_image(data: &[u8]) -> Result<RgbaImage, String> {
         width: w,
         height: h,
         pixels,
-        icc_profile: img.icc_profile.clone(),
+        icc_profile: img.icc_profile,
     })
 }
 

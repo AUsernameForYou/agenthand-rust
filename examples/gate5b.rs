@@ -20,17 +20,21 @@ fn main() {
         std::process::exit(2);
     }
     let (win_x, win_y): (u32, u32) = if args.len() == 5 {
-        (args[3].parse().expect("win_x"), args[4].parse().expect("win_y"))
+        (
+            args[3].parse().expect("win_x"),
+            args[4].parse().expect("win_y"),
+        )
     } else {
         (0, 0)
     };
     let heic = std::fs::read(&args[1]).expect("read heic");
     let png = std::fs::read(&args[2]).expect("read ffmpeg png");
-    let ours_full = decode_image(&heic)
-        .expect("server decode path")
-        .into_rgba();
+    let ours_full = decode_image(&heic).expect("server decode path").into_rgba();
     let theirs = decode_image(&png).expect("ffmpeg png decode").into_rgba();
-    let ours = if win_x == 0 && win_y == 0 && (ours_full.width, ours_full.height) == (theirs.width, theirs.height) {
+    let ours = if win_x == 0
+        && win_y == 0
+        && (ours_full.width, ours_full.height) == (theirs.width, theirs.height)
+    {
         ours_full
     } else {
         // Crop the window out of our frame.
@@ -60,7 +64,8 @@ fn main() {
     for i in 0..n {
         let mut px_max = 0u32;
         for c in 0..3 {
-            let d = (ours.pixels[i * 4 + c] as i32 - theirs.pixels[i * 4 + c] as i32).unsigned_abs();
+            let d =
+                (ours.pixels[i * 4 + c] as i32 - theirs.pixels[i * 4 + c] as i32).unsigned_abs();
             if d > max[c] {
                 max[c] = d;
             }
@@ -77,10 +82,7 @@ fn main() {
             over2 += 1;
         }
     }
-    let mean: Vec<f64> = sum
-        .iter()
-        .map(|s| *s as f64 / n as f64)
-        .collect();
+    let mean: Vec<f64> = sum.iter().map(|s| *s as f64 / n as f64).collect();
     println!(
         "{{\"file\": {:?}, \"dims\": [{}, {}], \"pixels\": {}, \"max_delta\": [{}, {}, {}], \"mean_delta\": [{:.4}, {:.4}, {:.4}], \"exact_px\": {}, \"px_over_1\": {}, \"px_over_2\": {}}}",
         args[1], ours.width, ours.height, n, max[0], max[1], max[2], mean[0], mean[1], mean[2],
