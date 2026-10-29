@@ -94,6 +94,7 @@ Emitted by `draw`:
 
 | Field | Meaning |
 |---|---|
+| `receipt_schema` | The schema marker: 2, stamped by `draw` as the receipt's first field. The key the verifier's downgrade guard grades on. |
 | `mask_sha256` | File hash of the mask asset, pinning it. `null` when the mask came from the foreground's alpha. |
 | `mask_pixel_sha256` | Pixel hash of the mask asset, or `null` on the same condition. |
 | `mask_source` | `asset` when the mask is a stored segmentation asset, `foreground_alpha` when derived from the foreground. |
@@ -130,8 +131,9 @@ the full field set, grades unmarked receipts under the legacy
 policy, and refuses a receipt that carries current-schema fields
 with a missing or invalid marker, so dropping the marker cannot buy
 a weaker grading. The frozen run's receipt is unmarked: the run
-predates the marker. This Rust build emits the expanded field set
-and stamps no `receipt_schema` marker.
+predates the marker. This Rust build stamps `receipt_schema: 2` as
+the receipt's first field, and its verifier mirrors the downgrade
+guard.
 
 ## 7. What the verifier recomputes
 
