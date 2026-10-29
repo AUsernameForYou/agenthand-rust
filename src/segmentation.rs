@@ -436,7 +436,7 @@ pub struct AttemptsOutcome {
 /// Run the bounded attempt loop. Performs network I/O; must only run
 /// as the fn of `billed_call`.
 pub fn run_attempts(
-    client: &reqwest::blocking::Client,
+    client: &meta::MetaClient,
     key: &str,
     png_bytes: &[u8],
     phrases: &[String],

@@ -12,6 +12,12 @@ png = "0.17"
 flate2 = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+# Real DNS resolver for the Meta client (meta.rs): the libc stub's
+# unconnected-UDP sends are refused by a class of sandboxed egress
+# policies, so resolution runs over TCP to the resolv.conf
+# nameservers instead. NOT reqwest's `hickory-dns` feature: that
+# transport sends UDP unconnected and fails the same way.
+hickory-resolver = "0.25"
 uuid = { version = "1", features = ["v4"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 jpeg-decoder = "0.3"

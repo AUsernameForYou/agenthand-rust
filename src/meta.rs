@@ -11,6 +11,8 @@ use crate::image::decode_image;
 use crate::pricing::{self, Usage};
 use base64::Engine;
 use serde_json::{json, Value};
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
 
 /// Base URL of the Meta Model API.
 pub const META_BASE_URL: &str = "https://api.meta.ai/v1";
@@ -39,39 +41,247 @@ pub fn require_meta_api_key() -> Result<String, String> {
     })
 }
 
-/// Build the shared HTTP client for Meta API calls.
-pub fn build_client() -> Result<reqwest::blocking::Client, String> {
-    // Direct connections only — never the environment's HTTP proxy.
-    // reqwest auto-detects proxy env vars, and a TLS-intercepting
-    // proxy presents certificates issued by its own local CA, which
-    // rustls (webpki roots) rightly rejects as UnknownIssuer; that
-    // is exactly how every live call from this VM died at connect
-    // time during the port's first live run (2026-10-27). Direct
-    // egress to api.meta.ai presents the genuine DigiCert chain.
-    // (Python's httpx stack never hit this: it validates against
-    // the OS store, which trusts the local proxy CA.)
-    reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("cannot build HTTP client: {e}"))
+/// The Meta API HTTP transport: a direct primary client plus an
+/// optional proxy fallback, used as one unit by every Meta call.
+///
+/// Two environment classes broke the naive client:
+///
+/// 1. Intercepting proxies (2026-10-27): reqwest auto-detects proxy
+///    env vars, and a TLS-intercepting proxy presents certificates
+///    issued by its own local CA, which rustls (webpki roots)
+///    rightly rejects as UnknownIssuer; that is how every live call
+///    from this VM died at connect time during the port's first
+///    live run. Direct egress presents the genuine chain, so the
+///    PRIMARY client bypasses proxies. (Python's httpx stack never
+///    hit this: it validates against the OS store.)
+/// 2. Stub-resolver egress policies (2026-10-29,
+///    M6-DISCRIMINATOR + M6-DNS-SCOPE in the hackathon record):
+///    the musl static build's libc stub resolver sends DNS from an
+///    UNCONNECTED UDP socket, and a class of sandboxed egress
+///    policies refuses unconnected UDP sends outright (EPERM at
+///    sendto), so the shipped Linux binary could not resolve
+///    api.meta.ai at all while glibc/Python (connected-socket
+///    stubs) worked. The primary client therefore does not depend
+///    on the libc stub: it resolves through hickory against the
+///    resolv.conf nameservers over TCP — a connected stream,
+///    treated as ordinary egress — chained with the system stub
+///    as a second chance inside the resolver.
+///
+/// FALLBACK: when the primary attempt fails with a connect-class
+/// error — DNS failure, refused/reset connect, TLS handshake;
+/// states in which no request ever reached the provider, so
+/// nothing billable happened and a retry cannot double-settle —
+/// the request is sent ONCE through a second client that follows
+/// the environment proxy and verifies TLS against webpki roots
+/// PLUS the operating system's CA bundle (the narration client's
+/// proven pattern in roomrun.rs; the same trust set Python and
+/// every OS tool use — verification is widened to the OS store,
+/// never skipped). Mid-response failures never retry: the request
+/// may already be billable at that point.
+pub struct MetaClient {
+    direct: reqwest::blocking::Client,
+    fallback: Option<reqwest::blocking::Client>,
 }
 
-fn post_json(
-    client: &reqwest::blocking::Client,
-    key: &str,
-    path: &str,
-    body: &Value,
-) -> Result<Value, String> {
+impl MetaClient {
+    /// Send via the direct client; on a connect-class error, retry
+    /// once via the fallback client when one was built.
+    fn execute(
+        &self,
+        send: impl Fn(&reqwest::blocking::Client) -> Result<reqwest::blocking::Response, reqwest::Error>,
+    ) -> Result<reqwest::blocking::Response, reqwest::Error> {
+        match send(&self.direct) {
+            Ok(response) => Ok(response),
+            Err(err) => {
+                if err.is_connect() {
+                    if let Some(fallback) = &self.fallback {
+                        return send(fallback);
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+}
+
+/// Render an error with its complete source chain ("top: cause:
+/// root cause"). reqwest's top level is nearly opaque ("error
+/// sending request for url ..."); the actionable fact lives in the
+/// chain — flattening it cost a day of diagnosis in the 2026-10-29
+/// DNS incident, so send/read failures in this module render it.
+pub fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        out.push_str(": ");
+        out.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    out
+}
+
+/// A DNS resolver for reqwest that transmits only over connected
+/// streams: hickory against the resolv.conf nameservers with the
+/// protocol forced to TCP, chained with the system stub as a
+/// second chance (for networks where UDP is the only DNS path).
+/// None when no system nameserver configuration can be read; the
+/// caller then keeps reqwest's default resolution.
+struct TcpDnsResolver {
+    resolver: hickory_resolver::TokioResolver,
+}
+
+fn build_tcp_dns_resolver() -> Option<TcpDnsResolver> {
+    let (system, mut opts) = hickory_resolver::system_conf::read_system_conf().ok()?;
+    let mut config = hickory_resolver::config::ResolverConfig::new();
+    if let Some(domain) = system.domain() {
+        config.set_domain(domain.clone());
+    }
+    for search in system.search() {
+        config.add_search(search.clone());
+    }
+    let mut any = false;
+    for ns in system.name_servers() {
+        config.add_name_server(hickory_resolver::config::NameServerConfig::new(
+            ns.socket_addr,
+            hickory_resolver::proto::xfer::Protocol::Tcp,
+        ));
+        any = true;
+    }
+    if !any {
+        return None;
+    }
+    // One short attempt per nameserver: this resolver is the first
+    // of two chances, and a black-holed TCP/53 should not stall the
+    // caller for hickory's default retry budget.
+    opts.timeout = std::time::Duration::from_secs(3);
+    opts.attempts = 1;
+    let mut builder = hickory_resolver::TokioResolver::builder_with_config(
+        config,
+        hickory_resolver::name_server::TokioConnectionProvider::default(),
+    );
+    *builder.options_mut() = opts;
+    Some(TcpDnsResolver {
+        resolver: builder.build(),
+    })
+}
+
+impl reqwest::dns::Resolve for TcpDnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        let resolver = self.resolver.clone();
+        Box::pin(async move {
+            match resolver.lookup_ip(host.as_str()).await {
+                Ok(lookup) => {
+                    let addrs: Vec<SocketAddr> =
+                        lookup.iter().map(|ip| SocketAddr::new(ip, 0)).collect();
+                    if addrs.is_empty() {
+                        return Err(format!("DNS lookup for {host} returned no addresses").into());
+                    }
+                    Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+                }
+                Err(tcp_err) => {
+                    // Second chance: the system stub, consulted
+                    // synchronously on the runtime thread. Reached
+                    // only when TCP DNS failed, which on a healthy
+                    // network is never; the stub answers fast where
+                    // it works, and where it cannot it costs one
+                    // retry schedule, no worse than pre-fix.
+                    match (host.as_str(), 0).to_socket_addrs() {
+                        Ok(iter) => {
+                            let addrs: Vec<SocketAddr> = iter.collect();
+                            if addrs.is_empty() {
+                                Err(format!(
+                                    "DNS lookup for {host} failed: TCP resolver: {tcp_err}; \
+                                     system resolver returned no addresses"
+                                )
+                                .into())
+                            } else {
+                                Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+                            }
+                        }
+                        Err(stub_err) => Err(format!(
+                            "DNS lookup for {host} failed: TCP resolver: {tcp_err}; \
+                             system resolver: {stub_err}"
+                        )
+                        .into()),
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// The fallback client: environment proxy (auto-detected, NOT
+/// bypassed) plus the OS CA bundle added to reqwest's roots — the
+/// narration client's bundle-loading pattern from roomrun.rs.
+/// None when no proxy is configured in the environment: without
+/// one, a second client would just repeat the direct attempt.
+fn build_fallback_client() -> Option<reqwest::blocking::Client> {
+    const PROXY_VARS: [&str; 6] = [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ];
+    if !PROXY_VARS
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
+    {
+        return None;
+    }
+    let mut builder = reqwest::blocking::Client::builder();
+    // Load the operating-system CA bundle so a TLS endpoint (or an
+    // intercepting proxy) chaining to a locally trusted root
+    // verifies. Failure to read the bundle is not fatal: webpki
+    // roots still apply.
+    let bundle_path = std::env::var("SSL_CERT_FILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "/etc/ssl/certs/ca-certificates.crt".to_string());
+    if let Ok(pem_text) = std::fs::read_to_string(&bundle_path) {
+        for chunk in pem_text.split("-----END CERTIFICATE-----") {
+            let pem = format!("{chunk}-----END CERTIFICATE-----");
+            if !pem.contains("-----BEGIN CERTIFICATE-----") {
+                continue;
+            }
+            if let Ok(cert) = reqwest::Certificate::from_pem(pem.as_bytes()) {
+                builder = builder.add_root_certificate(cert);
+            }
+        }
+    }
+    builder.build().ok()
+}
+
+/// Build the shared Meta API transport (see [`MetaClient`]).
+pub fn build_client() -> Result<MetaClient, String> {
+    let mut direct_builder = reqwest::blocking::Client::builder().no_proxy();
+    if let Some(resolver) = build_tcp_dns_resolver() {
+        direct_builder = direct_builder.dns_resolver(Arc::new(resolver));
+    }
+    let direct = direct_builder
+        .build()
+        .map_err(|e| format!("cannot build HTTP client: {}", error_chain(&e)))?;
+    Ok(MetaClient {
+        direct,
+        fallback: build_fallback_client(),
+    })
+}
+
+fn post_json(client: &MetaClient, key: &str, path: &str, body: &Value) -> Result<Value, String> {
     let response = client
-        .post(format!("{META_BASE_URL}{path}"))
-        .bearer_auth(key)
-        .json(body)
-        .send()
-        .map_err(|e| format!("Meta API request to {path} failed: {e}"))?;
+        .execute(|c| {
+            c.post(format!("{META_BASE_URL}{path}"))
+                .bearer_auth(key)
+                .json(body)
+                .send()
+        })
+        .map_err(|e| format!("Meta API request to {path} failed: {}", error_chain(&e)))?;
     let status = response.status();
     let text = response
         .text()
-        .map_err(|e| format!("Meta API response read failed: {e}"))?;
+        .map_err(|e| format!("Meta API response read failed: {}", error_chain(&e)))?;
     if !status.is_success() {
         return Err(format!(
             "Meta API {path} returned HTTP {status}: {}",
@@ -421,7 +631,7 @@ fn capture_raw_response(content: &str, call_id: &str) -> Option<String> {
 /// unparseable body (the Python passes the billed call's id via a
 /// context var; here it is an explicit parameter).
 pub fn vision_identify(
-    client: &reqwest::blocking::Client,
+    client: &MetaClient,
     key: &str,
     png_bytes: &[u8],
     model: &str,
@@ -623,7 +833,7 @@ fn responses_output_text(response: &Value) -> String {
 
 /// One real SAM segmentation call; (output_text, usage).
 pub fn segment_image(
-    client: &reqwest::blocking::Client,
+    client: &MetaClient,
     key: &str,
     png_bytes: &[u8],
     phrase: &str,
@@ -713,10 +923,7 @@ pub struct ImageError {
     pub message: String,
 }
 
-fn plate_bytes_from_response(
-    client: &reqwest::blocking::Client,
-    response: &Value,
-) -> Result<Vec<u8>, ImageError> {
+fn plate_bytes_from_response(client: &MetaClient, response: &Value) -> Result<Vec<u8>, ImageError> {
     let data = response.get("data").and_then(|v| v.as_array());
     let Some(data) = data.filter(|d| !d.is_empty()) else {
         if let Some(refusal) = response
@@ -757,15 +964,23 @@ fn plate_bytes_from_response(
     if raw.is_none() {
         if let Some(url) = item.get("url").and_then(|v| v.as_str()) {
             if !url.is_empty() {
-                let resp = client.get(url).send().map_err(|e| ImageError {
-                    code: "IMAGE_CALL_FAILED".to_string(),
-                    message: format!("Fetching the generated plate image failed: {e}"),
-                })?;
+                let resp = client
+                    .execute(|c| c.get(url).send())
+                    .map_err(|e| ImageError {
+                        code: "IMAGE_CALL_FAILED".to_string(),
+                        message: format!(
+                            "Fetching the generated plate image failed: {}",
+                            error_chain(&e)
+                        ),
+                    })?;
                 raw = Some(
                     resp.bytes()
                         .map_err(|e| ImageError {
                             code: "IMAGE_CALL_FAILED".to_string(),
-                            message: format!("Fetching the generated plate image failed: {e}"),
+                            message: format!(
+                                "Fetching the generated plate image failed: {}",
+                                error_chain(&e)
+                            ),
                         })?
                         .to_vec(),
                 );
@@ -789,7 +1004,7 @@ fn plate_bytes_from_response(
 
 /// One real muse-image call; (plate PNG bytes, usage).
 pub fn request_plate_image(
-    client: &reqwest::blocking::Client,
+    client: &MetaClient,
     key: &str,
     prompt: &str,
     width: Option<u32>,
