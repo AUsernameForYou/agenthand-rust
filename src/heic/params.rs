@@ -90,7 +90,11 @@ pub struct ScalingLists {
     /// [sizeId][matrixId] -> coefficients in raster order (up to 64),
     /// with DC stored separately for sizeId >= 2.
     pub coef: [[Vec<i32>; 6]; SCALING_LIST_SIZE_IDS],
-    pub dc: [[i32; 2]; 2], // [sizeId-2][matrixId]
+    /// [sizeId-2][matrixId] — sized 6 wide: sizeId 2 has six
+    /// matrices. (Was 2 wide until the M5 mutation pass flipped a
+    /// byte into a pred-copy with ref_id 2 at sizeId 2 and the
+    /// index panicked; real streams may use any matrix here.)
+    pub dc: [[i32; 6]; 2],
 }
 
 impl Default for ScalingLists {
@@ -110,7 +114,7 @@ impl Default for ScalingLists {
         }
         ScalingLists {
             coef,
-            dc: [[16; 2]; 2],
+            dc: [[16; 6]; 2],
         }
     }
 }
@@ -236,6 +240,10 @@ fn parse_st_ref_pic_set(
 // HRD / VUI (§E.2)
 
 fn parse_sub_layer_hrd(br: &mut BitReader, cpb_cnt: usize, sub_pic_hrd: bool) {
+    // HRD values are skipped, never consumed; clamp the loop to
+    // the spec's cpb_cnt range so a crafted count cannot spin the
+    // parser (M5 untrusted-input bound).
+    let cpb_cnt = cpb_cnt.min(32);
     for _ in 0..cpb_cnt {
         let _bit_rate = br.ue();
         let _cpb_size = br.ue();
@@ -521,6 +529,21 @@ pub fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
     if br.u1() == 1 {
         conf_win = (br.ue(), br.ue(), br.ue(), br.ue());
     }
+    // Dimension sanity (M5 untrusted-input fix): a zero dimension
+    // is meaningless, and the conformance window must leave a
+    // positive crop area. crop_width()/crop_height() subtract in
+    // u32; without this refusal a crafted window wraps them to
+    // ~2^32 and downstream Vec::with_capacity aborts the process
+    // (found by the M5 mutation pass: one flipped byte in a valid
+    // file drove a 189 GB allocation attempt).
+    if width == 0 || height == 0 {
+        return malformed("SPS picture dimension is zero");
+    }
+    if 2 * (conf_win.0 as u64 + conf_win.1 as u64) >= width as u64
+        || 2 * (conf_win.2 as u64 + conf_win.3 as u64) >= height as u64
+    {
+        return malformed("conformance window leaves no picture area");
+    }
     let bit_depth_luma_minus8 = br.ue();
     let bit_depth_chroma_minus8 = br.ue();
     if bit_depth_luma_minus8 > 2 || bit_depth_chroma_minus8 > 2 {
@@ -775,6 +798,14 @@ pub fn parse_pps(rbsp: &[u8]) -> Res<Pps> {
     if tiles_enabled {
         num_tile_cols_m1 = br.ue();
         num_tile_rows_m1 = br.ue();
+        // M5 untrusted-input bound: the width/height lists below
+        // loop on these counts over a saturating bit reader, so an
+        // unbounded count is a hang, not an error. No picture in
+        // the decoder's canvas ceiling has more than ~1024 tile
+        // columns; 4096 is generous.
+        if num_tile_cols_m1 >= 4096 || num_tile_rows_m1 >= 4096 {
+            return malformed("tile column/row count beyond any in-scope picture");
+        }
         uniform_spacing = br.u1() == 1;
         if !uniform_spacing {
             for _ in 0..num_tile_cols_m1 {
@@ -1030,6 +1061,13 @@ pub fn parse_slice_header(
     }
     if pps.tiles_enabled || pps.entropy_coding_sync_enabled {
         hdr.num_entry_point_offsets = br.ue();
+        // M5 untrusted-input bound: entry points cannot exceed the
+        // CTB count of the largest in-ceiling picture (2^28 samples
+        // at the 16x16 minimum CTB); an unbounded count over a
+        // saturating reader is a hang.
+        if hdr.num_entry_point_offsets > 1_048_576 {
+            return malformed("num_entry_point_offsets beyond picture capacity");
+        }
         if hdr.num_entry_point_offsets > 0 {
             let offset_len_minus1 = br.ue();
             let len = offset_len_minus1 + 1;

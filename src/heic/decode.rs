@@ -34,6 +34,25 @@ fn refused<T>(msg: impl Into<String>) -> Res<T> {
     Err(HeicError::Refused(msg.into()))
 }
 
+/// Decoder safety ceiling on any single picture's coded area
+/// (M5 untrusted-input gate). A header claiming more refuses
+/// before a plane is allocated. 2^28 samples sits above the
+/// largest phone picture in the corpus (the 200 MP Samsung grid
+/// composes to 199,724,160) and far below allocation-bomb
+/// territory; the product's own ingest cap (40 MP) is separate
+/// and stricter.
+pub const MAX_CANVAS_PIXELS: u64 = 268_435_456;
+
+fn check_canvas(sps: &Sps) -> Res<()> {
+    let area = sps.width as u64 * sps.height as u64;
+    if area > MAX_CANVAS_PIXELS {
+        return refused(format!(
+            "picture canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
+        ));
+    }
+    Ok(())
+}
+
 /// True when the bytes carry an `ftyp` box whose major or
 /// compatible brands name a HEIF-family file. Content sniffing,
 /// never the file name.
@@ -140,6 +159,9 @@ fn decode_picture_item(
             return refused(format!("SPS refused: {r}"));
         }
     }
+    for sps in sps_map.values() {
+        check_canvas(sps)?;
+    }
     for (t, nal) in &nals {
         if *t > 21 {
             continue;
@@ -158,6 +180,17 @@ fn decode_picture_item(
         let Some((sps, sh, pps)) = found else {
             return refused("slice header parse failed (no in-subset parameter set matched)");
         };
+        // Tile-grid sanity (M5 untrusted-input hardening): a PPS
+        // claiming more tile columns/rows than the picture has CTB
+        // columns/rows is invalid, and its starts vectors are
+        // reserved from those counts — refuse before they size
+        // anything.
+        if pps.tiles_enabled
+            && ((pps.num_tile_columns_minus1 as u64 + 1) > sps.width_in_ctbs() as u64
+                || (pps.num_tile_rows_minus1 as u64 + 1) > sps.height_in_ctbs() as u64)
+        {
+            return refused("tile grid exceeds the picture CTB grid");
+        }
         let start_byte = sh.cabac_start_bit / 8;
         if start_byte >= rbsp.len() {
             return refused("cabac start beyond NAL");
@@ -224,6 +257,14 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
         "grid" => {
             let gdata = container::extract_item_data_for(data, &primary)?;
             let header = container::parse_grid_header(&gdata)?;
+            if let Some((ow, oh)) = f.item_ispe(&primary) {
+                let area = ow as u64 * oh as u64;
+                if area > MAX_CANVAS_PIXELS {
+                    return refused(format!(
+                        "grid canvas {area} samples exceeds the decoder safety ceiling {MAX_CANVAS_PIXELS}"
+                    ));
+                }
+            }
             let tile_ids: Vec<u32> = primary
                 .references
                 .iter()

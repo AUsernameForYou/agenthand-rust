@@ -138,7 +138,16 @@ pub fn decode_image(data: &[u8]) -> Result<DecodedImage, String> {
 }
 
 fn decode_heic_image(data: &[u8]) -> Result<RgbaImage, String> {
-    let img = crate::heic::decode::decode_heic(data).map_err(|e| format!("HEIC decode: {e}"))?;
+    // Untrusted-input boundary (M5): seller photos are arbitrary
+    // bytes. The decoder is written to refuse malformed input, and
+    // this catch is the guarantee that even an unforeseen panic in
+    // the decode path surfaces as an ordinary ingest error, never
+    // as a dead server.
+    let img = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::heic::decode::decode_heic(data)
+    }))
+    .map_err(|_| "HEIC decode failed (decoder fault contained at the ingest boundary)".to_string())?
+    .map_err(|e| format!("HEIC decode: {e}"))?;
     let rgb = crate::heic::decode::to_rgb8(&img);
     let (w, h) = (img.planes.width as u32, img.planes.height as u32);
     let mut pixels = Vec::with_capacity((w * h * 4) as usize);
