@@ -261,7 +261,13 @@ fn resample_inner(
 
     let mut coeffs_vert: Option<Coeffs> = None;
     if (need_horizontal && horizontal_first) || need_vertical {
-        coeffs_vert = Some(precompute_coeffs(filter, in_h as i32, bx[1], bx[3], out_h as i32));
+        coeffs_vert = Some(precompute_coeffs(
+            filter,
+            in_h as i32,
+            bx[1],
+            bx[3],
+            out_h as i32,
+        ));
     }
 
     let mut cur: Vec<u8> = data.to_vec();

@@ -338,7 +338,10 @@ pub fn mask_provenance_of(store: &AssetStore, mask_handle: &str) -> Option<Value
     if !MASK_SCALE_METHODS.contains(&method) {
         return None;
     }
-    provenance.insert("scale_method".to_string(), Value::String(method.to_string()));
+    provenance.insert(
+        "scale_method".to_string(),
+        Value::String(method.to_string()),
+    );
     Some(Value::Object(provenance))
 }
 
@@ -598,9 +601,10 @@ fn receipt_schema_problems(receipt: &Value) -> Vec<String> {
         // weaker claim.
         for name in RECEIPT_FIELDS_V2_OPTIONAL {
             let valid = match receipt.get(name) {
-                Some(v) if name == "mask_scale_method" => {
-                    v.as_str().map(|s| MASK_SCALE_METHODS.contains(&s)).unwrap_or(false)
-                }
+                Some(v) if name == "mask_scale_method" => v
+                    .as_str()
+                    .map(|s| MASK_SCALE_METHODS.contains(&s))
+                    .unwrap_or(false),
                 Some(v) => is_count(v),
                 None => true,
             };

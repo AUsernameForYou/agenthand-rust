@@ -52,8 +52,8 @@ pub fn png_text_of_bytes(data: &[u8]) -> std::collections::BTreeMap<String, Stri
     }
     let mut pos = 8usize;
     while pos + 12 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let kind = &data[pos + 4..pos + 8];
         let start = pos + 8;
         let Some(end) = start.checked_add(len) else {
