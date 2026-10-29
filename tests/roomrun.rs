@@ -1585,6 +1585,161 @@ fn two_hat_run(tag: &str, crop_plans: Vec<Value>) -> (PathBuf, Rc<FakeChain>, Va
     (root, fake, manifest)
 }
 
+/// The round-2 acceptance shape: the two hat primaries sit on
+/// DIFFERENT photos. The straw hat's primary is the still (its
+/// largest sighting, the straw hat filling the frame); the black
+/// hat's primary is the frame sighting of that same straw hat,
+/// which the straw hat item also holds as a NON-primary sighting.
+/// The collision is visible only through that non-primary sighting.
+/// The fedora is the black hat's smaller sighting on the still.
+fn round2_hat_run(tag: &str, crop_plans: Vec<Value>) -> (PathBuf, Rc<FakeChain>, Value) {
+    let root = temp_root(tag);
+    let photos = vec![
+        photo(&root, "shelf.png", [120, 60, 20, 255]),
+        photo(&root, "case.png", [200, 90, 10, 255]),
+    ];
+    let video = make_video(&root, "walk.mp4", 1);
+    let mut fake = FakeChain::new(
+        &root,
+        vec![
+            plan("white bookcase"),
+            plan("orange suitcase"),
+            plan("room corner"),
+        ],
+        contents(&[
+            ((0, "black hat"), "fedora"),
+            ((0, "straw hat"), "strawbig"),
+            ((2, "straw hat"), "straw"),
+            ((2, "hat"), "straw"),
+        ]),
+    );
+    {
+        let fake_mut = Rc::get_mut(&mut fake).unwrap();
+        fake_mut
+            .opaque_by_object
+            .insert("strawbig".to_string(), 500);
+        fake_mut.opaque_by_object.insert("straw".to_string(), 400);
+        fake_mut.opaque_by_object.insert("fedora".to_string(), 200);
+    }
+    for crop_plan in crop_plans {
+        fake.crop_plans.borrow_mut().push_back(crop_plan);
+    }
+    let mut opts = base_opts(&fake, &root);
+    opts.item_names = vec!["straw hat".to_string(), "black hat".to_string()];
+    let manifest = run_room(&photos, &[video], &root.join("out"), opts).unwrap();
+    (root, fake, manifest)
+}
+
+#[test]
+fn sighting_level_collision_reselects_across_different_primary_photos() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let (_root, _fake, manifest) = round2_hat_run(
+        "round2collision",
+        vec![
+            plan("straw hat"),
+            plan("straw hat"),
+            plan("black fedora hat"),
+        ],
+    );
+    let items = items_by_name(&manifest);
+    // The primaries really do start on different photos, and the
+    // keeper (the straw hat, whose crop evidence names a straw hat
+    // and not a black one) is NOT moved off its still primary.
+    let straw = &items["straw hat"];
+    assert_eq!(straw["status"], "staged");
+    assert_eq!(straw["primary_photo_index"], 0);
+    assert!(!flags_of(straw).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    // The black hat's frame primary was the straw hat item's frame
+    // sighting; the black hat re-stages from its still sighting
+    // (the fedora), even though the keeper's own primary was never
+    // the contested object.
+    let black = &items["black hat"];
+    assert_eq!(black["status"], "staged");
+    assert_eq!(black["primary_photo_index"], 0);
+    assert_eq!(black["also_seen_in"], json!([2]));
+    assert!(flags_of(black).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    assert_eq!(black["listing"]["source"], "item_crop");
+    assert_eq!(black["listing"]["title"], "Listing: black fedora hat");
+    assert_eq!(black["verification"]["ok"], true);
+    assert!(manifest["notes"].as_array().unwrap().iter().any(|n| {
+        let n = n.as_str().unwrap();
+        n.contains("'black hat'") && n.contains("'straw hat'") && n.contains("re-selected")
+    }));
+}
+
+#[test]
+fn sighting_level_collision_with_ambiguous_evidence_flags_only() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    // Same round-2 shape, but both crops identify as the bare noun
+    // "hat": the evidence matches neither item's full name, so
+    // there is no keeper, no re-selection, and both primaries stand
+    // with the pair flagged as possible duplicates.
+    let (_root, _fake, manifest) =
+        round2_hat_run("round2ambiguous", vec![plan("hat"), plan("hat")]);
+    let items = items_by_name(&manifest);
+    assert_eq!(items["straw hat"]["primary_photo_index"], 0);
+    assert_eq!(items["black hat"]["primary_photo_index"], 2);
+    for name in ["straw hat", "black hat"] {
+        let item = &items[name];
+        assert_eq!(item["status"], "staged");
+        assert!(
+            !flags_of(item).contains(&"primary_reselected_after_duplicate_collision".to_string())
+        );
+    }
+    assert!(items["black hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+    assert!(items["straw hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("black hat")));
+}
+
+#[test]
+fn duplicate_flags_persist_after_sighting_level_reselection() {
+    if !ffmpeg_available() {
+        return;
+    }
+    let _guard = env_lock();
+    let (_root, _fake, manifest) = round2_hat_run(
+        "round2flagspersist",
+        vec![
+            plan("straw hat"),
+            plan("straw hat"),
+            plan("black fedora hat"),
+        ],
+    );
+    let items = items_by_name(&manifest);
+    let black = &items["black hat"];
+    // The re-selection happened...
+    assert!(flags_of(black).contains(&"primary_reselected_after_duplicate_collision".to_string()));
+    assert_eq!(black["primary_photo_index"], 0);
+    // ...and the de-dup record of the probing ambiguity stands on
+    // BOTH items: the mutual possible_duplicate_of entries and the
+    // sighting-overlap flags are not removed by the resolution.
+    assert!(black["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("straw hat")));
+    assert!(items["straw hat"]["possible_duplicate_of"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("black hat")));
+    assert!(flags_of(black)
+        .iter()
+        .any(|f| f.contains("a sighting of 'straw hat' on photo 2 overlaps this item's primary")));
+    assert!(flags_of(&items["straw hat"])
+        .iter()
+        .any(|f| f.contains("this item's sighting on photo 2 overlaps 'black hat''s primary")));
+}
+
 #[test]
 fn collision_reselection_restages_the_displaced_item_from_its_still() {
     if !ffmpeg_available() {
@@ -1798,7 +1953,13 @@ fn duplicate_flag_reaches_a_sighting_that_is_not_a_primary() {
     assert!(flags_of(&items["black hat"])
         .iter()
         .any(|f| f.contains("a sighting of 'straw hat' on photo 1")));
-    // No primary-primary collision, so no re-selection happened.
+    // The sighting-level contest fires (the black hat's primary is
+    // contested and the straw hat is the keeper), but the black hat
+    // has no alternate sighting to re-stage from, so its primary is
+    // kept and the flag says why; no re-selection happened.
+    assert!(flags_of(&items["black hat"])
+        .iter()
+        .any(|f| f.contains("no non-colliding alternate sighting exists")));
     assert!(!flags_of(&items["black hat"])
         .contains(&"primary_reselected_after_duplicate_collision".to_string()));
 }

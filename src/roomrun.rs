@@ -2047,6 +2047,46 @@ fn primary_sighting_of(record: &Value) -> Option<Value> {
         .cloned()
 }
 
+/// A record's successful sightings, in record order.
+fn ok_sightings_of(record: &Value) -> Vec<Value> {
+    record
+        .get("sightings")
+        .and_then(Value::as_array)
+        .map(|sightings| {
+            sightings
+                .iter()
+                .filter(|s| s.get("status").and_then(Value::as_str) == Some("ok"))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn sighting_photo(sighting: &Value) -> Option<u64> {
+    sighting.get("photo_index").and_then(Value::as_u64)
+}
+
+/// Whether two sightings are the same object instance: same photo,
+/// and their foreground masks overlap at least
+/// COLLISION_MASK_OVERLAP of the smaller mask. An unreadable or
+/// unmeasurable pair does not prove a collision.
+fn sightings_collide(store: &AssetStore, a: &Value, b: &Value) -> bool {
+    let (Some(photo_a), Some(photo_b)) = (sighting_photo(a), sighting_photo(b)) else {
+        return false;
+    };
+    if photo_a != photo_b {
+        return false;
+    }
+    matches!(
+        mask_overlap_ratio(
+            store,
+            a.get("foreground_asset").and_then(Value::as_str),
+            b.get("foreground_asset").and_then(Value::as_str),
+        ),
+        Some(ratio) if ratio >= COLLISION_MASK_OVERLAP
+    )
+}
+
 /// Overlap of two foreground masks as a fraction of the smaller
 /// mask, computed from the stored foreground assets' alpha planes.
 /// None when either asset is unreadable, the frames differ in size
@@ -2386,34 +2426,25 @@ fn projected_restage_cost(
 }
 
 /// The displaced item's re-selection candidate: its largest
-/// successful non-primary sighting (most opaque pixels; ties to a
-/// still over a video frame, then the lower photo index) whose
-/// foreground does not collide with the keeper's primary. A
-/// sighting on a different photo cannot collide with the keeper's
-/// primary here; one on the keeper's photo must prove its mask is
-/// a different object.
+/// successful non-primary sighting, in primary-selection order
+/// (most opaque pixels; ties to a still over a video frame, then
+/// the lower photo index) whose foreground does not collide with
+/// ANY of the keeper's successful sightings. A collision needs the
+/// same photo, so a candidate on a photo where the keeper has no
+/// sighting cannot collide; one sharing a photo with a keeper
+/// sighting must not overlap that sighting's mask at the collision
+/// bar.
 fn choose_alternate_sighting(
     store: &AssetStore,
     record: &Value,
     sources: &[PhotoSource],
     old_primary_photo: u64,
-    keeper_photo: u64,
-    keeper_fg: Option<&str>,
+    keeper_sightings: &[Value],
 ) -> Option<Value> {
-    let mut alternates: Vec<Value> = record
-        .get("sightings")
-        .and_then(Value::as_array)
-        .map(|sightings| {
-            sightings
-                .iter()
-                .filter(|s| {
-                    s.get("status").and_then(Value::as_str) == Some("ok")
-                        && s.get("photo_index").and_then(Value::as_u64) != Some(old_primary_photo)
-                })
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut alternates: Vec<Value> = ok_sightings_of(record)
+        .into_iter()
+        .filter(|s| sighting_photo(s) != Some(old_primary_photo))
+        .collect();
     alternates.sort_by(|s1, s2| {
         let key = |s: &Value| {
             let idx = s.get("photo_index").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -2429,21 +2460,9 @@ fn choose_alternate_sighting(
         })
     });
     alternates.into_iter().find(|sighting| {
-        let photo = sighting
-            .get("photo_index")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        if photo != keeper_photo {
-            return true;
-        }
-        matches!(
-            mask_overlap_ratio(
-                store,
-                sighting.get("foreground_asset").and_then(Value::as_str),
-                keeper_fg,
-            ),
-            Some(ratio) if ratio < COLLISION_MASK_OVERLAP
-        )
+        !keeper_sightings
+            .iter()
+            .any(|keeper_sighting| sightings_collide(store, sighting, keeper_sighting))
     })
 }
 
@@ -2463,20 +2482,16 @@ fn flag_third_item_collisions(
         if other == displaced || other == keeper {
             continue;
         }
-        let (Some(new_sight), Some(other_sight)) =
-            (new_primary.clone(), primary_sighting_of(&records[other]))
-        else {
+        let Some(new_sight) = new_primary.clone() else {
             continue;
         };
-        if new_sight.get("photo_index") != other_sight.get("photo_index") {
-            continue;
-        }
-        let overlap = mask_overlap_ratio(
-            store,
-            new_sight.get("foreground_asset").and_then(Value::as_str),
-            other_sight.get("foreground_asset").and_then(Value::as_str),
-        );
-        if matches!(overlap, Some(ratio) if ratio >= COLLISION_MASK_OVERLAP) {
+        // Sighting level, like the contest detection itself: the
+        // new primary against every successful sighting of the
+        // third item, not only its primary.
+        let collides = ok_sightings_of(&records[other])
+            .iter()
+            .any(|other_sight| sightings_collide(store, &new_sight, other_sight));
+        if collides {
             let other_name = record_name(&records[other]);
             link_possible_duplicates(records, displaced, other);
             push_flag(
@@ -2494,19 +2509,33 @@ fn flag_third_item_collisions(
 
 /// Collision re-selection post-pass (run level, after de-dup).
 ///
-/// A collision is two STAGED items whose primary foregrounds come
-/// from the same source photo and whose masks overlap at least
-/// COLLISION_MASK_OVERLAP of the smaller mask: both items staged
-/// one physical object. When exactly one item's listing evidence
-/// matches its own name and not the other's, that item is the
-/// keeper and the other is displaced to its largest successful
-/// sighting that does not collide with the keeper's primary,
-/// re-staged from that sighting with a fresh receipt, independent
-/// verification and recomputed listing. When the evidence is
-/// ambiguous, or no clean alternate exists, or the re-stage would
-/// cross the run budget, the primaries stand and the flags say
-/// why. A failed re-stage reverts to the original staged result.
-/// The pass runs once: a re-selected primary that collides with a
+/// Collision detection is sighting-level: for every pair of STAGED
+/// items, every pair of successful sightings on the same photo
+/// whose masks overlap at least COLLISION_MASK_OVERLAP of the
+/// smaller mask is the same physical object, and any such pair
+/// links the two items as possible duplicates. A CONTEST exists
+/// over that object when at least one side's PRIMARY is one of the
+/// colliding sightings. (Two non-primary sightings colliding is
+/// probing ambiguity: flagged, never contested.)
+///
+/// When exactly one item's listing evidence matches its own name
+/// and not the other's, that item is the keeper. The displaced
+/// item is the one whose primary is contested and which is not
+/// the keeper: it re-stages from its largest successful sighting
+/// that does not collide with any of the keeper's sightings, with
+/// a fresh receipt, independent verification and recomputed
+/// listing. The keeper is never moved, including when its own
+/// primary is not the contested object. When the evidence is
+/// ambiguous (neither side or both qualify as keeper), or the
+/// contested primary belongs to the keeper alone, or no clean
+/// alternate exists, or the re-stage would cross the run budget,
+/// the primaries stand and the flags say why. A failed re-stage
+/// reverts to the original staged result. The duplicate flags are
+/// not removed by a successful re-selection: they describe the
+/// probing ambiguity, and the re-selection flag and note record
+/// the resolution. The pass runs once: contests are read from the
+/// sightings as staged, re-selected primaries are not
+/// re-contested, and a re-selected primary that collides with a
 /// third item is flagged as a possible duplicate, not iterated.
 /// Returns the run-level notes the pass recorded.
 #[allow(clippy::too_many_arguments)]
@@ -2526,38 +2555,66 @@ fn resolve_primary_collisions(
         .filter(|(_, r)| r.get("status").and_then(Value::as_str) == Some("staged"))
         .map(|(i, _)| i)
         .collect();
-    // Colliding pairs, read from the primaries as staged.
-    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    // Sighting-level collisions and contests, all read from the
+    // sightings as staged (before any re-selection below).
+    struct Contest {
+        a: usize,
+        b: usize,
+        a_primary_contested: bool,
+        b_primary_contested: bool,
+    }
+    let mut contests: Vec<Contest> = Vec::new();
+    let mut colliding_pairs: Vec<(usize, usize)> = Vec::new();
     for x in 0..staged.len() {
         for y in (x + 1)..staged.len() {
             let (a, b) = (staged[x], staged[y]);
-            let (Some(sight_a), Some(sight_b)) = (
-                primary_sighting_of(&records[a]),
-                primary_sighting_of(&records[b]),
-            ) else {
-                continue;
-            };
-            if sight_a.get("photo_index") != sight_b.get("photo_index") {
-                continue;
+            let primary_a = records[a]
+                .get("primary_photo_index")
+                .and_then(Value::as_u64);
+            let primary_b = records[b]
+                .get("primary_photo_index")
+                .and_then(Value::as_u64);
+            let mut any_collision = false;
+            let (mut a_contested, mut b_contested) = (false, false);
+            for sight_a in ok_sightings_of(&records[a]) {
+                for sight_b in ok_sightings_of(&records[b]) {
+                    if !sightings_collide(&ctx.store, &sight_a, &sight_b) {
+                        continue;
+                    }
+                    any_collision = true;
+                    if sighting_photo(&sight_a) == primary_a {
+                        a_contested = true;
+                    }
+                    if sighting_photo(&sight_b) == primary_b {
+                        b_contested = true;
+                    }
+                }
             }
-            let overlap = mask_overlap_ratio(
-                &ctx.store,
-                sight_a.get("foreground_asset").and_then(Value::as_str),
-                sight_b.get("foreground_asset").and_then(Value::as_str),
-            );
-            if matches!(overlap, Some(ratio) if ratio >= COLLISION_MASK_OVERLAP) {
-                pairs.push((a, b));
+            if any_collision {
+                colliding_pairs.push((a, b));
+            }
+            if a_contested || b_contested {
+                contests.push(Contest {
+                    a,
+                    b,
+                    a_primary_contested: a_contested,
+                    b_primary_contested: b_contested,
+                });
             }
         }
     }
+    // Any colliding pair is de-dup evidence in its own right,
+    // whatever the contest judgments below decide, and a later
+    // re-selection does not remove it.
+    for (a, b) in colliding_pairs {
+        link_possible_duplicates(records, a, b);
+    }
     let mut displaced_attempted: HashSet<usize> = HashSet::new();
     let mut reselected: HashSet<usize> = HashSet::new();
-    for (a, b) in pairs {
-        // A confirmed mask collision is de-dup evidence in its own
-        // right, whatever the evidence judgment below decides.
-        link_possible_duplicates(records, a, b);
+    for contest in contests {
+        let (a, b) = (contest.a, contest.b);
         if reselected.contains(&a) || reselected.contains(&b) {
-            continue; // a re-selected primary is not iterated
+            continue; // a re-selected primary is not re-contested
         }
         let name_a = record_name(&records[a]);
         let name_b = record_name(&records[b]);
@@ -2565,10 +2622,27 @@ fn resolve_primary_collisions(
             evidence_matches(&evidence[a], &name_a) && !evidence_matches(&evidence[a], &name_b);
         let b_keeper =
             evidence_matches(&evidence[b], &name_b) && !evidence_matches(&evidence[b], &name_a);
-        let (keeper, displaced) = match (a_keeper, b_keeper) {
-            (true, false) => (a, b),
-            (false, true) => (b, a),
+        let keeper = match (a_keeper, b_keeper) {
+            (true, false) => a,
+            (false, true) => b,
             _ => continue, // neither or both: flags stand, no re-selection
+        };
+        // The displaced item is the non-keeper whose primary is
+        // contested. When only the keeper's primary is contested,
+        // the keeper keeps it and the other item's primary is a
+        // different object, so nothing moves.
+        let primary_contested = |idx: usize| {
+            if idx == a {
+                contest.a_primary_contested
+            } else {
+                contest.b_primary_contested
+            }
+        };
+        let displaced = [a, b]
+            .into_iter()
+            .find(|&idx| idx != keeper && primary_contested(idx));
+        let Some(displaced) = displaced else {
+            continue;
         };
         if displaced_attempted.contains(&displaced) {
             continue;
@@ -2576,15 +2650,7 @@ fn resolve_primary_collisions(
         displaced_attempted.insert(displaced);
         let keeper_name = record_name(&records[keeper]);
         let displaced_name = record_name(&records[displaced]);
-        let keeper_primary = primary_sighting_of(&records[keeper]).expect("pair member staged");
-        let keeper_photo = keeper_primary
-            .get("photo_index")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let keeper_fg = keeper_primary
-            .get("foreground_asset")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let keeper_sightings = ok_sightings_of(&records[keeper]);
         let old_primary_photo = records[displaced]
             .get("primary_photo_index")
             .and_then(Value::as_u64)
@@ -2594,15 +2660,14 @@ fn resolve_primary_collisions(
             &records[displaced],
             sources,
             old_primary_photo,
-            keeper_photo,
-            keeper_fg.as_deref(),
+            &keeper_sightings,
         );
         let Some(chosen) = chosen else {
             push_flag(
                 &mut records[displaced],
                 format!(
-                    "primary on photo {old_primary_photo} is the same object as {}'s \
-                     primary, but no non-colliding alternate sighting exists; \
+                    "primary on photo {old_primary_photo} is the same object as a \
+                     sighting of {}, but no non-colliding alternate sighting exists; \
                      primary kept",
                     py_repr_str(&keeper_name)
                 ),
@@ -3352,10 +3417,11 @@ fn run_room_body(
         item_evidence.push(evidence);
     }
     flag_cross_item_duplicates(&mut item_records);
-    // Collision re-selection: two staged items whose primaries are
-    // the same physical object get one chance to separate, when
-    // the listing evidence names a keeper and the displaced item
-    // has a clean alternate sighting.
+    // Collision re-selection: two staged items contest one
+    // physical object when a primary sighting collides with any
+    // sighting of the other item; they get one chance to separate
+    // when the listing evidence names a keeper and the displaced
+    // item has a clean alternate sighting.
     let collision_notes = resolve_primary_collisions(
         &ctx,
         &mut item_records,
