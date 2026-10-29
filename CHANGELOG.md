@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.3.0 — M6 packaging (release notes skeleton; final at the freeze)
+## 0.3.0 — M6 packaging
 
 The submission build. Everything below is on the consolidate master;
-items marked PENDING land with the last two fix lanes and are verified
-again in the final packaging run before this section is final.
+the last two fix lanes landed before packaging (`aa62452`,
+`be73bd0`) and are re-verified in the final packaging run.
 
 - **The product is a room.** The `room-run` command walks a whole
   room: a seller's photos, videos, and narration become one staged,
@@ -39,14 +39,16 @@ again in the final packaging run before this section is final.
   draw receipts record the plate kind and backdrop parameters, and
   both builds' verifiers accept old and new receipts while refusing
   current-schema fields under a missing marker.
-- **PENDING — oversize originals.** A full-resolution phone photo
+- **Oversize originals handled.** A full-resolution phone photo
   (24 MP) identifies, but the segmentation provider rejects it for
-  cut_out (payload limit, both builds). The fix shrinks only the copy
-  sent for segmentation, maps the mask back onto the full-resolution
-  foreground, and records the mask's provenance in the receipt.
-- **PENDING — pre-decode budget.** The pixel budget is enforced from
+  cut_out (payload limit, both builds). The fix (landed `be73bd0`)
+  shrinks only the copy sent for segmentation, maps the mask back
+  onto the full-resolution foreground, and records the mask's
+  provenance in the receipt; live proof at 24 MP passed.
+- **Pre-decode budget enforced.** The pixel budget is enforced from
   the photo's declared dimensions before a full decode begins, and
-  the panic boundary covers the whole decode path.
+  the panic boundary covers the whole decode path (landed
+  `aa62452`).
 
 ## 0.2.0 — 2026-10-28
 
