@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: fmt + test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format check
+        run: cargo fmt --all -- --check
+      # The full suite, the same command run locally. The debug
+      # estimator battery is the long pole; it stays in because CI is
+      # the third-party proof the suite is green (winners-gems B3).
+      - name: Test suite
+        run: cargo test
+
+  build-linux-musl:
+    name: release build (linux musl, static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --target x86_64-unknown-linux-musl
+      - name: Confirm the binary is static
+        run: |
+          file target/x86_64-unknown-linux-musl/release/agenthand
+          file target/x86_64-unknown-linux-musl/release/agenthand | grep -q "statically linked"

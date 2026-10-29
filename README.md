@@ -1,5 +1,7 @@
 # agenthand — Rust build
 
+[![CI](https://github.com/AUsernameForYou/agenthand-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/AUsernameForYou/agenthand-rust/actions/workflows/ci.yml)
+
 agenthand is an MCP server for AI agents that help people sell things.
 The seller never opens it; their agent calls it. It turns messy product
 photos into listing-ready images, with a fidelity receipt on every
@@ -16,6 +18,10 @@ Nov 4, 2026)._
 **Verify a staged image in your browser:**
 https://ausernameforyou.github.io/agenthand/#fidelity
 **Project site:** https://ausernameforyou.github.io/agenthand/
+
+**Submission freeze:** the submitted build is the one tagged
+`v1.0.0-hackathon` in this repository. If you are reading this on a
+later `main`, the tag is the exact code the judges were given.
 
 ## The problem
 
@@ -46,6 +52,21 @@ starts and lists its tools without one; the key is required when a
 tool makes a model call. Every billable call passes a single choke
 point with a fail-closed spend cap.
 
+## The room run
+
+The three tools also compose into a room run (`agenthand room-run`):
+the seller walks a room with photos, video, or a narrated
+walkthrough, names what goes, and gets one staged listing per item,
+each with its own Fidelity Lock receipt, its own listing copy, and a
+backdrop chosen per run (a generated scene, a white wallpaper plate
+with the agenthand mark, or studio gray). A mention the photos
+cannot support fails honestly as NO_MATCH instead of becoming a
+listing. When the calling agent supplies market comps, the run also
+emits a priced table (suggested prices are recommendations, never
+orders). On October 28, 2026, a room run over Daniel's real room
+staged six distinct items with 352,597 product pixels checked across
+them and 0 changed, for $0.184487.
+
 ## Built with Meta AI
 
 | Tool | Model | Its job |
@@ -54,13 +75,26 @@ point with a fail-closed spend cap.
 | cut_out | SAM 3.1 | Draws the product mask |
 | draw | Muse Image 1.0 | Generates the background plate only |
 
+## Open weight: Muse Spark Open on Baseten
+
+Narration runs on an open-weight Meta model. When a room run is
+driven by a narrated walkthrough, the audio goes to **Muse Spark
+Open** (`meta-models/muse-spark-open-1026`) served through Baseten
+partner inference, which returns the transcript and the sale intent
+(which items are for sale, which are only mentioned) in one call.
+That split drives the run: named items stage, mentioned items stage
+only when the photos confirm them, and unsupported mentions fail as
+NO_MATCH. The narration runs on Baseten partner credits, a pool
+separate from the Meta Model API spend cap; the three tools
+themselves run on the hosted Meta models in the table above.
+
 ## Architecture
 
 One binary, two halves: a library crate where all the policy lives,
-and a thin `main.rs` with four subcommands (`serve`, `parity`,
-`verify`, `measure`). The MCP server is a hand-rolled JSON-RPC stdio
-loop; each tool handler is a thin edge that ingests, calls one policy
-function, and shapes the result JSON.
+and a thin `main.rs` with six subcommands (`serve`, `parity`,
+`verify`, `measure`, `heic-extract`, `room-run`). The MCP server is
+a hand-rolled JSON-RPC stdio loop; each tool handler is a thin edge
+that ingests, calls one policy function, and shapes the result JSON.
 
 | Module | What it owns |
 |---|---|
@@ -73,7 +107,9 @@ function, and shapes the result JSON.
 | `billing`, `ledger`, `sqlledger` | The single billed-call choke point; two ledger stores (JSONL, SQLite) with identical accounting |
 | `pricing`, `config` | The model price table; environment configuration and the spend cap |
 | `measure` | Prototype scale-card size estimator (not a fourth tool) |
-| `heic` | From-scratch HEIC decoder, in progress |
+| `roomrun` | The room run: photos, video frames, and narration in; one staged, receipted listing per item out, plus the priced table |
+| `backdrop`, `market_pricing` | The code-rendered stage plates (wallpaper, studio gray) and the deterministic comp-pricing rule behind the priced table |
+| `heic` | From-scratch HEIC decoder, integrated into ingest: no external decoding library anywhere in the shipped path |
 
 Three invariants hold everywhere:
 
@@ -95,9 +131,9 @@ Three invariants hold everywhere:
 Download an MCPB bundle or a bare binary from the
 [latest release](https://github.com/AUsernameForYou/agenthand-rust/releases/latest):
 
-- `agenthand-0.2.0-linux-x86_64.mcpb` / `agenthand-0.2.0-linux-x86_64` — Linux x86_64
-- `agenthand-0.2.0-macos-arm64.mcpb` / `agenthand-0.2.0-macos-arm64` — macOS, Apple Silicon
-- `agenthand-0.2.0-macos-x86_64.mcpb` / `agenthand-0.2.0-macos-x86_64` — macOS, Intel
+- `agenthand-0.3.0-linux-x86_64.mcpb` / `agenthand-0.3.0-linux-x86_64` — Linux x86_64
+- `agenthand-0.3.0-macos-arm64.mcpb` / `agenthand-0.3.0-macos-arm64` — macOS, Apple Silicon
+- `agenthand-0.3.0-macos-x86_64.mcpb` / `agenthand-0.3.0-macos-x86_64` — macOS, Intel
 
 The `.mcpb` bundles install in one click in MCPB-supporting clients.
 For any other MCP client, point it at the bare binary:
@@ -131,10 +167,10 @@ Right-click → Open, or clear the quarantine flag
 (`xattr -d com.apple.quarantine <file>`), and it runs normally after
 that. Notarization is a planned, paid step.
 
-**HEIC note:** the Rust build does not decode HEIC photos yet — a
-from-scratch decoder is in active development in this repo. It refuses
-HEIC inputs loudly rather than failing silently. For HEIC today, use
-the Python build (`uvx agenthand`), which handles it.
+**HEIC note:** the Rust build decodes HEIC photos itself (see "It
+reads photos" below). Photos outside the decoder's subset refuse
+loudly rather than failing silently; the Python build (`uvx
+agenthand`) remains the fallback install.
 
 Fallback install (Python, full-featured):
 
@@ -171,6 +207,42 @@ verify and estimator: median of 7, full CLI wall clock). One honest
 note: on a real tool call, Meta API latency dominates, so the
 commercially real win here is cold start, because every MCP client
 spawns the server fresh for each session.
+
+## It reads photos
+
+The Rust build decodes HEIC itself (no decoding library), and on
+every real camera photo tested (iPhone, Canon, Samsung originals)
+its output matched the reference decoders pixel for pixel. The
+decoder is written from the format specifications and integrated
+into the server's ingest: it sniffs the format from the file bytes,
+decodes grid and single-picture primaries in-process, applies the
+photo's rotation, converts to RGB, and carries the file's colour
+profile through to the receipt. A malformed-input campaign against
+it (1,520 mutations after three found defects were fixed) produced
+0 panics, 0 hangs, and 0 aborts; a decoder fault is contained at the
+ingest boundary as an ordinary error.
+
+## The counterpoint, measured
+
+The headline count has a measured counterpoint. Method: photographs
+of real physical products from the verified room run — a bright
+orange hardshell suitcase (223,600 product pixels) and a gray
+storage box (31,932) — handed to Muse Image 1.0's full-frame edit
+mode with a staging prompt that explicitly instructed the model to
+keep the product exactly as-is, three independent runs per item,
+counted with the receipt's own counting rule (October 28, 2026).
+Controls: the counter reproduces 0 on each item's Fidelity Lock
+composite at every tolerance, and a pure resize round-trip floor
+was measured separately.
+
+| Subject | Regeneration changed, zero tolerance | Regeneration changed, beyond ±16 per channel | Fidelity Lock composite |
+|---|---|---|---|
+| Orange suitcase (223,600 px) | 223,599–223,600 | 212,823–215,878 | 0 |
+| Gray storage box (31,932 px) | 31,858–31,932 | 16,369–29,577 | 0 |
+
+Ranges are min–max across the three runs, never a single run. The
+baseline is this model's edit mode, measured as a method, not a
+tested third-party tool.
 
 ## A real fidelity receipt
 
@@ -242,9 +314,14 @@ and mask and reports how many changed. The count is the claim.
 
 The refusals are designed, and they are part of the product:
 
-- **HEIC photos** are refused loudly; a from-scratch decoder is in
-  active development in this repo. The Python build handles HEIC
-  today.
+- **HEIC photos outside the decoder's subset** are refused loudly:
+  stills only (intra-coded), 4:2:0 chroma, up to 10-bit. A
+  monochrome (4:0:0) primary, an inter-coded picture, or a
+  range-extension stream refuses with the subset's own message. A
+  refused auxiliary item (for example an HDR gain map) never blocks
+  the photo itself: the primary still decodes.
+- **Ingest caps.** Photos over 20 MB or 40 million pixels are
+  refused before any model call (both caps are configurable).
 - **A foreground with zero opaque pixels** is refused: there is no
   product layer to protect, so there is nothing to stage.
 - **A product layer with generated ancestry** is refused by draw.
