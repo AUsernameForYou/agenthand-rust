@@ -106,7 +106,7 @@ fn linspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
 /// numpy percentile, default linear interpolation.
 fn percentile(values: &[f64], p: f64) -> f64 {
     let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.total_cmp(b));
     let n = sorted.len();
     if n == 1 {
         return sorted[0];
@@ -699,11 +699,7 @@ fn arms(card: &CardProfile) -> Vec<Arm> {
         };
         let start = card.frame[vertex_key];
         let mut ticks: Vec<&Tick> = by_arm.remove(&name).unwrap_or_default();
-        ticks.sort_by(|a, b| {
-            a.fraction_from_vertex
-                .partial_cmp(&b.fraction_from_vertex)
-                .unwrap()
-        });
+        ticks.sort_by(|a, b| a.fraction_from_vertex.total_cmp(&b.fraction_from_vertex));
         out.push(Arm {
             name,
             start_mm: start,
@@ -1551,11 +1547,7 @@ fn sheet_seed(
     ring_centroid: Pt,
 ) -> Option<H3> {
     let mut contours = external_contours(mask, w, h, true);
-    contours.sort_by(|a, b| {
-        arc_length(b, true)
-            .partial_cmp(&arc_length(a, true))
-            .unwrap()
-    });
+    contours.sort_by(|a, b| arc_length(b, true).total_cmp(&arc_length(a, true)));
     contours.truncate(6);
     let (cw, ch) = (card.card_width_mm, card.card_height_mm);
     let sheet_mm = [pt(0.0, 0.0), pt(cw, 0.0), pt(cw, ch), pt(0.0, ch)];
@@ -1749,7 +1741,7 @@ fn hough_segments(edges: &[u8], w: usize, h: usize) -> Vec<HoughSeg> {
         if members.len() < 2 {
             continue;
         }
-        members.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        members.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut run_start = 0usize;
         for j in 1..=members.len() {
             let end_run = j == members.len() || members[j].0 - members[j - 1].0 > 20.0;
@@ -1848,7 +1840,7 @@ fn hough_quad_seed(
     if segs.len() < 4 {
         return None;
     }
-    segs.sort_by(|a, b| b.length.partial_cmp(&a.length).unwrap());
+    segs.sort_by(|a, b| b.length.total_cmp(&a.length));
     segs.truncate(28);
     let ref_ang = segs[0].normal[1].atan2(segs[0].normal[0]);
     let (mut fam_a, mut fam_b): (Vec<&HoughSeg>, Vec<&HoughSeg>) = (Vec::new(), Vec::new());
@@ -2280,7 +2272,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
             grid.push((value, trial));
         }
     }
-    grid.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    grid.sort_by(|a, b| b.0.total_cmp(&a.0));
     // Top seeds in distinct rotation buckets.
     let mut seeds: Vec<[f64; 4]> = Vec::new();
     for (_, trial) in &grid {
@@ -2403,11 +2395,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
              (coverage or residual gates failed)."
             .to_string());
     }
-    results.sort_by(|a, b| {
-        b.1.len()
-            .cmp(&a.1.len())
-            .then(a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
-    });
+    results.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.2.total_cmp(&b.2)));
     let (H, tick_pairs, rms) = results.into_iter().next().unwrap();
     let quad = [
         project1(&H, card.frame["TL"]),
@@ -2608,7 +2596,7 @@ fn object_extent(
     }
     let largest = contours
         .iter()
-        .max_by(|a, b| contour_area(a).partial_cmp(&contour_area(b)).unwrap())
+        .max_by(|a, b| contour_area(a).total_cmp(&contour_area(b)))
         .unwrap();
     if contour_area(largest) < 0.0005 * (w * h) as f64 {
         return Err("Auto extent contour is implausibly small.".to_string());
