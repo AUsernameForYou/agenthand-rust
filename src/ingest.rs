@@ -244,6 +244,40 @@ fn tiff_capture_time(tiff: &[u8]) -> Option<String> {
 /// (eXIf chunk), HEIC (the Exif item; its payload opens with a
 /// 4-byte offset to the TIFF header, which we locate by that
 /// offset and, failing it, by the TIFF magic).
+/// Candidate TIFF byte ranges inside a HEIC file's Exif item, in
+/// the order `exif_capture_time` has always tried them: the
+/// payload opens with a 4-byte offset to the TIFF header; try the
+/// declared offset first (both readings of it), then scan the
+/// first bytes for the TIFF magic. Shared with the provenance
+/// reader so both walk the same candidates.
+pub(crate) fn heic_exif_tiff_candidates(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let Some(heif) = crate::heic::container::parse(data).ok() else {
+        return out;
+    };
+    let Some(item) = heif.items.iter().find(|i| i.item_type == "Exif") else {
+        return out;
+    };
+    let Ok(payload) = crate::heic::container::extract_item_data_for(data, item) else {
+        return out;
+    };
+    if payload.len() >= 4 {
+        let declared = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        for start in [4 + declared, declared] {
+            if let Some(tiff) = payload.get(start..) {
+                out.push(tiff.to_vec());
+            }
+        }
+        // Fall back to scanning the first bytes for the TIFF magic.
+        for start in 0..payload.len().saturating_sub(8).min(64) {
+            if payload[start..].starts_with(b"II*\0") || payload[start..].starts_with(b"MM\0*") {
+                out.push(payload[start..].to_vec());
+            }
+        }
+    }
+    out
+}
+
 pub fn exif_capture_time(data: &[u8]) -> Option<String> {
     if let Some(tiff) = jpeg_exif_tiff(data) {
         if let Some(dt) = tiff_capture_time(tiff) {
@@ -255,25 +289,9 @@ pub fn exif_capture_time(data: &[u8]) -> Option<String> {
             return Some(dt);
         }
     }
-    let heif = crate::heic::container::parse(data).ok()?;
-    let item = heif.items.iter().find(|i| i.item_type == "Exif")?;
-    let payload = crate::heic::container::extract_item_data_for(data, item).ok()?;
-    if payload.len() >= 4 {
-        let declared = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
-        for start in [4 + declared, declared] {
-            if let Some(tiff) = payload.get(start..) {
-                if let Some(dt) = tiff_capture_time(tiff) {
-                    return Some(dt);
-                }
-            }
-        }
-        // Fall back to scanning the first bytes for the TIFF magic.
-        for start in 0..payload.len().saturating_sub(8).min(64) {
-            if payload[start..].starts_with(b"II*\0") || payload[start..].starts_with(b"MM\0*") {
-                if let Some(dt) = tiff_capture_time(&payload[start..]) {
-                    return Some(dt);
-                }
-            }
+    for tiff in heic_exif_tiff_candidates(data) {
+        if let Some(dt) = tiff_capture_time(&tiff) {
+            return Some(dt);
         }
     }
     None
@@ -405,7 +423,27 @@ pub fn ingest(source: &str, store: &AssetStore) -> Result<String, String> {
         ));
     }
     let normalized = normalize_image_bytes(&data)?;
-    store.put_bytes(&normalized, KIND_SOURCE, ".png", None)
+    // Provenance signals: read what the original file says about
+    // itself BEFORE normalization discards its metadata, mint the
+    // metadata-free public copy when the file carries location
+    // coordinates, and carry the block inside the stored PNG as a
+    // text chunk (the mask-provenance carrier pattern) so draw
+    // can republish it into the fidelity receipt under the
+    // asset's own pinned hash. Best-effort by design: a file
+    // whose block cannot be built or embedded simply stores
+    // without one, exactly like a mask written before mask
+    // provenance existed.
+    let dims = crate::image::png_dimensions(&normalized);
+    let mut block = crate::provenance::provenance_block(&data, dims);
+    crate::provenance::attach_public_copy(&mut block, store, &data, None);
+    let canonical = serde_json::to_string(&block).unwrap_or_default();
+    let annotated = crate::image::inject_png_text(
+        &normalized,
+        crate::assets::PROVENANCE_PNG_KEY,
+        &canonical,
+    )
+    .unwrap_or(normalized);
+    store.put_bytes(&annotated, KIND_SOURCE, ".png", None)
 }
 
 #[cfg(test)]

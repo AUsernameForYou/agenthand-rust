@@ -2267,7 +2267,7 @@ fn keep_from_primary(
                 .unwrap_or(Value::Null),
         )
     };
-    let receipt = json!({
+    let mut receipt = json!({
         "receipt_type": "ownership",
         "receipt_schema": 1,
         "item": name,
@@ -2297,6 +2297,28 @@ fn keep_from_primary(
         "cut_quality": keep_cut_quality(primary),
         "identify_call_id": identify_result.get("call_id").cloned().unwrap_or(Value::Null),
     });
+    // Provenance signals (bonus package): read from the same
+    // original file bytes the binding above hashes, so the
+    // record's observations describe exactly the file its claim
+    // pins. A keeper whose file carries location coordinates
+    // also gets its metadata-free public copy minted here,
+    // parented to the source asset. Additive:
+    // verify_ownership_record reads named fields only, and a
+    // record minted before this field existed verifies as
+    // before.
+    if !file_bytes.is_empty() {
+        let mut block = crate::provenance::provenance_block(
+            &file_bytes,
+            Some((source_image.width, source_image.height)),
+        );
+        crate::provenance::attach_public_copy(
+            &mut block,
+            &ctx.store,
+            &file_bytes,
+            Some(&source_record.asset_id),
+        );
+        receipt["provenance"] = block;
+    }
     ctx.store.save_receipt(&crop_handle, &receipt)?;
     record["output_asset"] = json!(crop_handle);
     record["receipt"] = receipt.clone();
@@ -2398,6 +2420,8 @@ fn build_keep_inventory(
             "source_file_sha256": ownership.pointer("/source/file_sha256").cloned().unwrap_or(Value::Null),
             "exif_capture_time": ownership.pointer("/source/exif_capture_time").cloned().unwrap_or(Value::Null),
             "cut_grade": ownership.pointer("/cut_quality/grade").cloned().unwrap_or(Value::Null),
+            "location_warning": ownership.pointer("/provenance/location_warning").cloned().unwrap_or(Value::Null),
+            "public_copy": ownership.pointer("/provenance/location/public_copy").cloned().unwrap_or(Value::Null),
             "receipt_sha256": receipt_sha256,
             "receipt_file": item.get("receipt_file").cloned().unwrap_or(Value::Null),
         });
@@ -2420,6 +2444,12 @@ fn build_keep_inventory(
             esc(&text_of(&entry["exif_capture_time"])),
             esc(&receipt_sha256),
         ));
+        if let Some(warning) = entry["location_warning"].as_str() {
+            rows.push(format!(
+                "<tr><td></td><td colspan=\"4\"><strong>Location warning:</strong> {}</td></tr>",
+                esc(warning),
+            ));
+        }
     }
     if entries.is_empty() {
         return Ok(Value::Null);

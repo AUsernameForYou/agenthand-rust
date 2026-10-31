@@ -14,7 +14,7 @@
 
 use crate::assets::{
     png_text_of_bytes, AssetRecord, AssetStore, HANDLE_PREFIX, KIND_COMPOSITE, KIND_FOREGROUND,
-    KIND_MASK, KIND_PLATE, KIND_SOURCE, MASK_PROVENANCE_PNG_KEY,
+    KIND_MASK, KIND_PLATE, KIND_SOURCE, MASK_PROVENANCE_PNG_KEY, PROVENANCE_PNG_KEY,
 };
 use crate::image::{describe_color_profile, GrayImage, RgbaImage};
 use serde_json::{json, Map, Value};
@@ -510,6 +510,21 @@ pub fn draw_product_with_plate_kind(
         receipt["mask_sam_width"] = provenance["sam_width"].clone();
         receipt["mask_sam_height"] = provenance["sam_height"].clone();
         receipt["mask_scale_method"] = provenance["scale_method"].clone();
+    }
+    // Provenance signals (bonus package): the source asset
+    // carries the block ingest read from the original file in a
+    // PNG text chunk; republishing it here binds those
+    // observations to this receipt under the same pinned hash
+    // that binds the pixel claim. Sources stored before the
+    // block existed simply have no field, and receipts written
+    // before it verify unchanged (the field is additive).
+    let source_handle = HANDLE_PREFIX.to_string() + &source_record.asset_id;
+    if let Ok(source_bytes) = store.read_bytes(&source_handle) {
+        if let Some(raw) = png_text_of_bytes(&source_bytes).get(PROVENANCE_PNG_KEY) {
+            if let Ok(block) = serde_json::from_str::<Value>(raw) {
+                receipt["provenance"] = block;
+            }
+        }
     }
     // Persist the receipt beside the composite, as the Python
     // compositor does: a receipt that exists only in the tool's

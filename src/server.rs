@@ -499,6 +499,20 @@ fn annotate_draw_result(
     full_receipt: &mut Value,
     result: &mut Value,
 ) {
+    // Provenance signals (bonus package): mirror the block the
+    // receipt already carries onto the tool result, with the
+    // location warning surfaced as its own field so a client can
+    // show it before the user publishes anything. Independent of
+    // the QR sidecar below: the warning must reach the caller
+    // even when the sidecar cannot be built.
+    if let Some(block) = full_receipt.get("provenance") {
+        result["provenance"] = block.clone();
+        if let Some(warning) = block.get("location_warning") {
+            if !warning.is_null() {
+                result["location_warning"] = warning.clone();
+            }
+        }
+    }
     let Some((qr_handle, verify_url, qr_sha256)) =
         attach_verify_qr(store, composite_handle, full_receipt)
     else {

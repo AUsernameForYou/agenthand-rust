@@ -575,6 +575,90 @@ pub fn encode_png_gray(img: &GrayImage) -> Vec<u8> {
     )
 }
 
+/// One complete PNG chunk (length, type, data, CRC) — the
+/// building block tests and grafting code assemble by hand.
+pub fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 12);
+    write_chunk(&mut out, kind, data);
+    out
+}
+
+/// Dimensions stated in a PNG's IHDR chunk, if the bytes are a
+/// PNG with a well-formed first chunk.
+pub fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if !data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) || data.len() < 29 {
+        return None;
+    }
+    if &data[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
+        u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
+    ))
+}
+
+/// Insert a tEXt chunk into already-encoded PNG bytes, just
+/// before IEND; an existing tEXt chunk with the same key is
+/// replaced, so re-annotating an asset never stacks duplicates.
+/// Returns None when the bytes are not a PNG with an IEND.
+/// Pixel data is never touched: the chunk is ancillary, and the
+/// PNG decoders in this tree ignore tEXt entirely.
+pub fn inject_png_text(data: &[u8], key: &str, value: &str) -> Option<Vec<u8>> {
+    if !data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return None;
+    }
+    // Walk chunks, recording spans and the IEND start.
+    let mut spans: Vec<(usize, usize, [u8; 4])> = Vec::new(); // (start, end incl CRC)
+    let mut pos = 8usize;
+    let mut iend_start: Option<usize> = None;
+    while pos + 12 <= data.len() {
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let kind: [u8; 4] = [data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]];
+        let end = pos.checked_add(12 + len)?;
+        if end > data.len() {
+            return None;
+        }
+        if &kind == b"IEND" {
+            iend_start = Some(pos);
+            spans.push((pos, end, kind));
+            break;
+        }
+        spans.push((pos, end, kind));
+        pos = end;
+    }
+    let iend_start = iend_start?;
+    let mut chunk_data = Vec::with_capacity(key.len() + 1 + value.len());
+    chunk_data.extend_from_slice(key.as_bytes());
+    chunk_data.push(0);
+    chunk_data.extend_from_slice(value.as_bytes());
+    let mut chunk = Vec::new();
+    write_chunk(&mut chunk, b"tEXt", &chunk_data);
+    let mut out = Vec::with_capacity(data.len() + chunk.len());
+    let mut cursor = 0usize;
+    for (start, end, kind) in &spans {
+        if *start == iend_start {
+            break;
+        }
+        if kind == b"tEXt" {
+            let body = &data[*start + 8..*end - 4];
+            if body.len() > key.len()
+                && &body[..key.len()] == key.as_bytes()
+                && body[key.len()] == 0
+            {
+                // Same-key chunk: drop it (the new one replaces it).
+                out.extend_from_slice(&data[cursor..*start]);
+                cursor = *end;
+            }
+        }
+    }
+    out.extend_from_slice(&data[cursor..iend_start]);
+    out.extend_from_slice(&chunk);
+    out.extend_from_slice(&data[iend_start..]);
+    Some(out)
+}
+
 /// Encode a grayscale image as PNG bytes carrying one tEXt chunk
 /// (the mask provenance carrier; see `assets::MASK_PROVENANCE_PNG_KEY`).
 pub fn encode_png_gray_with_text(img: &GrayImage, key: &str, value: &str) -> Vec<u8> {

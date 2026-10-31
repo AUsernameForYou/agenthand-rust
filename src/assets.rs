@@ -35,10 +35,27 @@ pub const KIND_OVERLAY: &str = "mask_overlay";
 pub const KIND_CROP: &str = "item_crop";
 pub const KIND_QR: &str = "verify_qr";
 
+/// Asset kind: a derived public copy of a source photo with all
+/// embedded metadata removed and pixels identical to the
+/// original (the AB 723 / location-safety copy; see
+/// `provenance::metadata_free_public_copy`). A copy is a derived
+/// asset: originals and their receipts are never modified to
+/// make one.
+pub const KIND_PUBLIC_COPY: &str = "public_copy";
+
 /// PNG text key carrying a mask asset's provenance JSON (source
 /// frame, SAM frame, scale method), written by cut_out and read by
 /// draw's receipt builder.
 pub const MASK_PROVENANCE_PNG_KEY: &str = "agenthand_mask_provenance";
+
+/// PNG text key carrying a source asset's provenance signals
+/// JSON (what the original file stated about itself at ingest:
+/// capture device, named editors, edit history, dates, container
+/// census, location), written by ingest and republished by draw
+/// into the fidelity receipt. Same carrier pattern as the mask
+/// provenance chunk: the record pins the file's hash, so the
+/// block is as tamper-evident as the asset itself.
+pub const PROVENANCE_PNG_KEY: &str = "agenthand_provenance";
 
 /// The text chunks embedded in PNG bytes (empty map when none / not
 /// a PNG). Port of the Python `png_text_of_bytes`: mask assets carry

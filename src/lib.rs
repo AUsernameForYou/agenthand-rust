@@ -53,6 +53,7 @@ pub mod market_pricing;
 pub mod measure;
 pub mod meta;
 pub mod pricing;
+pub mod provenance;
 pub mod resample;
 pub mod roomrun;
 pub mod sam;
