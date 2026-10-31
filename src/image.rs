@@ -372,6 +372,14 @@ fn crc32(data: &[u8]) -> u32 {
     // PNG's CRC (ISO 3309 polynomial), table-driven.
     static mut TABLE: [u32; 256] = [0; 256];
     static ONCE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: the closure writes every entry of TABLE exactly
+    // once, and `call_once` guarantees it runs to completion
+    // before any caller proceeds past this point — so no read
+    // of TABLE (below, or in any later call) can observe a
+    // partially initialized table, and nothing mutates TABLE
+    // after this initialization. Writing through the static in
+    // place avoids forming any reference to it while it is
+    // being built.
     ONCE.call_once(|| unsafe {
         for n in 0..256u32 {
             let mut c = n;
@@ -385,6 +393,12 @@ fn crc32(data: &[u8]) -> u32 {
             TABLE[n as usize] = c;
         }
     });
+    // SAFETY: TABLE was fully initialized by the `call_once`
+    // above (which has returned before this line runs, in this
+    // call and every call — `Once` provides the happens-before
+    // edge) and is never written again, so forming a shared
+    // reference to it here is sound. The raw-const projection
+    // avoids an intermediate reference to the `static mut`.
     let table = unsafe { &*(&raw const TABLE) };
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {

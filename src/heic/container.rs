@@ -54,6 +54,14 @@ fn malformed<T>(msg: impl Into<String>) -> Res<T> {
 
 // ---------------------------------------------------------------------------
 // byte cursor
+//
+// Reader discipline (N24): every accessor on this cursor goes
+// through `take`, the one bounds-checked read. There is no
+// unchecked or "caller already guaranteed it" fast path, and
+// there must never be one — a tired edit must not be able to
+// reach for a raw slice here. Callers that hold a BoxRef slice
+// the payload through split_at_checked (N25) or re-enter
+// through a Cur bounded to the box.
 
 struct Cur<'a> {
     d: &'a [u8],
@@ -627,8 +635,11 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                     let mut ic = Cur::new(data, ib.content, ib.content + ib.content_len);
                     let iv = ic.fullbox_version()?;
                     // infe flags bit 0 = item_hidden; the flags' low
-                    // byte is raw byte 3 of the box content.
-                    let hidden = data[ib.content + 3] & 1 == 1;
+                    // byte is raw byte 3 of the box content. Read
+                    // through .get() (N24): fullbox_version above
+                    // already proved 4 content bytes exist, but the
+                    // reader rule is that no site indexes raw.
+                    let hidden = data.get(ib.content + 3).map(|&b| b & 1 == 1).unwrap_or(false);
                     match iv {
                         2 | 3 => {
                             let item_id = if iv == 2 { ic.u16()? as u32 } else { ic.u32()? };
@@ -979,11 +990,20 @@ pub fn to_annexb(hvcc: &HvcC, item_data: &[u8]) -> Res<Vec<u8>> {
             len = (len << 8) | item_data[pos + i] as usize;
         }
         pos += hvcc.length_size as usize;
-        if pos + len > item_data.len() || len == 0 {
+        if len == 0 {
             return malformed("NAL length out of range (annexb)");
         }
+        // The payload split is itself the checked operation
+        // (N25): split_at_checked returns None on a lying length
+        // instead of slicing on arithmetic done lines away.
+        let Some(unit) = item_data
+            .split_at_checked(pos)
+            .and_then(|(_, tail)| tail.split_at_checked(len).map(|(unit, _)| unit))
+        else {
+            return malformed("NAL length out of range (annexb)");
+        };
         out.extend_from_slice(&[0, 0, 0, 1]);
-        out.extend_from_slice(&item_data[pos..pos + len]);
+        out.extend_from_slice(unit);
         pos += len;
     }
     Ok(out)
@@ -1030,14 +1050,25 @@ pub fn split_nals<'a>(item_data: &'a [u8], length_size: u8) -> Res<Vec<(u8, &'a 
             len = (len << 8) | item_data[pos + i] as usize;
         }
         pos += length_size as usize;
-        if pos + len > item_data.len() || len < 2 {
+        if len < 2 {
             return malformed(format!(
                 "NAL unit at {pos} claims {len} bytes, {} available",
                 item_data.len() - pos
             ));
         }
-        let nal_type = (item_data[pos] >> 1) & 0x3f;
-        out.push((nal_type, &item_data[pos..pos + len]));
+        // The payload split is itself the checked operation
+        // (N25), as in to_annexb: None on a lying length.
+        let Some(unit) = item_data
+            .split_at_checked(pos)
+            .and_then(|(_, tail)| tail.split_at_checked(len).map(|(unit, _)| unit))
+        else {
+            return malformed(format!(
+                "NAL unit at {pos} claims {len} bytes, {} available",
+                item_data.len() - pos
+            ));
+        };
+        let nal_type = (unit[0] >> 1) & 0x3f;
+        out.push((nal_type, unit));
         pos += len;
     }
     Ok(out)

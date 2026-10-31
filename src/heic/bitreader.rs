@@ -148,10 +148,13 @@ impl<'a> BitReader<'a> {
         if self.pos >= total {
             return false;
         }
-        // Find the last set bit in the buffer.
+        // Find the last set bit in the buffer. (Indexed through
+        // .get() like u1: the reader offers no raw-index path,
+        // N24 — the range below is in-bounds by construction,
+        // and the checked read keeps that from being load-bearing.)
         let mut last_set: Option<usize> = None;
         for i in (self.pos..total).rev() {
-            let byte = self.data[i / 8];
+            let byte = self.data.get(i / 8).copied().unwrap_or(0);
             if (byte >> (7 - (i % 8))) & 1 == 1 {
                 last_set = Some(i);
                 break;

@@ -778,6 +778,10 @@ impl<'a> Walker<'a> {
             base += 1u64 << n;
             n += 1;
         }
+        // Range pin (shift-trap audit, N6): the cap above keeps
+        // n <= 31, so base <= 2^31 - 1 and the n-bit suffix <=
+        // 2^31 - 1; the sum fits u64 trivially and u32 exactly
+        // (max 2^32 - 2). The closing `as u32` is lossless.
         let suffix = if n == 0 {
             0
         } else {
@@ -798,13 +802,28 @@ impl<'a> Walker<'a> {
                 return invalid("coeff_abs_level_remaining prefix too long");
             }
         }
-        let v = if prefix < 3 {
-            (prefix << rice) + self.cabac.decode_bypass_bits(rice)?
+        // Value assembly in u64 end to end (shift-trap audit, N6):
+        // the old form truncated twice — `as u32` on the shifted
+        // prefix term, and a u32 bypass read of k = prefix - 3 +
+        // rice bits, which can reach 33 and silently drop the top
+        // bit. Both losses were silent wrong levels for out-of-spec
+        // streams. The exact value is computed here and refused
+        // when it cannot be a u32 level; every in-spec stream is
+        // bit-identical to the old result.
+        let v: u64 = if prefix < 3 {
+            u64::from(prefix << rice) + u64::from(self.cabac.decode_bypass_bits(rice)?)
         } else {
             let k = (prefix - 3) + rice;
-            (((1u64 << (prefix - 3)) + 2) << rice) as u32 + self.cabac.decode_bypass_bits(k)?
+            let mut suffix: u64 = 0;
+            for _ in 0..k {
+                suffix = (suffix << 1) | u64::from(self.cabac.decode_bypass()?);
+            }
+            (((1u64 << (prefix - 3)) + 2) << rice) + suffix
         };
-        Ok(v)
+        match u32::try_from(v) {
+            Ok(v) => Ok(v),
+            Err(_) => invalid("coeff_abs_level_remaining value exceeds u32 range"),
+        }
     }
 
     fn walk_residual(&mut self, log2: u32, scan: Scan, c_idx: u32) -> SResult<()> {
@@ -1906,4 +1925,34 @@ fn run_substreams(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scan_order_tests {
+    use super::{tu_scan_order, Scan};
+
+    /// Boundary pin for the TU scan-order shifts (shift-trap
+    /// audit, N6): `tu_scan_order` computes `1u32 << (log2 - 2)`
+    /// and sizes its vector with `1usize << (2 * log2)`. Those
+    /// are exact for the whole reachable range — TU log2 sizes
+    /// are bounded by the SPS range check (Log2MinTbSizeY >= 2,
+    /// Log2MaxTbSizeY <= 5) — and this test pins the range so a
+    /// future caller passing an unbounded log2 fails loudly here
+    /// instead of shifting absurdly in production.
+    #[test]
+    fn tu_scan_order_is_exact_across_the_sps_range() {
+        for log2 in 2..=5u32 {
+            let n = 1u32 << log2;
+            for scan in [Scan::Diag, Scan::Horiz, Scan::Vert] {
+                let order = tu_scan_order(log2, scan);
+                assert_eq!(order.len(), (n * n) as usize, "log2 {log2}");
+                assert!(order.iter().all(|&(x, y)| x < n && y < n));
+                // A scan order is a permutation of the TU.
+                let mut sorted = order.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                assert_eq!(sorted.len(), (n * n) as usize, "log2 {log2} permutation");
+            }
+        }
+    }
 }

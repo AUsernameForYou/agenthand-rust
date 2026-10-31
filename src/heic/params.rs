@@ -520,6 +520,48 @@ impl Sps {
     }
 }
 
+/// Range-check the SPS log2 fields that later size shifts,
+/// allocations, and fixed-width reads (Gauntlet shift-trap audit,
+/// N6, 2026-10-31). `ue()` returns up to 2^32 - 2 and nothing
+/// checked these fields, so a crafted SPS could declare a
+/// ~2^32-bit POC field — turning every `BitReader::u(poc_bits)`
+/// into a billions-of-iterations CPU sink — or drive
+/// `1 << ctb_log2` and the TU-size shifts with absurd counts.
+/// The ranges are the spec's own (H.265 §7.4.3.2.1 plus the
+/// Main/Main10 limits of the accepted subset): POC lsb minus4 in
+/// 0..=12, Log2MinCbSizeY in 3..=6, Log2CtbSizeY in 4..=6,
+/// Log2MinTbSizeY in 2..=5, Log2MaxTbSizeY at most 5. The failure
+/// point is this refusal, at header time, before any use.
+fn check_sps_log2_ranges(
+    poc_lsb_minus4: u32,
+    min_cb_minus3: u32,
+    diff_cb: u32,
+    min_tb_minus2: u32,
+    diff_tb: u32,
+) -> Res<()> {
+    if poc_lsb_minus4 > 12 {
+        return malformed("log2_max_pic_order_cnt_lsb_minus4 > 12 (spec range 0..=12)");
+    }
+    if min_cb_minus3 > 3 {
+        return malformed("log2_min_cb_size_minus3 puts Log2MinCbSizeY above 6");
+    }
+    let min_cb = min_cb_minus3 + 3;
+    if diff_cb > 6 - min_cb || min_cb + diff_cb < 4 {
+        return malformed(format!(
+            "SPS log2 cb range puts Log2CtbSizeY at {}, outside 4..=6",
+            min_cb.saturating_add(diff_cb)
+        ));
+    }
+    if min_tb_minus2 > 3 {
+        return malformed("log2_min_tb_size_minus2 puts Log2MinTbSizeY above 5");
+    }
+    let min_tb = min_tb_minus2 + 2;
+    if diff_tb > 5 - min_tb {
+        return malformed("SPS log2 tb range puts Log2MaxTbSizeY above 5");
+    }
+    Ok(())
+}
+
 pub fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
     let mut br = BitReader::new(rbsp);
     let _nal_header = br.u(16);
@@ -575,6 +617,13 @@ pub fn parse_sps(rbsp: &[u8]) -> Res<Sps> {
     let log2_diff_tb = br.ue();
     let max_depth_inter = br.ue();
     let max_depth_intra = br.ue();
+    check_sps_log2_ranges(
+        log2_max_poc_lsb_minus4,
+        log2_min_cb_minus3,
+        log2_diff_cb,
+        log2_min_tb_minus2,
+        log2_diff_tb,
+    )?;
     let scaling_list_enabled = br.u1() == 1;
     let mut scaling_lists = None;
     if scaling_list_enabled && br.u1() == 1 {
@@ -1110,4 +1159,37 @@ pub fn parse_slice_header(
     }
     hdr.cabac_start_bit = br.bits_read();
     Ok((hdr, pps))
+}
+
+#[cfg(test)]
+mod sps_log2_range_tests {
+    use super::check_sps_log2_ranges;
+
+    /// The honest envelope (iPhone/Canon streams: POC lsb 16,
+    /// MinCb 16, Ctb 64, MinTb 4, MaxTb 32) passes.
+    #[test]
+    fn honest_ranges_pass() {
+        assert!(check_sps_log2_ranges(0, 1, 2, 0, 3).is_ok());
+        assert!(check_sps_log2_ranges(12, 0, 1, 0, 0).is_ok());
+        // Largest legal combination on every axis at once.
+        assert!(check_sps_log2_ranges(12, 3, 0, 3, 0).is_ok());
+    }
+
+    /// Each field one step past its spec range refuses — the
+    /// crafted-SPS shape the shift-trap audit flagged (a ~2^32-bit
+    /// POC field above all: every read of it is a CPU sink).
+    #[test]
+    fn one_past_each_range_refuses() {
+        assert!(check_sps_log2_ranges(13, 1, 2, 0, 3).is_err());
+        assert!(check_sps_log2_ranges(u32::MAX - 4, 1, 2, 0, 3).is_err());
+        assert!(check_sps_log2_ranges(0, 4, 0, 0, 3).is_err()); // MinCb 128
+        assert!(check_sps_log2_ranges(0, 1, 3, 0, 3).is_err()); // Ctb 128
+        assert!(check_sps_log2_ranges(0, 0, 0, 0, 3).is_err()); // Ctb 8 < 16
+        assert!(check_sps_log2_ranges(0, 1, 2, 4, 0).is_err()); // MinTb 64
+        assert!(check_sps_log2_ranges(0, 1, 2, 0, 4).is_err()); // MaxTb 64
+        // Absurd ue() values refuse cleanly instead of overflowing
+        // the checker's own arithmetic.
+        assert!(check_sps_log2_ranges(0, 1, u32::MAX - 1, 0, 3).is_err());
+        assert!(check_sps_log2_ranges(0, 1, 2, 0, u32::MAX - 1).is_err());
+    }
 }
