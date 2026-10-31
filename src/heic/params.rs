@@ -128,9 +128,12 @@ fn parse_scaling_list_data(br: &mut BitReader) -> Res<ScalingLists> {
             if pred_mode == 1 {
                 // Copy from matrix (matrix_id - delta - 1); a
                 // reference below zero means the spec's default
-                // matrix, which is already in place.
-                let delta = br.ue() as i32;
-                let ref_id = matrix_id as i32 - delta - 1;
+                // matrix, which is already in place. Delta is
+                // computed in i64 on the exact ue() value: as i32
+                // it wrapped for large code numbers and the
+                // subtraction could overflow (A6 harness class).
+                let delta = i64::from(br.ue());
+                let ref_id = matrix_id as i64 - delta - 1;
                 if ref_id >= 0 {
                     let ref_id = ref_id as usize;
                     let src = out.coef[size_id][ref_id].clone();
@@ -144,7 +147,10 @@ fn parse_scaling_list_data(br: &mut BitReader) -> Res<ScalingLists> {
                 let coef_num = (1usize << (4 + size_id)).min(64);
                 let mut next_coef: i32 = 8;
                 if size_id > 1 {
-                    let dc = br.se() + 8;
+                    // saturating: exact for every in-spec DC
+                    // (a small range around 8); an absurd se()
+                    // saturates instead of overflowing.
+                    let dc = br.se().saturating_add(8);
                     out.dc[size_id - 2][matrix_id] = dc;
                     next_coef = dc;
                 }
@@ -155,7 +161,13 @@ fn parse_scaling_list_data(br: &mut BitReader) -> Res<ScalingLists> {
                 // spec's ScalingList array before scan mapping).
                 for c in coefs.iter_mut() {
                     let delta = br.se();
-                    next_coef = (next_coef + delta + 256) % 256;
+                    // i64 + rem_euclid: the spec's (x + 256) % 256
+                    // over mathematical integers (the Python
+                    // reference's semantics) — total and exact for
+                    // any delta se() can return, where the i32
+                    // original could overflow on a crafted delta.
+                    next_coef =
+                        (i64::from(next_coef) + i64::from(delta) + 256).rem_euclid(256) as i32;
                     *c = next_coef;
                 }
                 out.coef[size_id][matrix_id] = coefs;

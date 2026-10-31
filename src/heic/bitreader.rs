@@ -112,12 +112,21 @@ impl<'a> BitReader<'a> {
 
     /// Signed Exp-Golomb se(v).
     pub fn se(&mut self) -> i32 {
-        let code_num = self.ue() as i32;
-        if code_num % 2 == 0 {
+        // Compute on the exact code number in i64: the old
+        // `ue() as i32` wrapped code numbers above i32::MAX to
+        // negative (flipping their parity, hence the decoded
+        // value) and `(code_num + 1)` panicked on overflow at
+        // code_num == i32::MAX — a panic a crafted SPS could
+        // reach through any se(v) field (found by the A6 mutation
+        // harness, 2026-10-31). The exact result always fits i32:
+        // |se| <= (2^32 - 1) / 2.
+        let code_num = i64::from(self.ue());
+        let v = if code_num % 2 == 0 {
             -(code_num / 2)
         } else {
             (code_num + 1) / 2
-        }
+        };
+        v as i32
     }
 
     /// Skip to the next byte boundary (alignment bits are not
@@ -224,7 +233,7 @@ mod tests {
         assert_eq!(br.ue(), u32::MAX - 1);
     }
 
-    /// Ordinary ue(v) values are unaffected by the saturation path.
+    /// Ordinary ue(v) values are unaffected.
     #[test]
     fn ue_small_values_unchanged() {
         // "1" -> 0, "010" -> 1, "011" -> 2, "00100" -> 3.
@@ -234,5 +243,40 @@ mod tests {
         assert_eq!(br.ue(), 1);
         assert_eq!(br.ue(), 2);
         assert_eq!(br.ue(), 3);
+    }
+
+    /// se(v) at the code-number extremes (A6 mutation-harness
+    /// find): code_num == i32::MAX used to panic on
+    /// `(code_num + 1)` overflow, and code numbers above i32::MAX
+    /// wrapped through `as i32`, flipping parity and value. Both
+    /// must now decode to the exact mathematical result.
+    #[test]
+    fn se_at_code_number_extremes_is_exact() {
+        fn pack(bits: &[u8]) -> Vec<u8> {
+            let mut packed = vec![0u8; bits.len().div_ceil(8)];
+            for (i, &b) in bits.iter().enumerate() {
+                if b == 1 {
+                    packed[i / 8] |= 1 << (7 - (i % 8));
+                }
+            }
+            packed
+        }
+        // code_num = 2^31 - 1 (i32::MAX): 31 leading zeros, stop,
+        // suffix 0 (31 zero bits). se = (2^31 - 1 + 1) / 2 = 2^30.
+        let mut bits = vec![0u8; 63];
+        bits[31] = 1;
+        let packed = pack(&bits);
+        let mut br = BitReader::new(&packed);
+        assert_eq!(br.se(), 1 << 30);
+        // code_num = 2^32 - 2 (ue maximum): suffix all ones.
+        // se = -(2^32 - 2) / 2 = -(2^31 - 1).
+        let mut bits = vec![0u8; 63];
+        bits[31] = 1;
+        for b in bits.iter_mut().skip(32) {
+            *b = 1;
+        }
+        let packed = pack(&bits);
+        let mut br = BitReader::new(&packed);
+        assert_eq!(br.se(), -(i32::MAX));
     }
 }
