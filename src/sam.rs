@@ -839,10 +839,18 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
 
 /// Place a box-local 0/1 raster into a full-frame L image (0/255),
 /// clipped against the frame edges (port of `_place_in_frame`).
+///
+/// The record's bounds can outrun the raster: SAM returned a
+/// border-touching fridge mask on IMG_1351 whose box was larger than
+/// its box-local raster, in the wild. The Python reference places the
+/// raster through PIL crop, which zero-pads any overhang, so source
+/// coordinates outside the raster read as 0 here too. Indexing the
+/// raster unchecked panicked the server (index out of bounds at the
+/// old line 863) and killed the process mid-call.
 fn place_in_frame(
     raster: &[u8],
     width: usize,
-    _height: usize,
+    height: usize,
     bounds: (i64, i64, i64, i64),
     frame_width: usize,
     frame_height: usize,
@@ -860,7 +868,7 @@ fn place_in_frame(
         for dx in dst_left..dst_right {
             let sx = (dx - left) as usize;
             let sy = (dy - top) as usize;
-            if raster[sy * width + sx] != 0 {
+            if sx < width && sy < height && raster[sy * width + sx] != 0 {
                 frame[dy as usize * frame_width + dx as usize] = 255;
             }
         }

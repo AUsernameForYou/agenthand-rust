@@ -188,6 +188,66 @@ fn extract_foreground_keeps_source_pixels_byte_exact() {
     assert_eq!(fg.pixel(7, 5), [0, 0, 0, 0]);
 }
 
+/// Regression: a record whose box is WIDER than its box-local raster.
+/// SAM returned exactly this shape for the border-touching fridge mask
+/// on IMG_1351 (real run, 2026-10-31): the bounds outrun the raster and
+/// the old place_in_frame indexed past the end of the raster and
+/// panicked (sam.rs index out of bounds), killing the server. The
+/// Python reference places the same record through PIL crop, which
+/// zero-pads the overhang: out-of-raster columns read as 0.
+#[test]
+fn box_wider_than_raster_places_with_zero_padding() {
+    // GOOD_TEXT's 4x6 all-on raster, but the box claims the full 8-wide
+    // frame. Placement must equal the good mask's frame exactly.
+    let text = "<0f>0<|box;x1=0;y1=0;x2=7;y2=5;w=8;h=6|><|mask;x=0;y=0;data=6,4,!!!!!'y8_cbF.|>";
+    let masks = parse_sam_masks(text, 8, 6).unwrap();
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].mask_pixels, 24);
+    assert_eq!(
+        sha256_hex(&masks[0].image),
+        "4ae5ce3aabc6e65d0530988450363a48d5f4bdd43dc00d2b4b96bac6792c032a"
+    );
+}
+
+/// Regression: a record whose box is TALLER than its raster (the other
+/// overhang direction of the same panic).
+#[test]
+fn box_taller_than_raster_places_with_zero_padding() {
+    // GOOD_TEXT's 4x6 raster in a 4x8 box inside an 8x8 frame: the top
+    // six rows land, the two overhang rows read as 0.
+    let text = "<0f>0<|box;x1=0;y1=0;x2=3;y2=7;w=8;h=8|><|mask;x=0;y=0;data=6,4,!!!!!'y8_cbF.|>";
+    let masks = parse_sam_masks(text, 8, 8).unwrap();
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].mask_pixels, 24);
+    let img = &masks[0].image;
+    for y in 0..8usize {
+        for x in 0..8usize {
+            let expected = if y < 6 && x < 4 { 255 } else { 0 };
+            assert_eq!(img[y * 8 + x], expected, "pixel ({x},{y})");
+        }
+    }
+}
+
+/// Regression: the fridge shape itself — a full-frame, border-touching
+/// box carrying a much smaller raster. Placement must not panic; only
+/// the raster's own extent lands.
+#[test]
+fn full_frame_box_with_small_raster_does_not_panic() {
+    // The all-on 2x2 raster from TWO_RECORDS_TEXT under a box covering
+    // the whole 8x6 frame (touches every border).
+    let text = "<0f>0<|box;x1=0;y1=0;x2=7;y2=5;w=8;h=6|><|mask;x=0;y=0;data=2,2,!!!!!&t.SKi|>";
+    let masks = parse_sam_masks(text, 8, 6).unwrap();
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].mask_pixels, 4);
+    let img = &masks[0].image;
+    for y in 0..6usize {
+        for x in 0..8usize {
+            let expected = if y < 2 && x < 2 { 255 } else { 0 };
+            assert_eq!(img[y * 8 + x], expected, "pixel ({x},{y})");
+        }
+    }
+}
+
 #[test]
 fn review_mask_reports_bounds_fill_and_edge_touches() {
     let masks = parse_sam_masks(GOOD_TEXT, 8, 6).unwrap();
