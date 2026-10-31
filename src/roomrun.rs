@@ -66,7 +66,7 @@ pub const NARRATION_TOKENS_PER_SECOND: f64 = 150.0;
 pub const NARRATION_PROMPT_TOKENS_FLOOR: f64 = 512.0;
 pub const NARRATION_SILENCE_PEAK: f64 = 0.01; // ~ -40 dBFS
 pub const BASETEN_BASE_URL: &str = "https://inference.baseten.co/v1";
-pub const NARRATION_PROMPT: &str = "Transcribe this recording verbatim, word for word, and output it under the heading TRANSCRIPT. Then, under the heading SELLING, list each physical item the speaker explicitly says they want to sell (wording like 'sell this', 'this one's for sale', 'get rid of'), one per line, naming each item the way the speaker referred to it; if the speaker marks no item for sale, write NONE under that heading. Then, under the heading MENTIONED, list each other physical item the speaker refers to in passing without saying they want to sell it, one per line; if there are none, write NONE. Use exactly those three headings, in that order, and do not add any other text. Do not invent items the speaker did not refer to.";
+pub const NARRATION_PROMPT: &str = "Transcribe this recording verbatim, word for word, and output it under the heading TRANSCRIPT. Then, under the heading SELLING, list each physical item the speaker explicitly says they want to sell (wording like 'sell this', 'this one's for sale', 'get rid of'), one per line, naming each item the way the speaker referred to it; if the speaker marks no item for sale, write NONE under that heading. Then, under the heading KEEP, list each physical item the speaker says they are keeping or not selling (wording like 'the bike stays', 'keep it', 'not for sale', 'keep it for insurance'), one per line; if there are none, write NONE. Then, under the heading MENTIONED, list each other physical item the speaker refers to in passing without saying they want to sell it or keep it, one per line; if there are none, write NONE. Use exactly those four headings, in that order, and do not add any other text. Do not invent items the speaker did not refer to.";
 
 // ----------------------------------------------------------------------
 // Small Python-semantics helpers
@@ -616,16 +616,17 @@ pub fn narration_cost_usd(usage: Option<&Value>) -> Option<f64> {
 pub struct NarrationParse {
     pub transcript: String,
     pub selling: Vec<String>,
+    pub keep: Vec<String>,
     pub mentioned: Vec<String>,
 }
 
-/// Split a narration reply into transcript / selling / mentioned. A
-/// reply with no recognizable heading is treated as a bare
-/// transcript — the seller's words still matter; the run just gains
-/// no item names from it.
+/// Split a narration reply into transcript / selling / keep /
+/// mentioned. A reply with no recognizable heading is treated as
+/// a bare transcript — the seller's words still matter; the run
+/// just gains no item names from it.
 pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
     let text = text.unwrap_or("");
-    let mut sections: [Vec<String>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sections: [Vec<String>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
     let mut current: Option<usize> = None;
     let mut found = false;
     for raw_line in text.split('\n') {
@@ -642,8 +643,13 @@ pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
                 found = true;
                 continue;
             }
-            "mentioned" => {
+            "keep" => {
                 current = Some(2);
+                found = true;
+                continue;
+            }
+            "mentioned" => {
+                current = Some(3);
                 found = true;
                 continue;
             }
@@ -657,6 +663,7 @@ pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
         return NarrationParse {
             transcript: text.trim().to_string(),
             selling: Vec::new(),
+            keep: Vec::new(),
             mentioned: Vec::new(),
         };
     }
@@ -693,7 +700,8 @@ pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
     NarrationParse {
         transcript: sections[0].join("\n").trim().to_string(),
         selling: clean_items(&sections[1]),
-        mentioned: clean_items(&sections[2]),
+        keep: clean_items(&sections[2]),
+        mentioned: clean_items(&sections[3]),
     }
 }
 
@@ -1145,6 +1153,7 @@ fn empty_narration_record(path: &Path, kind: &str) -> Value {
         "peak_fraction": Value::Null,
         "transcript": Value::Null,
         "named_items": [],
+        "kept_items": [],
         "mentioned_items": [],
         "usage": Value::Null,
         "projected_cost_usd": Value::Null,
@@ -1229,6 +1238,7 @@ fn narrate_one(
     let parsed = parse_narration_reply(result.get("reply").and_then(Value::as_str));
     record["transcript"] = json!(parsed.transcript);
     record["named_items"] = json!(parsed.selling);
+    record["kept_items"] = json!(parsed.keep);
     record["mentioned_items"] = json!(parsed.mentioned);
     record["usage"] = result.get("usage").cloned().unwrap_or_else(|| json!({}));
     record["latency_ms"] = result.get("latency_ms").cloned().unwrap_or(Value::Null);
@@ -1808,6 +1818,7 @@ fn probe_item(
         "failure": Value::Null,
         "narration": item.narration,
         "origin": item.origin,
+        "intent": intent_of_origin(&item.origin),
         "stage_mode": ctx.stage_mode,
         "pricing": Value::Null,
         "sightings": [],
@@ -1818,6 +1829,7 @@ fn probe_item(
         "receipt_file": Value::Null,
         "verification": Value::Null,
         "listing": Value::Null,
+        "ownership": Value::Null,
         "possible_duplicate_of": [],
         "flags": item.flags,
         "cost_usd": 0.0,
@@ -1947,9 +1959,501 @@ fn process_item(
         return Ok((outcome.record, None));
     };
     let mut record = outcome.record;
+    if item.origin == "narration_keep" {
+        // KEEP: identify + cut_out only. No listing, no staging,
+        // no draw — the ownership record is the deliverable.
+        let keep_cost = keep_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
+        record["cost_usd"] = json!(outcome.cost + keep_cost);
+        return Ok((record, None));
+    }
     let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
     record["cost_usd"] = json!(outcome.cost + stage.cost);
     Ok((record, stage.evidence))
+}
+
+/// The manifest intent vocabulary, identical in both builds:
+/// selling | keep | mentioned, derived from the item's origin.
+/// Typed and auto items are the seller's sale list by default.
+pub fn intent_of_origin(origin: &str) -> &'static str {
+    match origin {
+        "narration_mentioned" => "mentioned",
+        "narration_keep" => "keep",
+        _ => "selling",
+    }
+}
+
+/// Grade a kept item's cut from the sighting's review signals.
+/// In this build the mask review carries the signals the Python
+/// build's cut-quality gate grades RESHOOT on: a mask whose box
+/// runs off a frame edge is the occlusion signature (the photo
+/// itself cut the item off), and review warnings mean the cut is
+/// not clean. For keep items the grade rides INSIDE the ownership
+/// record with its retake instruction instead of blocking the
+/// record (decision 114: the failure carries its correction path;
+/// the record is the deliverable, the instruction improves it).
+fn keep_cut_quality(primary: &Value) -> Value {
+    let mut touches: Vec<&str> = Vec::new();
+    if let Some(b) = primary.get("bbox_normalized").and_then(Value::as_array) {
+        if b.len() == 4 {
+            let g = |i: usize| b[i].as_f64().unwrap_or(-1.0);
+            if g(0) == 0.0 {
+                touches.push("left");
+            }
+            if g(1) == 0.0 {
+                touches.push("top");
+            }
+            if g(2) == 1.0 {
+                touches.push("right");
+            }
+            if g(3) == 1.0 {
+                touches.push("bottom");
+            }
+        }
+    }
+    let warnings = primary
+        .get("mask_warnings")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let warn_count = warnings.as_array().map(|a| a.len()).unwrap_or(0);
+    if touches.is_empty() && warn_count == 0 {
+        return json!({
+            "grade": "PASS",
+            "reshoot_instruction": Value::Null,
+            "mask_warnings": warnings,
+        });
+    }
+    let edge_text = if touches.is_empty() {
+        "the mask review flagged this cut".to_string()
+    } else {
+        format!(
+            "it currently runs off the {} edge{}",
+            touches.join(" and "),
+            if touches.len() > 1 { "s" } else { "" }
+        )
+    };
+    json!({
+        "grade": "RESHOOT",
+        "reshoot_instruction": format!(
+            "Retake the photo a step further back so the whole item sits inside \
+             the frame — {edge_text}. The ownership record stands as issued; a \
+             cleaner photo can re-issue it."
+        ),
+        "mask_warnings": warnings,
+    })
+}
+
+/// Independent verification of an ownership record, in the
+/// composite verifier's shape (ok / problems / checks): re-derive
+/// the crop from the stored source photo's pixels and compare
+/// pixel hashes. "0 changed" here is a recomputation: the crop
+/// provably comes from exactly the stored source pixels, and the
+/// receipt's source file hash binds those pixels to the original
+/// file as ingested.
+pub fn verify_ownership_record(store: &AssetStore, receipt: &Value) -> Value {
+    let mut problems: Vec<String> = Vec::new();
+    let mut checks: Vec<Value> = Vec::new();
+    let mut note = |name: &str, ok: bool, detail: String, problems: &mut Vec<String>| {
+        if !ok {
+            problems.push(format!("{name}: {detail}"));
+        }
+        checks.push(json!({"name": name, "ok": ok, "detail": detail}));
+    };
+    let mut crop_pixels_checked: u64 = 0;
+    let mut crop_pixels_changed: u64 = 0;
+    let source_handle = receipt
+        .pointer("/source/asset")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let source_image = store.read_image(source_handle);
+    match &source_image {
+        Ok(img) => {
+            let actual = img.pixel_sha256();
+            let claimed = receipt
+                .pointer("/source/pixel_sha256")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            note(
+                "source_pixels_match",
+                actual == claimed,
+                format!("stored source pixels hash {actual}"),
+                &mut problems,
+            );
+        }
+        Err(e) => note(
+            "source_pixels_match",
+            false,
+            format!("source photo unreadable: {e}"),
+            &mut problems,
+        ),
+    }
+    if let Ok(img) = &source_image {
+        let rect = receipt
+            .pointer("/crop/rect_px")
+            .and_then(Value::as_array)
+            .map(|a| {
+                (
+                    a.first().and_then(Value::as_u64).unwrap_or(0) as u32,
+                    a.get(1).and_then(Value::as_u64).unwrap_or(0) as u32,
+                    a.get(2).and_then(Value::as_u64).unwrap_or(0) as u32,
+                    a.get(3).and_then(Value::as_u64).unwrap_or(0) as u32,
+                )
+            });
+        match rect {
+            Some((x0, y0, x1, y1)) if x1 > x0 && y1 > y0 && x1 <= img.width && y1 <= img.height => {
+                let recomputed = crop_image(img, (x0, y0, x1, y1));
+                crop_pixels_checked = recomputed.width as u64 * recomputed.height as u64;
+                let claimed = receipt
+                    .pointer("/crop/pixel_sha256")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let actual = recomputed.pixel_sha256();
+                if actual == claimed {
+                    note(
+                        "crop_recomputed_from_source",
+                        true,
+                        "re-cropping the stored source at the receipt's rect reproduces the crop pixel hash".to_string(),
+                        &mut problems,
+                    );
+                } else {
+                    // Hash differs: count the actual differing
+                    // pixels against the stored crop when it has
+                    // the same shape, so "changed" stays a count,
+                    // never a guess.
+                    let stored = receipt
+                        .pointer("/crop/asset")
+                        .and_then(Value::as_str)
+                        .and_then(|h| store.read_image(h).ok());
+                    if let Some(stored) = stored {
+                        if stored.width == recomputed.width && stored.height == recomputed.height
+                        {
+                            crop_pixels_changed = stored
+                                .pixels
+                                .chunks_exact(4)
+                                .zip(recomputed.pixels.chunks_exact(4))
+                                .filter(|(a, b)| a != b)
+                                .count() as u64;
+                        }
+                    }
+                    note(
+                        "crop_recomputed_from_source",
+                        false,
+                        format!("recomputed crop hash {actual} != receipt {claimed}"),
+                        &mut problems,
+                    );
+                }
+            }
+            _ => note(
+                "crop_recomputed_from_source",
+                false,
+                "receipt crop rect is missing or outside the source frame".to_string(),
+                &mut problems,
+            ),
+        }
+    }
+    json!({
+        "ok": problems.is_empty(),
+        "method": "ownership_recompute",
+        "checks": checks,
+        "problems": problems,
+        "crop_pixels_checked": crop_pixels_checked,
+        "crop_pixels_changed": crop_pixels_changed,
+    })
+}
+
+/// Build the ownership record for one keep item from its primary
+/// sighting: crop the source photo to the item, ask identify about
+/// the crop (the same single call the listing path rides — its
+/// condition focus supplies the condition notes, no second call),
+/// and bind everything into a receipt: the full source FILE's hash
+/// and its EXIF capture time (both taken from the file at ingest),
+/// the crop's own proof, and the cut-quality grade. The claim the
+/// receipt makes is exactly: this crop comes from exactly this
+/// file, captured at the time the file states, unchanged since —
+/// never that the file was unedited at capture, which no tool can
+/// know. Fills the record; returns what the pass cost.
+fn keep_from_primary(
+    ctx: &RunContext,
+    record: &mut Value,
+    name: &str,
+    sources: &[PhotoSource],
+    primary: &Value,
+) -> Result<f64, String> {
+    record["status"] = json!("failed");
+    record["failure"] = Value::Null;
+    let primary_index = primary
+        .get("photo_index")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let primary_source = &sources[primary_index];
+    let fail = |record: &mut Value, code: &str, message: String| {
+        record["failure"] = json!({
+            "stage": "ownership",
+            "code": code,
+            "message": message,
+        });
+    };
+    let Some(source_handle) = primary_source.handle.clone() else {
+        fail(record, "OWNERSHIP_INCOMPLETE", format!(
+            "no stored source photo backs the sighting of {name}; the ownership record cannot bind a file"
+        ));
+        return Ok(0.0);
+    };
+    let source_record = ctx.store.get_record(&source_handle)?;
+    let source_image = match ctx.store.read_image(&source_handle) {
+        Ok(img) => img,
+        Err(e) => {
+            fail(record, "OWNERSHIP_INCOMPLETE", format!(
+                "the source photo for {name} could not be read back ({e}); the ownership record cannot be issued"
+            ));
+            return Ok(0.0);
+        }
+    };
+    let Some(rect) = expanded_crop_rect(
+        primary.get("bbox_normalized"),
+        source_image.width,
+        source_image.height,
+    ) else {
+        fail(record, "OWNERSHIP_INCOMPLETE", format!(
+            "no foreground box was recorded for {name}; there is no crop to bind into an ownership record"
+        ));
+        return Ok(0.0);
+    };
+    let cropped = crop_image(&source_image, rect);
+    let crop_handle = ctx
+        .store
+        .put_image(&cropped, KIND_CROP, Some(&source_record.asset_id))?;
+    let crop_record = ctx.store.get_record(&crop_handle)?;
+    // Condition notes ride the crop identify (one billed call).
+    let mut cost = 0.0f64;
+    let identify_result = (ctx.chain.identify)(&crop_handle)?;
+    note_call_id(ctx, &identify_result);
+    cost += call_cost(&identify_result);
+    // The identify contract is the flattened result (the plan IS
+    // the result); accept a nested "plan" too so either chain
+    // shape supplies the notes.
+    let plan = if identify_result.get("status").and_then(Value::as_str) == Some("ok") {
+        Some(
+            identify_result
+                .get("plan")
+                .cloned()
+                .unwrap_or_else(|| identify_result.clone()),
+        )
+    } else {
+        None
+    };
+    let condition_notes = plan
+        .as_ref()
+        .and_then(|p| p.get("condition_notes"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let condition_note = if plan.is_some() {
+        Value::Null
+    } else {
+        json!(format!(
+            "identify did not return a plan for the crop of {name}; the record \
+             carries no condition notes rather than borrowed ones"
+        ))
+    };
+    // The file-level binding: hash + stated capture time of the
+    // original file, read at ingest from the seller's own bytes.
+    let file_bytes = std::fs::read(&primary_source.path).unwrap_or_default();
+    let (file_sha256, exif_capture_time) = if file_bytes.is_empty() {
+        (Value::Null, Value::Null)
+    } else {
+        (
+            json!(crate::image::sha256_hex(&file_bytes)),
+            crate::ingest::exif_capture_time(&file_bytes)
+                .map(|s| json!(s))
+                .unwrap_or(Value::Null),
+        )
+    };
+    let receipt = json!({
+        "receipt_type": "ownership",
+        "receipt_schema": 1,
+        "item": name,
+        "intent": "keep",
+        "recorded_at": iso_now_micros(),
+        "claim": "this crop comes from exactly this file, captured at the time the file states, unchanged since",
+        "source": {
+            "asset": source_handle,
+            "file_name": primary_source.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+            "file_sha256": file_sha256,
+            "pixel_sha256": source_record.pixel_sha256,
+            "exif_capture_time": exif_capture_time,
+            "width": source_image.width,
+            "height": source_image.height,
+        },
+        "crop": {
+            "asset": crop_handle,
+            "rect_px": [rect.0, rect.1, rect.2, rect.3],
+            "pixel_sha256": crop_record.pixel_sha256,
+            "sha256": crop_record.sha256,
+        },
+        "foreground_asset": primary.get("foreground_asset").cloned().unwrap_or(Value::Null),
+        "mask_asset": primary.get("mask_asset").cloned().unwrap_or(Value::Null),
+        "condition_notes": condition_notes,
+        "condition_source": "identify (muse-spark-1.3) over the item crop",
+        "condition_note": condition_note,
+        "cut_quality": keep_cut_quality(primary),
+        "identify_call_id": identify_result.get("call_id").cloned().unwrap_or(Value::Null),
+    });
+    ctx.store.save_receipt(&crop_handle, &receipt)?;
+    record["output_asset"] = json!(crop_handle);
+    record["receipt"] = receipt.clone();
+    record["receipt_file"] = match ctx.store.receipt_path(&crop_handle) {
+        Ok(path) if path.exists() => json!(path.to_string_lossy()),
+        _ => Value::Null,
+    };
+    record["ownership"] = receipt;
+    record["stage_reached"] = json!("ownership");
+    let verification = verify_ownership_record(&ctx.store, &record["receipt"].clone());
+    record["verification"] = verification.clone();
+    if verification.get("ok").map(py_truthy).unwrap_or(false) {
+        record["status"] = json!("kept");
+        record["stage_reached"] = json!("done");
+    } else {
+        record["status"] = json!("verify_failed");
+        let problems = verification
+            .get("problems")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|p| p.as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        record["failure"] = json!({
+            "stage": "verify",
+            "code": "VERIFY_FAILED",
+            "message": format!(
+                "the ownership record did not pass independent verification: {}",
+                problems.join("; ")
+            ),
+        });
+    }
+    Ok(cost)
+}
+
+/// The second phase of an item, after its probe: stage it (sell
+/// path) or issue its ownership record (keep path). Returns the
+/// phase cost and the listing evidence (keep items have none).
+fn run_second_phase(
+    ctx: &RunContext,
+    item: &WorkItem,
+    record: &mut Value,
+    sources: &[PhotoSource],
+    primary: &Value,
+) -> Result<(f64, Option<Value>), String> {
+    if item.origin == "narration_keep" {
+        let cost = keep_from_primary(ctx, record, &item.name, sources, primary)?;
+        Ok((cost, None))
+    } else {
+        let stage = stage_from_primary(ctx, record, &item.name, sources, primary)?;
+        Ok((stage.cost, stage.evidence))
+    }
+}
+
+/// Collect a run's kept items into the ownership inventory: a
+/// machine-readable inventory.json plus a human-readable
+/// inventory.html sheet (crop, name, condition notes, capture
+/// time, receipt reference per item — the sheet a person could
+/// hand an insurer), both rendered from the same entries. Writes
+/// the files into the room directory and returns the manifest
+/// section; Null when the run kept nothing.
+fn build_keep_inventory(
+    store: &AssetStore,
+    out_dir: &Path,
+    room_id: &str,
+    items: &Value,
+) -> Result<Value, String> {
+    let esc = |s: &str| -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let mut entries: Vec<Value> = Vec::new();
+    let mut rows: Vec<String> = Vec::new();
+    for item in items.as_array().cloned().unwrap_or_default() {
+        if item.get("intent").and_then(Value::as_str) != Some("keep")
+            || item.get("status").and_then(Value::as_str) != Some("kept")
+        {
+            continue;
+        }
+        let ownership = item.get("ownership").cloned().unwrap_or(Value::Null);
+        let receipt_sha256 =
+            crate::image::sha256_hex(serde_json::to_string(&ownership).unwrap_or_default().as_bytes());
+        let crop_asset = item
+            .get("output_asset")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let entry = json!({
+            "name": item.get("name").cloned().unwrap_or(Value::Null),
+            "crop_asset": crop_asset,
+            "condition_notes": ownership.get("condition_notes").cloned().unwrap_or(Value::Null),
+            "recorded_at": ownership.get("recorded_at").cloned().unwrap_or(Value::Null),
+            "source_file": ownership.pointer("/source/file_name").cloned().unwrap_or(Value::Null),
+            "source_file_sha256": ownership.pointer("/source/file_sha256").cloned().unwrap_or(Value::Null),
+            "exif_capture_time": ownership.pointer("/source/exif_capture_time").cloned().unwrap_or(Value::Null),
+            "cut_grade": ownership.pointer("/cut_quality/grade").cloned().unwrap_or(Value::Null),
+            "receipt_sha256": receipt_sha256,
+            "receipt_file": item.get("receipt_file").cloned().unwrap_or(Value::Null),
+        });
+        entries.push(entry.clone());
+        let img_tag = match store.read_bytes(&crop_asset) {
+            Ok(bytes) => format!(
+                "<img alt=\"crop\" style=\"max-width:240px\" src=\"data:image/png;base64,{}\">",
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)
+            ),
+            Err(_) => "<em>crop image unavailable</em>".to_string(),
+        };
+        let text_of = |v: &Value| -> String {
+            v.as_str().map(|s| s.to_string()).unwrap_or_else(|| "—".to_string())
+        };
+        rows.push(format!(
+            "<tr><td>{}</td><td><strong>{}</strong></td><td>{}</td><td>{}</td><td class=\"mono\">{}</td></tr>",
+            img_tag,
+            esc(&text_of(&entry["name"])),
+            esc(&text_of(&entry["condition_notes"])),
+            esc(&text_of(&entry["exif_capture_time"])),
+            esc(&receipt_sha256),
+        ));
+    }
+    if entries.is_empty() {
+        return Ok(Value::Null);
+    }
+    let inventory = json!({
+        "room_id": room_id,
+        "generated_at": iso_now_micros(),
+        "items": entries,
+    });
+    std::fs::write(
+        out_dir.join("inventory.json"),
+        serde_json::to_string_pretty(&inventory).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let sheet = format!(
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <title>Ownership inventory — room {}</title>\n<style>\n\
+         body {{ font-family: system-ui, sans-serif; color: #111; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; }}\n\
+         table {{ border-collapse: collapse; width: 100%; }} td {{ border-top: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }}\n\
+         .mono {{ font-family: ui-monospace, Menlo, monospace; font-size: 0.8em; word-break: break-all; }}\n</style>\n</head>\n<body>\n\
+         <h1>Ownership inventory</h1>\n\
+         <p>Items the owner marked to keep, recorded during room run <span class=\"mono\">{}</span>. \
+         Each crop is bound by its receipt to the exact source photo file it came from, unchanged since ingest.</p>\n\
+         <table>\n<tr><td><strong>Crop</strong></td><td><strong>Item</strong></td><td><strong>Condition notes</strong></td><td><strong>Captured (per file)</strong></td><td><strong>Receipt SHA-256</strong></td></tr>\n{}\n</table>\n</body>\n</html>\n",
+        esc(room_id),
+        esc(room_id),
+        rows.join("\n")
+    );
+    std::fs::write(out_dir.join("inventory.html"), sheet).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "json_file": "inventory.json",
+        "sheet_file": "inventory.html",
+        "items": entries.len(),
+    }))
 }
 
 /// Parse a step row's JSON result_ref (Null when absent/corrupt —
@@ -1992,7 +2496,15 @@ fn process_item_logged(
     run_id: &str,
     item_index: i64,
 ) -> Result<(Value, Option<Value>), String> {
-    let draw_row = log.get(run_id, item_index, "draw")?;
+    // A keep item's second step is its ownership record, not a
+    // draw: same pending-before / complete-after discipline, its
+    // own step name so a resume never confuses the two.
+    let second_step = if item.origin == "narration_keep" {
+        "ownership"
+    } else {
+        "draw"
+    };
+    let draw_row = log.get(run_id, item_index, second_step)?;
     let cut_row = log.get(run_id, item_index, "cut_out")?;
     if let Some(row) = &draw_row {
         if row.status == "complete" {
@@ -2022,22 +2534,23 @@ fn process_item_logged(
             let mut record = refv["record"].clone();
             let primary = refv["primary_sighting"].clone();
             let probe_cost = refv["cost_usd"].as_f64().unwrap_or(0.0);
-            log.mark_pending(run_id, item_index, "draw", None)?;
+            log.mark_pending(run_id, item_index, second_step, None)?;
             // An Err here (infrastructure, not a typed failure)
-            // leaves `draw` pending — the documented one-call
+            // leaves the step pending — the documented one-call
             // orphan window — and propagates, as an unlogged run
             // would.
-            let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
-            record["cost_usd"] = json!(probe_cost + stage.cost);
+            let (phase_cost, evidence) =
+                run_second_phase(ctx, item, &mut record, sources, &primary)?;
+            record["cost_usd"] = json!(probe_cost + phase_cost);
             let call_id = take_last_call_id(ctx);
             log.mark_complete(
                 run_id,
                 item_index,
-                "draw",
+                second_step,
                 call_id.as_deref(),
-                &json!({"record": record, "evidence": stage.evidence}).to_string(),
+                &json!({"record": record, "evidence": evidence}).to_string(),
             )?;
-            return Ok((record, stage.evidence));
+            return Ok((record, evidence));
         }
     }
     // Fresh attempt, or a crash mid-probe: seed from the
@@ -2093,19 +2606,20 @@ fn process_item_logged(
         })
         .to_string(),
     )?;
-    log.mark_pending(run_id, item_index, "draw", None)?;
+    log.mark_pending(run_id, item_index, second_step, None)?;
     let mut record = outcome.record;
-    let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
-    record["cost_usd"] = json!(outcome.cost + stage.cost);
+    let (phase_cost, evidence) =
+        run_second_phase(ctx, item, &mut record, sources, &primary)?;
+    record["cost_usd"] = json!(outcome.cost + phase_cost);
     let call_id = take_last_call_id(ctx);
     log.mark_complete(
         run_id,
         item_index,
-        "draw",
+        second_step,
         call_id.as_deref(),
-        &json!({"record": record, "evidence": stage.evidence}).to_string(),
+        &json!({"record": record, "evidence": evidence}).to_string(),
     )?;
-    Ok((record, stage.evidence))
+    Ok((record, evidence))
 }
 
 /// What one staging pass spent, and the plan that supplied the
@@ -3197,9 +3711,13 @@ fn attach_narrated(
                 .and_then(|n| n.get("kind"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            // Intent precedence when one name earns several kinds:
+            // an explicit "named" (sell) beats "keep", and both
+            // explicit intents beat a passing "mentioned".
             let replace = match current_kind.as_deref() {
                 None => true,
-                Some("mentioned") if kind == "named" => true,
+                Some("mentioned") if kind == "named" || kind == "keep" => true,
+                Some("keep") if kind == "named" => true,
                 _ => false,
             };
             if replace {
@@ -3207,8 +3725,13 @@ fn attach_narrated(
                     "kind": kind,
                     "source": source_path,
                 }));
-                if existing.origin == "narration_mentioned" && kind == "named" {
+                if kind == "named"
+                    && (existing.origin == "narration_mentioned"
+                        || existing.origin == "narration_keep")
+                {
                     existing.origin = "narration_selling".to_string();
+                } else if kind == "keep" && existing.origin == "narration_mentioned" {
+                    existing.origin = "narration_keep".to_string();
                 }
             }
             return;
@@ -3222,6 +3745,13 @@ fn attach_narrated(
                 .to_string(),
         );
     }
+    if kind == "keep" {
+        flags.push(
+            "marked keep in the seller's narration: identified and cut out for an \
+             ownership record; never staged or listed for sale"
+                .to_string(),
+        );
+    }
     items.push(WorkItem {
         name: name.to_string(),
         candidate_photo_indices: rank_photos(name, sources),
@@ -3231,10 +3761,10 @@ fn attach_narrated(
             "kind": kind,
             "source": source_path,
         })),
-        origin: if kind == "mentioned" {
-            "narration_mentioned".to_string()
-        } else {
-            "narration_selling".to_string()
+        origin: match kind {
+            "mentioned" => "narration_mentioned".to_string(),
+            "keep" => "narration_keep".to_string(),
+            _ => "narration_selling".to_string(),
         },
     });
 }
@@ -3415,6 +3945,16 @@ fn run_room_body(
         {
             if let Some(name) = name.as_str() {
                 narrated_names.push((name.to_string(), source.clone(), "named"));
+            }
+        }
+        for name in record
+            .get("kept_items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            if let Some(name) = name.as_str() {
+                narrated_names.push((name.to_string(), source.clone(), "keep"));
             }
         }
         for name in record
@@ -3632,6 +4172,11 @@ fn run_room_body(
         }
     }
     for (name, source_path, kind) in &narrated_names {
+        if *kind == "keep" {
+            attach_narrated(&mut items_work, &sources, name, source_path, kind);
+        }
+    }
+    for (name, source_path, kind) in &narrated_names {
         if *kind == "mentioned" {
             attach_narrated(&mut items_work, &sources, name, source_path, kind);
         }
@@ -3685,6 +4230,7 @@ fn run_room_body(
                 },
                 "narration": item.narration,
                 "origin": item.origin,
+                "intent": intent_of_origin(&item.origin),
                 "stage_mode": opts.stage_mode,
                 "pricing": Value::Null,
                 "sightings": [],
@@ -3695,6 +4241,7 @@ fn run_room_body(
                 "receipt_file": Value::Null,
                 "verification": Value::Null,
                 "listing": Value::Null,
+                "ownership": Value::Null,
                 "possible_duplicate_of": [],
                 "flags": item.flags,
                 "cost_usd": 0.0,
@@ -3796,9 +4343,14 @@ fn run_room_body(
                 ));
             } else {
                 notes.push(format!(
-                    "narration from {path}: {} item(s) named for sale, {} mentioned in passing",
+                    "narration from {path}: {} item(s) named for sale, {} kept, {} mentioned in passing",
                     record
                         .get("named_items")
+                        .and_then(Value::as_array)
+                        .map(|a| a.len())
+                        .unwrap_or(0),
+                    record
+                        .get("kept_items")
                         .and_then(Value::as_array)
                         .map(|a| a.len())
                         .unwrap_or(0),
@@ -3851,6 +4403,8 @@ fn run_room_body(
     if resumed {
         manifest["resumed"] = json!(true);
     }
+    manifest["inventory"] =
+        build_keep_inventory(&ctx.store, out_dir, room_id, &manifest["items"])?;
     let manifest_path = out_dir.join("manifest.json");
     let serialized = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     std::fs::write(&manifest_path, serialized).map_err(|e| e.to_string())?;
@@ -3949,8 +4503,22 @@ pub fn summarize_manifest(manifest: &Value) -> String {
                 .filter(|v| py_truthy(v))
                 .map(py_str)
                 .unwrap_or_else(|| "none".to_string());
+            // Kept renders only when the record carries the field,
+            // so summaries of pre-KEEP frozen manifests stay
+            // byte-identical (the parity fixtures).
+            let kept_part = match record.get("kept_items") {
+                Some(kept) => format!(
+                    "kept: {}; ",
+                    if py_truthy(kept) {
+                        py_str(kept)
+                    } else {
+                        "none".to_string()
+                    }
+                ),
+                None => String::new(),
+            };
             lines.push(format!(
-                "  {path}: {}s of speech — named for sale: {named}; mentioned: {mentioned}; est. ${:.6}",
+                "  {path}: {}s of speech — named for sale: {named}; {kept_part}mentioned: {mentioned}; est. ${:.6}",
                 py_str(record.get("duration_s").unwrap_or(&Value::Null)),
                 record
                     .get("cost_usd_estimate")

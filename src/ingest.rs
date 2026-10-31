@@ -37,7 +37,7 @@ pub(crate) fn max_pixels() -> u64 {
 }
 
 /// EXIF orientation (1-8) from a JPEG's APP1 Exif segment, if present.
-fn jpeg_exif_orientation(data: &[u8]) -> Option<u16> {
+fn jpeg_exif_tiff(data: &[u8]) -> Option<&[u8]> {
     if data.len() < 4 || data[0] != 0xFF || data[1] != 0xD8 {
         return None;
     }
@@ -56,16 +56,19 @@ fn jpeg_exif_orientation(data: &[u8]) -> Option<u16> {
         }
         let segment = &data[pos + 4..pos + 2 + seg_len];
         if marker == 0xE1 && segment.starts_with(b"Exif\0\0") {
-            return tiff_orientation(&segment[6..]);
+            return Some(&segment[6..]);
         }
         pos += 2 + seg_len;
     }
     None
 }
 
-/// EXIF orientation (1-8) from a PNG's eXIf chunk, if present.
-/// The chunk payload is a TIFF header with no "Exif\0\0" prefix.
-fn png_exif_orientation(data: &[u8]) -> Option<u16> {
+fn jpeg_exif_orientation(data: &[u8]) -> Option<u16> {
+    tiff_orientation(jpeg_exif_tiff(data)?)
+}
+
+/// The eXIf chunk payload (a bare TIFF header) from a PNG, if present.
+fn png_exif_tiff(data: &[u8]) -> Option<&[u8]> {
     if !data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
         return None;
     }
@@ -80,7 +83,7 @@ fn png_exif_orientation(data: &[u8]) -> Option<u16> {
             return None;
         }
         if kind == b"eXIf" {
-            return tiff_orientation(&data[start..end]);
+            return Some(&data[start..end]);
         }
         if kind == b"IEND" {
             return None;
@@ -88,6 +91,12 @@ fn png_exif_orientation(data: &[u8]) -> Option<u16> {
         pos = end + 4; // skip CRC
     }
     None
+}
+
+/// EXIF orientation (1-8) from a PNG's eXIf chunk, if present.
+/// The chunk payload is a TIFF header with no "Exif\0\0" prefix.
+fn png_exif_orientation(data: &[u8]) -> Option<u16> {
+    tiff_orientation(png_exif_tiff(data)?)
 }
 
 fn tiff_orientation(tiff: &[u8]) -> Option<u16> {
@@ -126,6 +135,145 @@ fn tiff_orientation(tiff: &[u8]) -> Option<u16> {
             // Orientation tag; type SHORT, count 1: value in the
             // first two bytes of the value field.
             return u16_at(tiff, entry + 8);
+        }
+    }
+    None
+}
+
+/// Read one ASCII tag's string from a TIFF IFD (type 2; inline in
+/// the 4-byte value field when count <= 4, else at the offset it
+/// holds). Returns the trimmed string when it is non-empty.
+fn tiff_ascii_tag(
+    tiff: &[u8],
+    ifd_offset: usize,
+    wanted: u16,
+    u16_at: &dyn Fn(&[u8], usize) -> Option<u16>,
+    u32_at: &dyn Fn(&[u8], usize) -> Option<u32>,
+) -> Option<String> {
+    let count = u16_at(tiff, ifd_offset)? as usize;
+    for i in 0..count {
+        let entry = ifd_offset + 2 + i * 12;
+        if u16_at(tiff, entry)? != wanted {
+            continue;
+        }
+        if u16_at(tiff, entry + 2)? != 2 {
+            return None; // not ASCII
+        }
+        let len = u32_at(tiff, entry + 4)? as usize;
+        if len == 0 {
+            return None;
+        }
+        let bytes: Vec<u8> = if len <= 4 {
+            tiff.get(entry + 8..entry + 8 + len)?.to_vec()
+        } else {
+            let off = u32_at(tiff, entry + 8)? as usize;
+            tiff.get(off..off + len)?.to_vec()
+        };
+        let text = String::from_utf8_lossy(&bytes)
+            .trim_end_matches('\0')
+            .trim()
+            .to_string();
+        return if text.is_empty() { None } else { Some(text) };
+    }
+    None
+}
+
+/// EXIF capture time from TIFF bytes: DateTimeOriginal (0x9003 in
+/// the Exif IFD, reached via the 0x8769 pointer in IFD0) preferred,
+/// IFD0 DateTime (0x0132) as the fallback. The string is returned
+/// verbatim ("YYYY:MM:DD HH:MM:SS" as the camera wrote it): an
+/// ownership receipt binds the FILE, and this is the file's own
+/// statement about when it was captured — evidence, never a claim
+/// the file is unedited.
+fn tiff_capture_time(tiff: &[u8]) -> Option<String> {
+    if tiff.len() < 8 {
+        return None;
+    }
+    let little = match &tiff[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |buf: &[u8], off: usize| -> Option<u16> {
+        let bytes = buf.get(off..off + 2)?;
+        Some(if little {
+            u16::from_le_bytes([bytes[0], bytes[1]])
+        } else {
+            u16::from_be_bytes([bytes[0], bytes[1]])
+        })
+    };
+    let u32_at = |buf: &[u8], off: usize| -> Option<u32> {
+        let bytes = buf.get(off..off + 4)?;
+        Some(if little {
+            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        } else {
+            u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        })
+    };
+    if u16_at(tiff, 2)? != 42 {
+        return None;
+    }
+    let ifd0 = u32_at(tiff, 4)? as usize;
+    let plausible = |s: &str| -> bool {
+        let b = s.as_bytes();
+        s.len() >= 10
+            && b[..4].iter().all(|c| c.is_ascii_digit())
+            && b[4] == b':'
+    };
+    // Exif IFD pointer (0x8769, LONG, count 1: value is the offset).
+    let count = u16_at(tiff, ifd0)? as usize;
+    for i in 0..count {
+        let entry = ifd0 + 2 + i * 12;
+        if u16_at(tiff, entry)? == 0x8769 {
+            let exif_ifd = u32_at(tiff, entry + 8)? as usize;
+            if let Some(dt) = tiff_ascii_tag(tiff, exif_ifd, 0x9003, &u16_at, &u32_at) {
+                if plausible(&dt) {
+                    return Some(dt);
+                }
+            }
+        }
+    }
+    match tiff_ascii_tag(tiff, ifd0, 0x0132, &u16_at, &u32_at) {
+        Some(dt) if plausible(&dt) => Some(dt),
+        _ => None,
+    }
+}
+
+/// The capture time a photo file states about itself, across the
+/// three containers the product ingests: JPEG (APP1 Exif), PNG
+/// (eXIf chunk), HEIC (the Exif item; its payload opens with a
+/// 4-byte offset to the TIFF header, which we locate by that
+/// offset and, failing it, by the TIFF magic).
+pub fn exif_capture_time(data: &[u8]) -> Option<String> {
+    if let Some(tiff) = jpeg_exif_tiff(data) {
+        if let Some(dt) = tiff_capture_time(tiff) {
+            return Some(dt);
+        }
+    }
+    if let Some(tiff) = png_exif_tiff(data) {
+        if let Some(dt) = tiff_capture_time(tiff) {
+            return Some(dt);
+        }
+    }
+    let heif = crate::heic::container::parse(data).ok()?;
+    let item = heif.items.iter().find(|i| i.item_type == "Exif")?;
+    let payload = crate::heic::container::extract_item_data_for(data, item).ok()?;
+    if payload.len() >= 4 {
+        let declared = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        for start in [4 + declared, declared] {
+            if let Some(tiff) = payload.get(start..) {
+                if let Some(dt) = tiff_capture_time(tiff) {
+                    return Some(dt);
+                }
+            }
+        }
+        // Fall back to scanning the first bytes for the TIFF magic.
+        for start in 0..payload.len().saturating_sub(8).min(64) {
+            if payload[start..].starts_with(b"II*\0") || payload[start..].starts_with(b"MM\0*") {
+                if let Some(dt) = tiff_capture_time(&payload[start..]) {
+                    return Some(dt);
+                }
+            }
         }
     }
     None
@@ -258,4 +406,53 @@ pub fn ingest(source: &str, store: &AssetStore) -> Result<String, String> {
     }
     let normalized = normalize_image_bytes(&data)?;
     store.put_bytes(&normalized, KIND_SOURCE, ".png", None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Big-endian TIFF carrying only an IFD0 DateTime (0x0132):
+    /// the fallback path when no Exif IFD / DateTimeOriginal
+    /// exists.
+    fn tiff_with_ifd0_datetime(dt: &str) -> Vec<u8> {
+        let mut tiff: Vec<u8> = Vec::new();
+        tiff.extend_from_slice(b"MM");
+        tiff.extend_from_slice(&42u16.to_be_bytes());
+        tiff.extend_from_slice(&8u32.to_be_bytes());
+        tiff.extend_from_slice(&1u16.to_be_bytes());
+        tiff.extend_from_slice(&0x0132u16.to_be_bytes());
+        tiff.extend_from_slice(&2u16.to_be_bytes()); // ASCII
+        tiff.extend_from_slice(&20u32.to_be_bytes());
+        tiff.extend_from_slice(&26u32.to_be_bytes()); // string at 26
+        tiff.extend_from_slice(&0u32.to_be_bytes());
+        let mut s = dt.as_bytes().to_vec();
+        s.push(0);
+        while s.len() < 20 {
+            s.push(0);
+        }
+        tiff.extend_from_slice(&s[..20]);
+        tiff
+    }
+
+    #[test]
+    fn capture_time_from_jpeg_app1_and_bare_tiff() {
+        let tiff = tiff_with_ifd0_datetime("2025:06:15 12:30:45");
+        // Wrap as a JPEG: SOI + APP1(Exif\0\0 + TIFF) + EOI. The
+        // reader only walks segments; no pixel data is needed.
+        let mut payload = b"Exif\0\0".to_vec();
+        payload.extend_from_slice(&tiff);
+        let mut jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        jpeg.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+        jpeg.extend_from_slice(&payload);
+        jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        assert_eq!(
+            exif_capture_time(&jpeg).as_deref(),
+            Some("2025:06:15 12:30:45")
+        );
+        // Garbage and EXIF-less inputs return None, never panic.
+        assert_eq!(exif_capture_time(b"not an image"), None);
+        assert_eq!(exif_capture_time(&[0xFF, 0xD8, 0xFF, 0xD9]), None);
+        assert_eq!(exif_capture_time(&[]), None);
+    }
 }
