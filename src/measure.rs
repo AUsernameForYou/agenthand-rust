@@ -2709,7 +2709,7 @@ pub fn estimate(
                  (~{card_px:.0} px across; this card is only validated \
                  for close-ups at ~{envelope_min:.0} px across or more, \
                  where its ranges demonstrably cover the true size) — \
-                 move closer or use a bigger card."
+                 Retake the shot or use a bigger card."
             ));
         }
     }
@@ -2717,8 +2717,8 @@ pub fn estimate(
         return Err(format!(
             "Card too small in frame (~{card_px:.0} px across; the \
              fit stays quiet but the range stops covering the true \
-             size below ~{MIN_CARD_PX:.0} px) — move closer or use \
-             a bigger card."
+             size below ~{MIN_CARD_PX:.0} px) — Retake the shot \
+             or use a bigger card."
         ));
     }
     let mut sys_frac = 0.0;

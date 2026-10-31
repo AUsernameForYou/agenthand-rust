@@ -198,7 +198,7 @@
       110.0
     ],
     "outcome": "refused",
-    "error": "Card too small in frame (~126 px across; the fit stays quiet but the range stops covering the true size below ~130 px) \u2014 move closer or use a bigger card.",
+    "error": "Card too small in frame (~126 px across; the fit stays quiet but the range stops covering the true size below ~130 px) \u2014 Retake the shot or use a bigger card.",
     "seeds": {
       "_sheet_seed": true
     },
@@ -289,7 +289,7 @@
       110.0
     ],
     "outcome": "refused",
-    "error": "Card too small in frame for the AH-35 mini (~112 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "error": "Card too small in frame for the AH-35 mini (~112 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 Retake the shot or use a bigger card.",
     "seeds": {
       "_sheet_seed": true
     },
@@ -304,7 +304,7 @@
       110.0
     ],
     "outcome": "refused",
-    "error": "Card too small in frame for the AH-35 mini (~101 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "error": "Card too small in frame for the AH-35 mini (~101 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 Retake the shot or use a bigger card.",
     "seeds": {
       "_sheet_seed": true
     },
@@ -319,7 +319,7 @@
       110.0
     ],
     "outcome": "refused",
-    "error": "Card too small in frame for the AH-35 mini (~133 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 move closer or use a bigger card.",
+    "error": "Card too small in frame for the AH-35 mini (~133 px across; this card is only validated for close-ups at ~190 px across or more, where its ranges demonstrably cover the true size) \u2014 Retake the shot or use a bigger card.",
     "seeds": {
       "_sheet_seed": false
     },
