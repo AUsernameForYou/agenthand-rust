@@ -25,3 +25,9 @@ fs2 = "0.4"
 
 [profile.release]
 opt-level = 3
+# Arithmetic on untrusted geometry must panic (contained at the
+# tool/decode boundaries) rather than wrap silently into a wrong
+# size or index — the f8961a1 SPS crop wrap is the standing proof
+# this codebase needs the checks. Validated against the frozen
+# replay parity gate after enabling (2026-10-31, audit A3).
+overflow-checks = true

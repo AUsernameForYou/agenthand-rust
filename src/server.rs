@@ -652,6 +652,26 @@ fn tool_definitions() -> Value {
 }
 
 fn call_tool(name: &str, args: &Value) -> Result<Value, String> {
+    // Panic containment at the tool boundary (2026-10-31
+    // adversarial pass, deep-dive audit A1): a panic inside any
+    // tool must surface as a tool error, never kill the server —
+    // the SAM border-mask panic did exactly that before 7dd4bb9,
+    // and the next unforeseen panic should cost one failed call,
+    // not the process. The panic hook installed by run_stdio logs
+    // the payload to stderr so contained faults stay visible.
+    let name_owned = name.to_string();
+    let args_owned = args.clone();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        call_tool_inner(&name_owned, &args_owned)
+    }))
+    .unwrap_or_else(|_| {
+        Err(format!(
+            "{name} failed (internal fault contained; the server is still running)"
+        ))
+    })
+}
+
+fn call_tool_inner(name: &str, args: &Value) -> Result<Value, String> {
     // Render a tool result the way the Python server does: the dict
     // rides as a text content block plus structuredContent; draw adds
     // an image content block.
@@ -772,6 +792,12 @@ fn handle_request(request: &Value) -> Option<Value> {
 
 /// Run the MCP stdio server loop until stdin closes.
 pub fn run_stdio() {
+    // Contained panics (tool boundary, decode boundary) must stay
+    // visible: log every panic payload to stderr — stdout is the
+    // protocol channel and stays clean.
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("agenthand: panic: {info}");
+    }));
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut writer = std::io::BufWriter::new(stdout.lock());

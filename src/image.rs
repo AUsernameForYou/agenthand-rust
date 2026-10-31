@@ -122,14 +122,28 @@ impl DecodedImage {
 /// (`heic::decode`); a HEIC file outside the decoder's subset
 /// refuses with the subset's message — there is no external
 /// fallback.
+/// Run one decoder branch inside `catch_unwind`: a decoder panic
+/// on untrusted bytes surfaces as an ordinary decode error, never
+/// a dead server. The HEIC branch predates this helper and keeps
+/// its own wrapper (it also carries the not-HEIC `None` case).
+fn contained_decode<T>(kind: &str, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        Err(format!(
+            "{kind} decode failed (decoder fault contained at the ingest boundary)"
+        ))
+    })
+}
+
 pub fn decode_image(data: &[u8]) -> Result<DecodedImage, String> {
     if data.starts_with(&[0x89, b'P', b'N', b'G']) {
-        decode_png(data).map(|png| match png {
-            PngDecoded::Rgba(img) => DecodedImage::Rgba(img),
-            PngDecoded::Gray(gray) => DecodedImage::Gray(gray),
+        contained_decode("PNG", || {
+            decode_png(data).map(|png| match png {
+                PngDecoded::Rgba(img) => DecodedImage::Rgba(img),
+                PngDecoded::Gray(gray) => DecodedImage::Gray(gray),
+            })
         })
     } else if data.starts_with(&[0xFF, 0xD8]) {
-        decode_jpeg(data).map(DecodedImage::Rgba)
+        contained_decode("JPEG", || decode_jpeg(data).map(DecodedImage::Rgba))
     } else if let Some(img) = decode_heic_image(data) {
         img.map(DecodedImage::Rgba)
     } else {
