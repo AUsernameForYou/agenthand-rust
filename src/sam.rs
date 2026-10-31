@@ -862,6 +862,119 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
     })
 }
 
+/// A mask box exactly as the model returned it: raw wire
+/// integers, half-open, in the model's own claimed frame, not yet
+/// checked against anything. Anything deserialized off the wire
+/// is this raw form (N30: type tags do not survive serialization,
+/// so the validated form is always re-derived by `model_to_frame`
+/// on ingest, never assumed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelBox {
+    pub left: i64,
+    pub top: i64,
+    /// Exclusive.
+    pub right: i64,
+    /// Exclusive.
+    pub bottom: i64,
+}
+
+/// A mask box proven inside one specific frame — the claimed
+/// frame it was validated against. The fields are private: the
+/// only way to obtain one is `model_to_frame`, so holding a
+/// `FrameBox` is the receipt that the checks ran (the minimal
+/// local form of the sguaba pattern, Gauntlet §6A: same-space
+/// arithmetic only, one fallible conversion, no dependencies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameBox {
+    left: usize,
+    top: usize,
+    right: usize,
+    bottom: usize,
+}
+
+impl FrameBox {
+    pub fn left(&self) -> usize {
+        self.left
+    }
+    pub fn top(&self) -> usize {
+        self.top
+    }
+    /// Exclusive.
+    pub fn right(&self) -> usize {
+        self.right
+    }
+    /// Exclusive.
+    pub fn bottom(&self) -> usize {
+        self.bottom
+    }
+    pub fn width(&self) -> usize {
+        self.right - self.left
+    }
+    pub fn height(&self) -> usize {
+        self.bottom - self.top
+    }
+    /// Half-open bounds as the (left, top, right, bottom) tuple
+    /// the receipt-adjacent record form carries.
+    pub fn as_tuple(&self) -> (i64, i64, i64, i64) {
+        (
+            self.left as i64,
+            self.top as i64,
+            self.right as i64,
+            self.bottom as i64,
+        )
+    }
+}
+
+/// The ONLY `ModelBox` → `FrameBox` conversion. Every check that
+/// makes a model box safe to place lives here and nowhere else:
+/// the claimed frame must be positive, the box non-negative,
+/// non-empty, and inside the claimed frame on every side. The
+/// error carries the full geometry (N28) — a bad box cannot be
+/// regenerated, so the refusal is its only durable copy.
+///
+/// # The two types cannot be swapped
+///
+/// ```compile_fail
+/// use agenthand::sam::{place_in_frame, ModelBox};
+/// let raw = ModelBox { left: 0, top: 0, right: 2, bottom: 2 };
+/// // A raw model box is not a FrameBox: this must not compile.
+/// place_in_frame(&[1, 1, 1, 1], 2, 2, &raw, 2, 2);
+/// ```
+///
+/// ```
+/// use agenthand::sam::{model_to_frame, place_in_frame, ModelBox};
+/// let raw = ModelBox { left: 0, top: 0, right: 2, bottom: 2 };
+/// let frame_box = model_to_frame(&raw, 2, 2).unwrap();
+/// let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, &frame_box, 2, 2);
+/// assert_eq!(frame, vec![255, 255, 255, 255]);
+/// ```
+pub fn model_to_frame(
+    b: &ModelBox,
+    claimed_width: i64,
+    claimed_height: i64,
+) -> Result<FrameBox, String> {
+    if claimed_width <= 0
+        || claimed_height <= 0
+        || b.left < 0
+        || b.top < 0
+        || b.right <= b.left
+        || b.bottom <= b.top
+        || b.right > claimed_width
+        || b.bottom > claimed_height
+    {
+        return Err(format!(
+            "model box ({}, {})..({}, {}) does not fit its claimed {claimed_width}x{claimed_height} frame",
+            b.left, b.top, b.right, b.bottom
+        ));
+    }
+    Ok(FrameBox {
+        left: b.left as usize,
+        top: b.top as usize,
+        right: b.right as usize,
+        bottom: b.bottom as usize,
+    })
+}
+
 /// Place a box-local 0/1 raster into a full-frame L image (0/255),
 /// clipped against the frame edges (port of `_place_in_frame`).
 ///
@@ -879,15 +992,28 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
 /// its end, one checked slice per row — and the frame area is sized
 /// with `checked_mul`, so hostile geometry costs a bad mask, never
 /// a panic.
-fn place_in_frame(
+///
+/// The box arrives as a `FrameBox`: proven inside the model's
+/// claimed frame by `model_to_frame`. It is still clipped against
+/// the ACTUAL frame here, because the claimed frame can be larger
+/// than the real one (N30's second limit: the type proves a space,
+/// not that the space is this frame).
+pub fn place_in_frame(
     raster: &[u8],
     width: usize,
     height: usize,
-    bounds: (i64, i64, i64, i64),
+    bounds: &FrameBox,
     frame_width: usize,
     frame_height: usize,
 ) -> Vec<u8> {
-    let (left, top, right, bottom) = bounds;
+    // FrameBox values came from validated i64s, so these casts
+    // back are exact.
+    let (left, top, right, bottom) = (
+        bounds.left() as i64,
+        bounds.top() as i64,
+        bounds.right() as i64,
+        bounds.bottom() as i64,
+    );
     let Some(area) = frame_width.checked_mul(frame_height) else {
         return Vec::new();
     };
@@ -1056,18 +1182,20 @@ fn accept_records(
             coords[4].unwrap(),
             coords[5].unwrap(),
         );
-        if source_w <= 0
-            || source_h <= 0
-            || left < 0
-            || top < 0
-            || incl_right < left
-            || incl_bottom < top
-            || incl_right >= source_w
-            || incl_bottom >= source_h
-        {
+        // The wire box is inclusive; ModelBox is half-open. The
+        // single fallible conversion validates it against the
+        // model's claimed frame; a refusal stops the line, exactly
+        // as the inline checks did before the types landed.
+        let model_box = ModelBox {
+            left,
+            top,
+            right: incl_right + 1,
+            bottom: incl_bottom + 1,
+        };
+        let Ok(frame_box) = model_to_frame(&model_box, source_w, source_h) else {
             return; // invalid box: line stops
-        }
-        let bounds = (left, top, incl_right + 1, incl_bottom + 1);
+        };
+        let bounds = frame_box.as_tuple();
         let mask = SegmentationMask {
             encoding: if record.payload.starts_with('~') {
                 MaskEncoding::Lossless
@@ -1091,7 +1219,7 @@ fn accept_records(
                     &raster,
                     mask.width as usize,
                     mask.height as usize,
-                    bounds,
+                    &frame_box,
                     frame_width,
                     frame_height,
                 );
@@ -1114,7 +1242,30 @@ fn accept_records(
 
 #[cfg(test)]
 mod place_in_frame_tests {
-    use super::place_in_frame;
+    use super::{model_to_frame, place_in_frame, ModelBox};
+
+    /// Build a FrameBox through the only conversion, the way the
+    /// parse path does.
+    fn fb(
+        left: i64,
+        top: i64,
+        right: i64,
+        bottom: i64,
+        claimed_w: i64,
+        claimed_h: i64,
+    ) -> super::FrameBox {
+        model_to_frame(
+            &ModelBox {
+                left,
+                top,
+                right,
+                bottom,
+            },
+            claimed_w,
+            claimed_h,
+        )
+        .unwrap()
+    }
 
     /// Gauntlet event 360 (a): no constructor enforces
     /// `raster.len() >= width * height`. A short raster must read
@@ -1131,7 +1282,7 @@ mod place_in_frame_tests {
         // Claims 4x3, carries only 5 bytes: row 0 full, row 1 has
         // one byte, row 2 absent entirely.
         let raster = vec![1u8, 1, 1, 1, 1];
-        let frame = place_in_frame(&raster, 4, 3, (0, 0, 4, 3), 4, 3);
+        let frame = place_in_frame(&raster, 4, 3, &fb(0, 0, 4, 3, 4, 3), 4, 3);
         assert_eq!(frame.len(), 12);
         assert_eq!(&frame[0..4], &[255, 255, 255, 255]);
         assert_eq!(&frame[4..8], &[255, 0, 0, 0]);
@@ -1145,7 +1296,7 @@ mod place_in_frame_tests {
         // Claims 2x2, carries 6 bytes: two full rows plus a
         // third row that belongs to no part of the box.
         let raster = vec![1u8, 1, 1, 1, 1, 1];
-        let frame = place_in_frame(&raster, 2, 2, (0, 0, 2, 2), 2, 2);
+        let frame = place_in_frame(&raster, 2, 2, &fb(0, 0, 2, 2, 2, 2), 2, 2);
         assert_eq!(frame, vec![255, 255, 255, 255]);
     }
 
@@ -1155,21 +1306,47 @@ mod place_in_frame_tests {
     /// release builds before A3 a wrap into a wrong-sized frame).
     #[test]
     fn overflowing_frame_area_does_not_panic() {
-        let frame = place_in_frame(&[1], 1, 1, (0, 0, 1, 1), usize::MAX, 2);
+        let frame = place_in_frame(&[1], 1, 1, &fb(0, 0, 1, 1, 1, 1), usize::MAX, 2);
         assert!(frame.is_empty());
     }
 
     /// Extreme box coordinates (the wire parser caps at the JS
     /// safe-integer bound) clip against the frame without panic.
+    /// With the typed boundary, the negative half of the old case
+    /// is refused by the conversion itself — it can no longer
+    /// reach placement at all.
     #[test]
     fn extreme_bounds_clip_without_panic() {
         let big = 1i64 << 53;
-        let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, (-big, -big, big, big), 3, 3);
+        // Negative origin: refused at conversion, with the full
+        // geometry in the message (N28).
+        let err = model_to_frame(
+            &ModelBox {
+                left: -big,
+                top: -big,
+                right: big,
+                bottom: big,
+            },
+            big,
+            big,
+        )
+        .unwrap_err();
+        assert!(err.contains("does not fit"), "{err}");
+        // A box at a huge offset inside its claimed frame places
+        // as a zero frame in a small actual frame: no frame pixel
+        // lands on the raster, no panic.
+        let frame = place_in_frame(
+            &[1, 1, 1, 1],
+            2,
+            2,
+            &fb(big, big, big + 2, big + 2, big + 2, big + 2),
+            3,
+            3,
+        );
         assert_eq!(frame.len(), 9);
-        // The 2x2 raster sits at offset (big, big) inside the box,
-        // so no frame pixel lands on it: all zero, no panic.
         assert!(frame.iter().all(|&v| v == 0));
-        let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, (0, 0, big, big), 3, 3);
+        // A huge box over a small frame clips to the frame.
+        let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, &fb(0, 0, big, big, big, big), 3, 3);
         assert_eq!(&frame[0..2], &[255, 255]);
         assert_eq!(frame[3], 255);
         assert_eq!(frame[4], 255);
@@ -1180,11 +1357,53 @@ mod place_in_frame_tests {
     /// zero frames.
     #[test]
     fn empty_raster_and_off_frame_box_are_zero_frames() {
-        assert!(place_in_frame(&[], 4, 4, (0, 0, 4, 4), 4, 4)
+        assert!(place_in_frame(&[], 4, 4, &fb(0, 0, 4, 4, 4, 4), 4, 4)
             .iter()
             .all(|&v| v == 0));
-        assert!(place_in_frame(&[1; 16], 4, 4, (10, 10, 14, 14), 4, 4)
+        assert!(place_in_frame(&[1; 16], 4, 4, &fb(10, 10, 14, 14, 14, 14), 4, 4)
             .iter()
             .all(|&v| v == 0));
+    }
+}
+
+#[cfg(test)]
+mod model_to_frame_tests {
+    use super::{model_to_frame, ModelBox};
+
+    fn mb(left: i64, top: i64, right: i64, bottom: i64) -> ModelBox {
+        ModelBox {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn honest_boxes_pass_including_frame_filling() {
+        // A border-touching box (the IMG_1351 fridge shape) is
+        // valid: right/bottom may equal the claimed dimensions.
+        let fb = model_to_frame(&mb(0, 0, 100, 80), 100, 80).unwrap();
+        assert_eq!(fb.as_tuple(), (0, 0, 100, 80));
+        assert_eq!(fb.width(), 100);
+        assert_eq!(fb.height(), 80);
+        // The smallest box, in the corner.
+        let fb = model_to_frame(&mb(99, 79, 100, 80), 100, 80).unwrap();
+        assert_eq!(fb.as_tuple(), (99, 79, 100, 80));
+    }
+
+    #[test]
+    fn one_past_each_side_refuses() {
+        assert!(model_to_frame(&mb(-1, 0, 10, 10), 100, 80).is_err());
+        assert!(model_to_frame(&mb(0, -1, 10, 10), 100, 80).is_err());
+        assert!(model_to_frame(&mb(0, 0, 101, 10), 100, 80).is_err());
+        assert!(model_to_frame(&mb(0, 0, 10, 81), 100, 80).is_err());
+        // Empty and inverted boxes refuse.
+        assert!(model_to_frame(&mb(5, 5, 5, 9), 100, 80).is_err());
+        assert!(model_to_frame(&mb(5, 5, 9, 5), 100, 80).is_err());
+        assert!(model_to_frame(&mb(9, 5, 5, 9), 100, 80).is_err());
+        // A non-positive claimed frame refuses everything.
+        assert!(model_to_frame(&mb(0, 0, 1, 1), 0, 80).is_err());
+        assert!(model_to_frame(&mb(0, 0, 1, 1), 100, -1).is_err());
     }
 }
