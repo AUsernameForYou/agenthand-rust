@@ -68,6 +68,51 @@ fn check_canvas(sps: &Sps) -> Res<()> {
     check_area(sps.width as u64 * sps.height as u64, "picture")
 }
 
+/// Cumulative decode-WORK budget for one file, separate from the
+/// per-picture pixel budget (Gauntlet GPT lane, 2026-10-31, after
+/// libheif GHSA-48p4-gj45-w9v6). The pixel budget caps each
+/// picture's conformance window and the grid's output, but nothing
+/// capped the TOTAL samples decoded across a grid's tiles: a small
+/// file can alias one tiny all-skip tile bitstream into thousands
+/// of `dimg` references — or declare many tiles whose SPS canvases
+/// each sit under the per-picture ceiling — and force decode work
+/// orders of magnitude beyond the output size. Every decoded
+/// picture charges its full SPS canvas here (the recon walk covers
+/// the canvas, not the crop window), via `checked_sub`, so the
+/// failure point is this refusal, never a wrap.
+struct WorkBudget {
+    limit: u64,
+    charged: u64,
+}
+
+impl WorkBudget {
+    fn new(pixel_limit: u64) -> Self {
+        // Headroom over the output budget for honest files: a
+        // grid's tile canvases sum to roughly its canvas, and one
+        // picture's canvas can exceed its crop window (conformance
+        // offsets, edge CTBs). 4x the pixel budget is generous for
+        // real photos and still bounds a hostile file to a
+        // seconds-scale decode.
+        WorkBudget {
+            limit: pixel_limit.saturating_mul(4),
+            charged: 0,
+        }
+    }
+
+    fn charge(&mut self, samples: u64) -> Res<()> {
+        match self.charged.checked_add(samples) {
+            Some(total) if total <= self.limit => {
+                self.charged = total;
+                Ok(())
+            }
+            _ => refused(format!(
+                "cumulative decode work budget exhausted: {} samples already decoded, {samples} more exceeds the work limit {} (pixel budget x4)",
+                self.charged, self.limit
+            )),
+        }
+    }
+}
+
 /// True when the bytes carry an `ftyp` box whose major or
 /// compatible brands name a HEIF-family file. Content sniffing,
 /// never the file name.
@@ -118,6 +163,7 @@ fn decode_picture_item(
     f: &HeifFile,
     item: &Item,
     limit: u64,
+    work: &mut WorkBudget,
 ) -> Result<(Sps, recon::Picture), HeicError> {
     let ep = bitreader::remove_emulation_prevention;
     let Some(hvcc) = f.item_hvcc(item) else {
@@ -204,6 +250,10 @@ fn decode_picture_item(
         let Some((sps, sh, pps)) = found else {
             return refused("slice header parse failed (no in-subset parameter set matched)");
         };
+        // Charge the decode work before the walk: the recon walk
+        // covers the full SPS canvas, so the canvas is the honest
+        // work measure (not the smaller crop window).
+        work.charge(sps.width as u64 * sps.height as u64)?;
         // Tile-grid sanity (M5 untrusted-input hardening): a PPS
         // claiming more tile columns/rows than the picture has CTB
         // columns/rows is invalid, and its starts vectors are
@@ -280,13 +330,17 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
 /// picture is allocated or decoded: a grid primary is measured by
 /// its grid-header canvas (and its `ispe`, when present), a single
 /// picture by its SPS conformance window (checked inside
-/// `decode_picture_item`). The decoder's own safety ceiling
-/// (`MAX_CANVAS_PIXELS`) always applies on top: the effective
-/// limit is the smaller of the two. The shipped server path passes
-/// the product ingest cap here, so an over-cap upload refuses in
-/// header time instead of after a full decode.
+/// `decode_picture_item`). On top of that, a cumulative work
+/// budget (`WorkBudget`) charges every decoded picture's SPS
+/// canvas, so a grid cannot multiply decode work past 4x the
+/// pixel budget by repeating or aliasing tiles. The decoder's own
+/// safety ceiling (`MAX_CANVAS_PIXELS`) always applies on top:
+/// the effective limit is the smaller of the two. The shipped
+/// server path passes the product ingest cap here, so an over-cap
+/// upload refuses in header time instead of after a full decode.
 pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
     let limit = max_pixels.min(MAX_CANVAS_PIXELS);
+    let mut work = WorkBudget::new(limit);
     let f = container::parse(data)?;
     let Some(primary) = f.primary_item() else {
         return refused("file has no primary item");
@@ -313,6 +367,19 @@ pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
             if tile_ids.is_empty() {
                 return refused("grid primary references no tiles");
             }
+            // Refuse a tile-count mismatch BEFORE decoding any
+            // tile: compose_grid would refuse it anyway, but only
+            // after every referenced tile was decoded — wasted
+            // work a hostile dimg list could inflate at will.
+            let expect = (header.rows as usize) * (header.columns as usize);
+            if tile_ids.len() != expect {
+                return refused(format!(
+                    "grid {}x{} needs {expect} tile pictures, got {}",
+                    header.rows,
+                    header.columns,
+                    tile_ids.len()
+                ));
+            }
             let mut tiles = Vec::with_capacity(tile_ids.len());
             let mut first: Option<(u32, u32, VuiInfo)> = None;
             let mut icc = f.item_icc_profile(&primary);
@@ -324,7 +391,7 @@ pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
                 if icc.is_none() {
                     icc = f.item_icc_profile(&titem);
                 }
-                let (sps, pic) = decode_picture_item(data, &f, &titem, limit)?;
+                let (sps, pic) = decode_picture_item(data, &f, &titem, limit, &mut work)?;
                 if first.is_none() {
                     first = Some((pic.bit_depth_luma, pic.bit_depth_chroma, sps.vui));
                 }
@@ -335,7 +402,7 @@ pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
             (composed, bd_y, bd_c, vui, icc, tiles.len())
         }
         "hvc1" => {
-            let (sps, pic) = decode_picture_item(data, &f, &primary, limit)?;
+            let (sps, pic) = decode_picture_item(data, &f, &primary, limit, &mut work)?;
             let planes = crop_planes(&sps, &pic);
             (
                 planes,
@@ -491,5 +558,29 @@ mod tests {
     fn non_heic_refuses_in_decode() {
         let junk = vec![0u8; 64];
         assert!(decode_heic(&junk).is_err());
+    }
+
+    /// The work budget charges cumulatively across pictures and
+    /// refuses the charge that crosses 4x the pixel budget — the
+    /// accounting that stops a grid of repeated/aliased tiles from
+    /// multiplying decode work (libheif GHSA-48p4-gj45-w9v6 shape).
+    #[test]
+    fn work_budget_charges_cumulatively_and_refuses_over() {
+        let mut wb = WorkBudget::new(1_000_000);
+        assert_eq!(wb.limit, 4_000_000);
+        wb.charge(1_500_000).expect("first tile");
+        wb.charge(1_500_000).expect("second tile");
+        wb.charge(1_000_000).expect("exactly at the limit");
+        match wb.charge(1) {
+            Err(HeicError::Refused(m)) => {
+                assert!(m.contains("cumulative decode work budget"), "{m}")
+            }
+            other => panic!("expected work-budget refusal, got {other:?}"),
+        }
+        // A single charge larger than the whole budget refuses
+        // from zero, and the accounting never wraps.
+        let mut wb = WorkBudget::new(10);
+        assert!(wb.charge(u64::MAX).is_err());
+        assert_eq!(wb.charged, 0);
     }
 }

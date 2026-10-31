@@ -102,6 +102,11 @@ impl<'a> BitReader<'a> {
             return 0;
         }
         let suffix = self.u(leading_zeros);
+        // No overflow is possible: the loop caps leading_zeros at
+        // 31, so the largest value is (2^31 - 1) + (2^31 - 1) =
+        // 2^32 - 2, which fits u32. (Verified 2026-10-31 against
+        // the Gauntlet GPT lane's checked_shl/overflow flag; the
+        // boundary value is pinned by a unit test.)
         (1u32 << leading_zeros) - 1 + suffix
     }
 
@@ -192,5 +197,42 @@ mod tests {
         assert_eq!(br.u(4), 0xB);
         assert_eq!(br.u(2), 0b11);
         assert_eq!(br.bits_read(), 10);
+    }
+
+    /// A crafted ue(v) at the reader's boundary: 31 leading zeros
+    /// and an all-ones suffix names (2^31 - 1) + (2^31 - 1) =
+    /// 2^32 - 2. That fits u32 (the leading-zero cap at 31 is what
+    /// keeps it in range), so the reader must return the exact
+    /// value — no panic, no wrap, no saturation.
+    #[test]
+    fn ue_at_the_u32_boundary_is_exact() {
+        // Bit layout: positions 0..30 zero (the 31 leading zeros),
+        // position 31 = 1 (stop bit), positions 32..62 all ones
+        // (the 31-bit suffix).
+        let mut bits = vec![0u8; 63];
+        bits[31] = 1;
+        for b in bits.iter_mut().skip(32) {
+            *b = 1;
+        }
+        let mut packed = vec![0u8; 8];
+        for (i, &b) in bits.iter().enumerate() {
+            if b == 1 {
+                packed[i / 8] |= 1 << (7 - (i % 8));
+            }
+        }
+        let mut br = BitReader::new(&packed);
+        assert_eq!(br.ue(), u32::MAX - 1);
+    }
+
+    /// Ordinary ue(v) values are unaffected by the saturation path.
+    #[test]
+    fn ue_small_values_unchanged() {
+        // "1" -> 0, "010" -> 1, "011" -> 2, "00100" -> 3.
+        let bytes = [0b1010_0110, 0b0100_0000];
+        let mut br = BitReader::new(&bytes);
+        assert_eq!(br.ue(), 0);
+        assert_eq!(br.ue(), 1);
+        assert_eq!(br.ue(), 2);
+        assert_eq!(br.ue(), 3);
     }
 }

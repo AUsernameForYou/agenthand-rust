@@ -863,6 +863,13 @@ fn read_api_record(object_id: &str, tokens: &[(String, Option<String>)]) -> Opti
 /// coordinates outside the raster read as 0 here too. Indexing the
 /// raster unchecked panicked the server (index out of bounds at the
 /// old line 863) and killed the process mid-call.
+///
+/// Totality (Gauntlet event 360, 2026-10-31): the raster-length
+/// invariant (`raster.len() >= width * height`) is enforced here
+/// rather than trusted — a short raster reads as zero padding past
+/// its end, one checked slice per row — and the frame area is sized
+/// with `checked_mul`, so hostile geometry costs a bad mask, never
+/// a panic.
 fn place_in_frame(
     raster: &[u8],
     width: usize,
@@ -872,7 +879,10 @@ fn place_in_frame(
     frame_height: usize,
 ) -> Vec<u8> {
     let (left, top, right, bottom) = bounds;
-    let mut frame = vec![0u8; frame_width * frame_height];
+    let Some(area) = frame_width.checked_mul(frame_height) else {
+        return Vec::new();
+    };
+    let mut frame = vec![0u8; area];
     let dst_left = left.max(0);
     let dst_top = top.max(0);
     let dst_right = right.min(frame_width as i64);
@@ -881,10 +891,17 @@ fn place_in_frame(
         return frame;
     }
     for dy in dst_top..dst_bottom {
+        let sy = (dy - top) as usize;
+        if sy >= height {
+            continue; // box outruns the raster vertically: zero pad
+        }
+        let Some(row_start) = sy.checked_mul(width) else {
+            continue;
+        };
+        let row = raster.get(row_start..).unwrap_or(&[]);
         for dx in dst_left..dst_right {
             let sx = (dx - left) as usize;
-            let sy = (dy - top) as usize;
-            if sx < width && sy < height && raster[sy * width + sx] != 0 {
+            if sx < width && row.get(sx).copied().unwrap_or(0) != 0 {
                 frame[dy as usize * frame_width + dx as usize] = 255;
             }
         }
@@ -1083,5 +1100,64 @@ fn accept_records(
             }
         }
         position = end;
+    }
+}
+
+#[cfg(test)]
+mod place_in_frame_tests {
+    use super::place_in_frame;
+
+    /// Gauntlet event 360 (a): no constructor enforces
+    /// `raster.len() >= width * height`. A short raster must read
+    /// as zero padding past its end, never panic.
+    #[test]
+    fn short_raster_reads_as_zero_padding() {
+        // Claims 4x3, carries only 5 bytes: row 0 full, row 1 has
+        // one byte, row 2 absent entirely.
+        let raster = vec![1u8, 1, 1, 1, 1];
+        let frame = place_in_frame(&raster, 4, 3, (0, 0, 4, 3), 4, 3);
+        assert_eq!(frame.len(), 12);
+        assert_eq!(&frame[0..4], &[255, 255, 255, 255]);
+        assert_eq!(&frame[4..8], &[255, 0, 0, 0]);
+        assert_eq!(&frame[8..12], &[0, 0, 0, 0]);
+    }
+
+    /// Gauntlet event 360 (b): frame dimensions whose product
+    /// overflows usize must not panic (it previously multiplied
+    /// unchecked; with overflow-checks on that is a panic, in
+    /// release builds before A3 a wrap into a wrong-sized frame).
+    #[test]
+    fn overflowing_frame_area_does_not_panic() {
+        let frame = place_in_frame(&[1], 1, 1, (0, 0, 1, 1), usize::MAX, 2);
+        assert!(frame.is_empty());
+    }
+
+    /// Extreme box coordinates (the wire parser caps at the JS
+    /// safe-integer bound) clip against the frame without panic.
+    #[test]
+    fn extreme_bounds_clip_without_panic() {
+        let big = 1i64 << 53;
+        let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, (-big, -big, big, big), 3, 3);
+        assert_eq!(frame.len(), 9);
+        // The 2x2 raster sits at offset (big, big) inside the box,
+        // so no frame pixel lands on it: all zero, no panic.
+        assert!(frame.iter().all(|&v| v == 0));
+        let frame = place_in_frame(&[1, 1, 1, 1], 2, 2, (0, 0, big, big), 3, 3);
+        assert_eq!(&frame[0..2], &[255, 255]);
+        assert_eq!(frame[3], 255);
+        assert_eq!(frame[4], 255);
+        assert_eq!(frame[8], 0);
+    }
+
+    /// An empty raster and a fully off-frame box are both plain
+    /// zero frames.
+    #[test]
+    fn empty_raster_and_off_frame_box_are_zero_frames() {
+        assert!(place_in_frame(&[], 4, 4, (0, 0, 4, 4), 4, 4)
+            .iter()
+            .all(|&v| v == 0));
+        assert!(place_in_frame(&[1; 16], 4, 4, (10, 10, 14, 14), 4, 4)
+            .iter()
+            .all(|&v| v == 0));
     }
 }
