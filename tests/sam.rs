@@ -262,3 +262,36 @@ fn review_mask_reports_bounds_fill_and_edge_touches() {
     );
     assert_eq!(review["warnings"], serde_json::json!([]));
 }
+
+#[test]
+fn absurd_mask_dimensions_are_skipped_not_allocated() {
+    // Regression (2026-10-31 adversarial pass): the mask raster is
+    // allocated at the API-declared dimensions. A record claiming
+    // 100000x100000 (10^10 px) aborted the process on allocation
+    // before the area ceiling existed; it must now be skipped like
+    // any other invalid payload.
+    let text =
+        "<0f>0<|box;x1=0;y1=0;x2=3;y2=5;w=8;h=6|><|mask;x=0;y=0;data=100000,100000,!!!!!'y8_cbF.|>";
+    assert!(parse_sam_masks(text, 8, 6).unwrap().is_empty());
+}
+
+#[test]
+fn oversized_mask_rasters_are_rejected_before_decoding() {
+    use agenthand::sam::{decode_mask_to_raster, MaskEncoding, SegmentationMask};
+    // Product overflows u64 entirely.
+    let mask = SegmentationMask {
+        encoding: MaskEncoding::OneBit,
+        payload: "!AAAA".to_string(),
+        width: i64::MAX,
+        height: 2,
+    };
+    assert!(decode_mask_to_raster(&mask).is_err());
+    // Product fits but exceeds the ceiling (10^10 px).
+    let mask = SegmentationMask {
+        encoding: MaskEncoding::Lossless,
+        payload: "~AAAA".to_string(),
+        width: 100_000,
+        height: 100_000,
+    };
+    assert!(decode_mask_to_raster(&mask).is_err());
+}

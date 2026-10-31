@@ -197,6 +197,23 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
     let mut reader = decoder
         .read_info()
         .map_err(|e| format!("PNG decode failed: {e}"))?;
+    // The frame buffer below is allocated at the header's declared
+    // dimensions; refuse over-cap dimensions BEFORE allocating. A
+    // 69-byte PNG claiming 30000x30000 otherwise aborts the process
+    // on the multi-GB allocation (allocation failure is not a
+    // catchable panic) — the ingest pixel cap used to run only
+    // after decode, which was too late. Same crash class as the
+    // SAM place_in_frame fix.
+    let (decl_w, decl_h) = (reader.info().width, reader.info().height);
+    if (decl_w as u64) * (decl_h as u64) > crate::ingest::max_pixels() {
+        return Err(format!(
+            "Image is {}x{} ({} pixels), over the {}-pixel ingest cap.",
+            decl_w,
+            decl_h,
+            (decl_w as u64) * (decl_h as u64),
+            crate::ingest::max_pixels()
+        ));
+    }
     let icc_profile = reader
         .info()
         .icc_profile
@@ -254,6 +271,25 @@ fn decode_png(data: &[u8]) -> Result<PngDecoded, String> {
 
 fn decode_jpeg(data: &[u8]) -> Result<RgbaImage, String> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+    // Parse the headers first and refuse over-cap declared
+    // dimensions BEFORE decode() allocates the pixel buffer from
+    // them: a valid JPEG with its SOF dims patched to 60000x60000
+    // otherwise aborts the process on the multi-GB allocation.
+    // Same crash class as the PNG guard above.
+    decoder
+        .read_info()
+        .map_err(|e| format!("JPEG decode failed: {e}"))?;
+    if let Some(info) = decoder.info() {
+        if (info.width as u64) * (info.height as u64) > crate::ingest::max_pixels() {
+            return Err(format!(
+                "Image is {}x{} ({} pixels), over the {}-pixel ingest cap.",
+                info.width,
+                info.height,
+                (info.width as u64) * (info.height as u64),
+                crate::ingest::max_pixels()
+            ));
+        }
+    }
     let pixels = decoder
         .decode()
         .map_err(|e| format!("JPEG decode failed: {e}"))?;

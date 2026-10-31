@@ -652,6 +652,22 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
     if mask.width <= 0 || mask.height <= 0 {
         return Err("Mask dimensions must be positive safe integers.".to_string());
     }
+    // The raster is allocated at the API-declared dimensions; cap
+    // the area before either decoder allocates. An absurd header
+    // (100000x100000, or dims whose product overflows usize)
+    // otherwise aborts the process on allocation failure or wraps
+    // into an undersized buffer and panics on index — the same
+    // crash class as the place_in_frame fix. Honest rasters are
+    // box-local inside the SAM working frame (at most
+    // SAM_MAX_PIXELS), far under this ceiling, which sits above
+    // the largest ingestible photo frame (40 MP ingest cap).
+    const MAX_MASK_RASTER_PIXELS: u64 = 1 << 26; // 67,108,864
+    let area = (mask.width as u64)
+        .checked_mul(mask.height as u64)
+        .unwrap_or(u64::MAX);
+    if area > MAX_MASK_RASTER_PIXELS {
+        return Err("Mask dimensions are too large.".to_string());
+    }
     let width = mask.width as usize;
     let height = mask.height as usize;
     match mask.encoding {
