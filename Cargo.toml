@@ -7,6 +7,7 @@ description = "agenthand MCP server — Rust build (the public submission build;
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+qrcode = { version = "0.14", default-features = false }
 sha2 = "0.10"
 png = "0.17"
 flate2 = "1"
@@ -22,6 +23,12 @@ uuid = { version = "1", features = ["v4"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 jpeg-decoder = "0.3"
 fs2 = "0.4"
+
+[dev-dependencies]
+# Test-only: decode the QR sidecar back (roundtrip proof) — rqrr
+# reads an image-crate buffer; neither crate ships in the binary.
+rqrr = "0.9"
+image = "0.25"
 
 [profile.release]
 opt-level = 3

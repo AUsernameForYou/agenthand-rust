@@ -149,6 +149,49 @@ fn stdio_server_end_to_end_offline() {
         "local_placeholder"
     );
     assert_eq!(result["cost_usd"], 0.0);
+    // AB 723 verify sidecar: the result carries the QR asset, the
+    // verify URL, and the exact ready-to-paste label line; the QR
+    // decodes back to the URL, and the URL's fragment is the hash
+    // of the persisted receipt with the annotation fields stripped.
+    let verify_url = result["verify_url"].as_str().expect("verify_url present");
+    assert!(
+        verify_url.starts_with("https://ausernameforyou.github.io/agenthand/verify#"),
+        "verify_url: {verify_url}"
+    );
+    let fragment = verify_url.rsplit('#').next().unwrap();
+    assert_eq!(fragment.len(), 64);
+    assert_eq!(
+        result["label"],
+        format!("Digitally altered. Original photo and proof: {verify_url}")
+    );
+    let qr_handle = result["qr_asset"].as_str().expect("qr_asset present");
+    let qr_png = store.read_bytes(qr_handle).unwrap();
+    let luma = image::load_from_memory(&qr_png).unwrap().to_luma8();
+    let mut prepared = rqrr::PreparedImage::prepare(luma);
+    let grids = prepared.detect_grids();
+    assert_eq!(grids.len(), 1);
+    let (_meta, content) = grids[0].decode().unwrap();
+    assert_eq!(content, verify_url);
+    let out_handle = result["output_asset"].as_str().unwrap();
+    let persisted = store
+        .load_receipt(out_handle)
+        .unwrap()
+        .expect("receipt persisted");
+    assert_eq!(persisted["verify_url"], verify_url);
+    assert_eq!(
+        persisted["qr_sha256"],
+        agenthand::image::sha256_hex(&qr_png)
+    );
+    let mut stripped = persisted.clone();
+    stripped.as_object_mut().unwrap().remove("verify_url");
+    stripped.as_object_mut().unwrap().remove("qr_sha256");
+    assert_eq!(
+        agenthand::image::sha256_hex(
+            agenthand::server::canonical_receipt_json(&stripped).as_bytes()
+        ),
+        fragment,
+        "stripping the annotations must reproduce the URL hash"
+    );
     // The preview image block rides along.
     let content = resp["result"]["content"].as_array().unwrap();
     assert_eq!(content.len(), 2);

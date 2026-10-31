@@ -33,6 +33,7 @@ pub const KIND_OVERLAY: &str = "mask_overlay";
 /// Asset kind: a cropped region of a source photo, stored so the
 /// listing chain can identify the item in isolation.
 pub const KIND_CROP: &str = "item_crop";
+pub const KIND_QR: &str = "verify_qr";
 
 /// PNG text key carrying a mask asset's provenance JSON (source
 /// frame, SAM frame, scale method), written by cut_out and read by

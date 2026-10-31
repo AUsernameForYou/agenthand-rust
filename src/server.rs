@@ -402,6 +402,119 @@ fn persist_full_receipt(
     Ok(full)
 }
 
+/// The verify page every draw receipt points at (GitHub Pages for
+/// now; Daniel, 2026-10-31). The receipt hash rides in the URL
+/// fragment, so resolution happens entirely in the visitor's
+/// browser and the static page never sees the receipt itself.
+pub const VERIFY_URL_BASE: &str = "https://ausernameforyou.github.io/agenthand/verify";
+
+/// Canonical receipt JSON for hashing. This crate builds
+/// serde_json WITHOUT preserve_order, so Value objects are
+/// BTreeMap-backed and serialization emits sorted keys with
+/// compact separators and unescaped UTF-8 — the same canonical
+/// form the Python mirror produces with json.dumps(sort_keys=
+/// True, separators=(",", ":"), ensure_ascii=False) and the
+/// docs verifier reproduces in JS. Anyone can strip the two
+/// annotation fields below off a persisted receipt, re-run this
+/// canonicalization, and land on the hash inside its verify URL.
+pub fn canonical_receipt_json(receipt: &Value) -> String {
+    serde_json::to_string(receipt).unwrap_or_default()
+}
+
+/// Render the AB 723 sidecar: a QR PNG encoding `payload`, ink
+/// #111111 on white with a 4-module quiet zone, error-correction
+/// level Q, scaled by whole modules to roughly 512 px. Pure local
+/// rendering (the `qrcode` crate) — no call, no cost.
+pub fn render_verify_qr_png(payload: &str) -> Result<Vec<u8>, String> {
+    let code = qrcode::QrCode::with_error_correction_level(
+        payload.as_bytes(),
+        qrcode::EcLevel::Q,
+    )
+    .map_err(|e| format!("QR encode failed: {e:?}"))?;
+    let width = code.width();
+    let colors = code.to_colors();
+    let quiet = 4usize;
+    let total = width + quiet * 2;
+    let scale = 512usize.div_ceil(total).max(1);
+    let size = total * scale;
+    let mut pixels = vec![255u8; size * size * 4];
+    for (i, color) in colors.iter().enumerate() {
+        if *color != qrcode::Color::Dark {
+            continue;
+        }
+        let x0 = (i % width + quiet) * scale;
+        let y0 = (i / width + quiet) * scale;
+        for y in y0..y0 + scale {
+            for x in x0..x0 + scale {
+                let idx = (y * size + x) * 4;
+                pixels[idx] = 17; // #111111
+                pixels[idx + 1] = 17;
+                pixels[idx + 2] = 17;
+                pixels[idx + 3] = 255;
+            }
+        }
+    }
+    let img = crate::image::RgbaImage::new(size as u32, size as u32, pixels);
+    Ok(crate::image::encode_png_rgba(&img))
+}
+
+/// Attach the verify sidecar to a settled draw: hash the full
+/// persisted receipt (BEFORE annotation), build its verify URL,
+/// render and store the QR PNG as its own asset parented to the
+/// composite — never composited into the delivered photo (AB 723
+/// wants the label/QR on or ADJACENT to the image). Returns
+/// (qr handle, verify url, qr png sha256). Failure is non-fatal
+/// by design: a local rendering problem must never fail a draw
+/// that has already settled, so callers log and carry on with
+/// the fields absent.
+fn attach_verify_qr(
+    store: &AssetStore,
+    composite_handle: &str,
+    full_receipt: &Value,
+) -> Option<(String, String, String)> {
+    let canonical = canonical_receipt_json(full_receipt);
+    let receipt_sha256 = crate::image::sha256_hex(canonical.as_bytes());
+    let verify_url = format!("{VERIFY_URL_BASE}#{receipt_sha256}");
+    let png = match render_verify_qr_png(&verify_url) {
+        Ok(png) => png,
+        Err(e) => {
+            eprintln!("agenthand: verify QR render failed (draw unaffected): {e}");
+            return None;
+        }
+    };
+    let qr_sha256 = crate::image::sha256_hex(&png);
+    let parent = store.get_record(composite_handle).ok()?.asset_id;
+    let qr_handle = store
+        .put_bytes(&png, crate::assets::KIND_QR, ".png", Some(&parent))
+        .ok()?;
+    Some((qr_handle, verify_url, qr_sha256))
+}
+
+/// Annotate the persisted receipt with its verify fields and
+/// mirror them (plus the ready-to-paste AB 723 label line) onto
+/// the tool result. No-op when the sidecar could not be built.
+fn annotate_draw_result(
+    store: &AssetStore,
+    composite_handle: &str,
+    full_receipt: &mut Value,
+    result: &mut Value,
+) {
+    let Some((qr_handle, verify_url, qr_sha256)) =
+        attach_verify_qr(store, composite_handle, full_receipt)
+    else {
+        return;
+    };
+    full_receipt["verify_url"] = json!(verify_url);
+    full_receipt["qr_sha256"] = json!(qr_sha256);
+    if let Err(e) = store.save_receipt(composite_handle, full_receipt) {
+        eprintln!("agenthand: annotated receipt re-save failed: {e}");
+    }
+    result["qr_asset"] = json!(qr_handle);
+    result["verify_url"] = json!(verify_url);
+    result["label"] =
+        json!(format!("Digitally altered. Original photo and proof: {verify_url}"));
+}
+
 /// Generate a background plate through the billing choke point (port
 /// of `meta_client.generate_background_plate`).
 fn generate_background_plate(
@@ -518,7 +631,7 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
 
     let (handle, receipt) =
         composite::draw_product(&store, asset, scene_prompt, Some(&plate_handle))?;
-    persist_full_receipt(&store, &handle, &receipt, &billing, scene_prompt)?;
+    let mut full = persist_full_receipt(&store, &handle, &receipt, &billing, scene_prompt)?;
     if receipt["changed_opaque_pixels"].as_i64().unwrap_or(-1) != 0
         || receipt["color_profile_preserved"].as_bool() != Some(true)
     {
@@ -550,7 +663,7 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
         return Ok((e, Vec::new()));
     }
 
-    let result = json!({
+    let mut result = json!({
         "status": "ok",
         "tool": "draw",
         "asset": asset,
@@ -564,6 +677,7 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
         "call_id": billing.call_id,
         "note": "Background plate generated by muse-image-1.0 and fitted to the product by deterministic code; the stored product layer was composited untouched and never sent to the image model.",
     });
+    annotate_draw_result(&store, &handle, &mut full, &mut result);
     let preview = store.read_bytes(&handle)?;
     Ok((result, preview))
 }
@@ -590,8 +704,8 @@ fn draw_with_placeholder_plate(
         },
     )?;
     let (handle, receipt) = outcome.into_inner().expect("composite outcome set");
-    persist_full_receipt(store, &handle, &receipt, &billing, scene_prompt)?;
-    let result = json!({
+    let mut full = persist_full_receipt(store, &handle, &receipt, &billing, scene_prompt)?;
+    let mut result = json!({
         "status": "ok",
         "tool": "draw",
         "asset": asset,
@@ -603,6 +717,7 @@ fn draw_with_placeholder_plate(
         "cost_usd": billing.actual_usd,
         "note": "OFFLINE DEV MODE (AGENTHAND_DRAW_PLACEHOLDER_PLATE): the plate is a deterministic local placeholder, not a generated scene; no API call was made. The compositing, lineage checks, and fidelity receipt are the real pipeline.",
     });
+    annotate_draw_result(store, &handle, &mut full, &mut result);
     let preview = store.read_bytes(&handle)?;
     Ok((result, preview))
 }
@@ -638,7 +753,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "draw",
-            "description": "Stage the real product into a generated scene. Fidelity Lock applies. The background plate is generated by muse-image-1.0 and fitted to the product's dimensions; the stored product layer is composited onto it untouched and never sent to the image model. Returns the composite's asset handle, its fidelity receipt, and an image preview. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
+            "description": "Stage the real product into a generated scene. Fidelity Lock applies. The background plate is generated by muse-image-1.0 and fitted to the product's dimensions; the stored product layer is composited onto it untouched and never sent to the image model. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -818,5 +933,73 @@ pub fn run_stdio() {
             let _ = writeln!(writer, "{response}");
             let _ = writer.flush();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The sidecar's whole contract: an independent decoder reads
+    /// the rendered PNG back to exactly the payload URL.
+    #[test]
+    fn verify_qr_png_roundtrips_through_a_decoder() {
+        let url = format!(
+            "{VERIFY_URL_BASE}#{}",
+            "a".repeat(64)
+        );
+        let png = render_verify_qr_png(&url).expect("render");
+        let img = image::load_from_memory(&png)
+            .expect("png decodes")
+            .to_luma8();
+        let mut prepared = rqrr::PreparedImage::prepare(img);
+        let grids = prepared.detect_grids();
+        assert_eq!(grids.len(), 1, "exactly one QR in the sidecar");
+        let (_meta, content) = grids[0].decode().expect("QR decodes");
+        assert_eq!(content, url);
+    }
+
+    /// The verify hash is taken over the receipt BEFORE the two
+    /// annotation fields exist; stripping them back off any
+    /// persisted receipt must reproduce the hash in its URL, or
+    /// the public verifier can never resolve a real receipt.
+    #[test]
+    fn stripping_annotations_reproduces_the_receipt_hash() {
+        let receipt = json!({
+            "tool": "draw",
+            "pixels_checked": 580613,
+            "changed_opaque_pixels": 0,
+            "nested": {"b": 1, "a": [true, null]},
+            "unicode": "café ☕"
+        });
+        let canonical = canonical_receipt_json(&receipt);
+        // Sorted keys, compact separators, unescaped UTF-8: the
+        // canonical form both mirrors (Python, JS) reproduce.
+        assert_eq!(
+            canonical,
+            "{\"changed_opaque_pixels\":0,\"nested\":{\"a\":[true,null],\"b\":1},\"pixels_checked\":580613,\"tool\":\"draw\",\"unicode\":\"café ☕\"}"
+        );
+        let hash = crate::image::sha256_hex(canonical.as_bytes());
+        let mut annotated = receipt.clone();
+        annotated["verify_url"] = json!(format!("{VERIFY_URL_BASE}#{hash}"));
+        annotated["qr_sha256"] = json!("b".repeat(64));
+        let mut stripped = annotated.clone();
+        stripped
+            .as_object_mut()
+            .expect("object")
+            .remove("verify_url");
+        stripped
+            .as_object_mut()
+            .expect("object")
+            .remove("qr_sha256");
+        assert_eq!(
+            crate::image::sha256_hex(canonical_receipt_json(&stripped).as_bytes()),
+            hash,
+            "strip + re-canonicalize must land back on the URL hash"
+        );
+        // And the label line is exactly the approved wording.
+        let label = format!("Digitally altered. Original photo and proof: {VERIFY_URL_BASE}#{hash}");
+        assert!(label.starts_with("Digitally altered. Original photo and proof: https://"));
+        assert_eq!(label.len(), "Digitally altered. Original photo and proof: ".len() + VERIFY_URL_BASE.len() + 1 + 64);
     }
 }
