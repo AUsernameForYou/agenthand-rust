@@ -111,6 +111,22 @@ impl WorkBudget {
             )),
         }
     }
+
+    /// N27 (Gauntlet fine-tooth, 2026-10-31): refuse at header time
+    /// when the work a file DECLARES already exceeds the whole
+    /// budget, before any of it is spent. The incremental `charge`
+    /// calls during decode remain the enforcer for anything the
+    /// headers understate; this check only makes a grid whose own
+    /// declared tile canvases bust the budget fail fast and cheap.
+    fn check_declared(&self, declared: u64) -> Res<()> {
+        if declared > self.limit {
+            return refused(format!(
+                "declared decode work {declared} samples exceeds the cumulative work budget {} (pixel budget x4), refused from header dimensions before any tile is decoded",
+                self.limit
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// True when the bytes carry an `ftyp` box whose major or
@@ -338,6 +354,18 @@ pub fn decode_heic(data: &[u8]) -> Res<HeicImage> {
 /// the effective limit is the smaller of the two. The shipped
 /// server path passes the product ingest cap here, so an over-cap
 /// upload refuses in header time instead of after a full decode.
+///
+/// N26 (Gauntlet fine-tooth, 2026-10-31): the budget ledger runs
+/// through the receipt step by construction. Every buffer that
+/// outlives decode is output-sized: the composed/rotated planes
+/// (the grid canvas and the single-picture window were both
+/// checked against `limit` above, before allocation), the RGBA
+/// expansion in `image.rs` (same checked canvas, 4 bytes/px), and
+/// nothing else — receipt hashing streams plane rows and holds no
+/// second full-size copy. So the composite a receipt is issued
+/// over was charged when its canvas passed the header checks;
+/// there is no uncharged post-decode allocation to thread a
+/// charge through.
 pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
     let limit = max_pixels.min(MAX_CANVAS_PIXELS);
     let mut work = WorkBudget::new(limit);
@@ -380,6 +408,19 @@ pub fn decode_heic_with_budget(data: &[u8], max_pixels: u64) -> Res<HeicImage> {
                     tile_ids.len()
                 ));
             }
+            // N27: reserve the summed tile canvases at header time.
+            // Each tile's ispe is its declared canvas; if the sum
+            // alone busts the cumulative work budget, refuse here,
+            // before decoding tile one. Tiles without ispe are
+            // skipped: their SPS canvas is charged incrementally
+            // during decode, which stays the binding enforcement.
+            let declared_work: u64 = tile_ids
+                .iter()
+                .filter_map(|tid| f.item(*tid))
+                .filter_map(|t| f.item_ispe(t))
+                .map(|(w, h)| (w as u64).saturating_mul(h as u64))
+                .fold(0u64, u64::saturating_add);
+            work.check_declared(declared_work)?;
             let mut tiles = Vec::with_capacity(tile_ids.len());
             let mut first: Option<(u32, u32, VuiInfo)> = None;
             let mut icc = f.item_icc_profile(&primary);

@@ -649,8 +649,14 @@ pub struct SegmentationMask {
 /// Strictly decode one mask payload to a 0/1 raster (row-major,
 /// width x height). Port of `decode_mask_to_raster`.
 pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String> {
+    // N28: geometry failures carry the full declared geometry —
+    // a bad SAM mask cannot be regenerated from the photo, so the
+    // error text is the only durable copy of what the model sent.
     if mask.width <= 0 || mask.height <= 0 {
-        return Err("Mask dimensions must be positive safe integers.".to_string());
+        return Err(format!(
+            "Mask dimensions must be positive safe integers (declared width {}, height {}).",
+            mask.width, mask.height
+        ));
     }
     // The raster is allocated at the API-declared dimensions; cap
     // the area before either decoder allocates. An absurd header
@@ -666,7 +672,10 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
         .checked_mul(mask.height as u64)
         .unwrap_or(u64::MAX);
     if area > MAX_MASK_RASTER_PIXELS {
-        return Err("Mask dimensions are too large.".to_string());
+        return Err(format!(
+            "Mask dimensions are too large (declared width {}, height {}, area {area} over the {MAX_MASK_RASTER_PIXELS}-pixel ceiling).",
+            mask.width, mask.height
+        ));
     }
     let width = mask.width as usize;
     let height = mask.height as usize;
@@ -1110,6 +1119,13 @@ mod place_in_frame_tests {
     /// Gauntlet event 360 (a): no constructor enforces
     /// `raster.len() >= width * height`. A short raster must read
     /// as zero padding past its end, never panic.
+    ///
+    /// N36 (fine-tooth, 2026-10-31): this pins the row semantics on
+    /// purpose. The per-row `.get()` form treats a short raster as
+    /// zero padding (the repair policy); a `chunks_exact` rewrite
+    /// would silently DROP the tail instead and change what a
+    /// truncated mask means. The two forms are not interchangeable
+    /// and swapping them is a policy change, not an optimization.
     #[test]
     fn short_raster_reads_as_zero_padding() {
         // Claims 4x3, carries only 5 bytes: row 0 full, row 1 has
@@ -1120,6 +1136,17 @@ mod place_in_frame_tests {
         assert_eq!(&frame[0..4], &[255, 255, 255, 255]);
         assert_eq!(&frame[4..8], &[255, 0, 0, 0]);
         assert_eq!(&frame[8..12], &[0, 0, 0, 0]);
+    }
+
+    /// N36 companion pin: an over-long raster's extra rows are
+    /// ignored, never read into the frame past the box's height.
+    #[test]
+    fn long_raster_extra_rows_are_ignored() {
+        // Claims 2x2, carries 6 bytes: two full rows plus a
+        // third row that belongs to no part of the box.
+        let raster = vec![1u8, 1, 1, 1, 1, 1];
+        let frame = place_in_frame(&raster, 2, 2, (0, 0, 2, 2), 2, 2);
+        assert_eq!(frame, vec![255, 255, 255, 255]);
     }
 
     /// Gauntlet event 360 (b): frame dimensions whose product

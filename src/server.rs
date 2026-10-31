@@ -795,8 +795,12 @@ pub fn run_stdio() {
     // Contained panics (tool boundary, decode boundary) must stay
     // visible: log every panic payload to stderr — stdout is the
     // protocol channel and stays clean.
+    // N39 (Gauntlet fine-tooth, 2026-10-31): containment is not
+    // absolution. A contained panic is a bug: whoever operates
+    // this server files each distinct panic payload as a defect
+    // with a regression case, not just an error response.
     std::panic::set_hook(Box::new(|info| {
-        eprintln!("agenthand: panic: {info}");
+        eprintln!("agenthand: panic (contained; file as bug): {info}");
     }));
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();

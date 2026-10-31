@@ -447,6 +447,10 @@ pub fn run_attempts(
     let mut attempts: Vec<Value> = Vec::new();
     let mut images = 0i64;
     let mut last_code = "NO_MATCH";
+    // N28: the last rejected mask's full geometry rides into the
+    // final error — the model output cannot be regenerated, so the
+    // error text is the only durable copy of what was rejected.
+    let mut last_rejection: Option<String> = None;
     for phrase in phrases {
         let (output_text, _usage) = meta::segment_image(client, key, png_bytes, phrase, model)
             .map_err(|e| CutOutError {
@@ -485,6 +489,10 @@ pub fn run_attempts(
         };
         let assessment = assess_mask(&mask_gray);
         trace["object_id"] = json!(chosen.object_id);
+        // N28: full geometry of the chosen mask in the trace
+        // (bounds are inclusive [left, top, right, bottom] in the
+        // frame named by frame_width/frame_height).
+        trace["mask_bounds"] = json!(chosen.bounds);
         trace["coverage"] = json!(crate::round6(assessment.coverage));
         trace["mask_pixels"] = json!(assessment.mask_pixels);
         trace["components"] = json!(assessment.components);
@@ -492,6 +500,12 @@ pub fn run_attempts(
         if !assessment.accepted {
             trace["outcome"] = json!("poor_mask");
             trace["rejection"] = json!(assessment.rejection);
+            last_rejection = Some(format!(
+                "mask bounds {:?} (inclusive) in a {frame_width}x{frame_height} frame, coverage {}, rejected: {}",
+                chosen.bounds,
+                crate::round6(assessment.coverage),
+                assessment.rejection.as_deref().unwrap_or("not accepted")
+            ));
             attempts.push(trace);
             last_code = "POOR_MASK";
             continue;
@@ -508,10 +522,26 @@ pub fn run_attempts(
             },
         });
     }
+    // Decision 114: every failure carries its correction path.
+    // N28: when a mask was rejected, its geometry is in the text.
+    let (detail, remedy) = match (last_code, &last_rejection) {
+        ("POOR_MASK", Some(geo)) => (
+            format!(" Last rejected {geo}."),
+            " Retake the photo closer to the object with less of the frame covered by other things, or name the object more specifically.",
+        ),
+        ("POOR_MASK", None) => (
+            String::new(),
+            " Retake the photo closer to the object, or name the object more specifically.",
+        ),
+        _ => (
+            String::new(),
+            " Name the object differently, or retake the photo so the object is clearly visible.",
+        ),
+    };
     Err(CutOutError {
         code: last_code.to_string(),
         message: format!(
-            "No usable mask after {} attempt(s); final outcome: {last_code}.",
+            "No usable mask after {} attempt(s); final outcome: {last_code}.{detail}{remedy}",
             attempts.len()
         ),
         attempts,
