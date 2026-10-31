@@ -327,3 +327,201 @@ pub fn import_jsonl(jsonl_path: &Path, sqlite_path: &Path) -> Result<(usize, f64
         .map_err(|e| format!("cannot commit sqlite ledger import: {e}"))?;
     Ok((count, total))
 }
+
+// ---------------------------------------------------------------------
+// Room-run step log (P1, Hermes dive 2026-10-31, tracker event 372)
+//
+// Durable execution state for room runs, Morling-style: a step row
+// is written `pending` BEFORE the step's first billed call and
+// flipped to `complete`/`failed` when it settles, so a crash or
+// kill mid-run leaves a resumable record instead of an
+// all-or-nothing manifest. The table lives in a SQLite file the
+// CALLER chooses — for room runs that is `room-steps.sqlite3`
+// inside the room's own output directory, beside the room's own
+// JSONL ledger: a room stays self-contained and provable from its
+// directory alone (the room-ledger isolation rule, tracker event
+// 166), and the run's receipts + step state travel together.
+// ---------------------------------------------------------------------
+
+const RUN_STEPS_SCHEMA: &str = "\
+CREATE TABLE IF NOT EXISTS run_steps (
+    run_id     TEXT NOT NULL,
+    item_index INTEGER NOT NULL,
+    step       TEXT NOT NULL,
+    status     TEXT NOT NULL CHECK (status IN ('pending','complete','failed')),
+    attempts   INTEGER NOT NULL DEFAULT 1,
+    call_id    TEXT,
+    result_ref TEXT,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (run_id, item_index, step)
+);
+";
+
+/// One row of the room-run step log.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StepRow {
+    pub status: String,
+    pub attempts: i64,
+    pub call_id: Option<String>,
+    pub result_ref: Option<String>,
+    pub updated_at: i64,
+}
+
+fn now_epoch_s() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// The room-run step log: one SQLite file, one connection, writes
+/// serialized through a mutex (a room run is a sequential pipeline;
+/// the mutex is for the type's own safety, not concurrency).
+pub struct RunStepLog {
+    conn: Mutex<Connection>,
+}
+
+impl RunStepLog {
+    pub fn open(path: &Path) -> Result<RunStepLog, String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create step-log dir: {e}"))?;
+        }
+        let conn =
+            Connection::open(path).map_err(|e| format!("cannot open step log: {e}"))?;
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(|e| format!("cannot set step-log busy timeout: {e}"))?;
+        conn.execute_batch(RUN_STEPS_SCHEMA)
+            .map_err(|e| format!("cannot create run_steps table: {e}"))?;
+        Ok(RunStepLog {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    /// Read one step row, if it exists.
+    pub fn get(&self, run_id: &str, item_index: i64, step: &str) -> Result<Option<StepRow>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT status, attempts, call_id, result_ref, updated_at \
+                 FROM run_steps WHERE run_id = ?1 AND item_index = ?2 AND step = ?3",
+            )
+            .map_err(|e| format!("step-log prepare: {e}"))?;
+        let row = stmt
+            .query_row(params![run_id, item_index, step], |r| {
+                Ok(StepRow {
+                    status: r.get(0)?,
+                    attempts: r.get(1)?,
+                    call_id: r.get(2)?,
+                    result_ref: r.get(3)?,
+                    updated_at: r.get(4)?,
+                })
+            })
+            .ok();
+        Ok(row)
+    }
+
+    /// True when the run already has any step rows — i.e. this
+    /// invocation is a resume, not a first attempt.
+    pub fn run_exists(&self, run_id: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM run_steps WHERE run_id = ?1",
+                params![run_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("step-log count: {e}"))?;
+        Ok(count > 0)
+    }
+
+    /// Mark a step pending before its first billed call. A repeat
+    /// pending (a resume re-entering the step) bumps `attempts`
+    /// and preserves any checkpoint already in `result_ref`.
+    pub fn mark_pending(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+        call_id: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO run_steps (run_id, item_index, step, status, attempts, call_id, updated_at) \
+             VALUES (?1, ?2, ?3, 'pending', 1, ?4, ?5) \
+             ON CONFLICT (run_id, item_index, step) DO UPDATE SET \
+               status = 'pending', attempts = attempts + 1, \
+               call_id = COALESCE(?4, call_id), updated_at = ?5",
+            params![run_id, item_index, step, call_id, now_epoch_s()],
+        )
+        .map_err(|e| format!("step-log pending: {e}"))?;
+        Ok(())
+    }
+
+    /// Update the checkpoint payload of a pending step (mid-step
+    /// progress: the sightings gathered so far, the latest billed
+    /// call id) without changing its status.
+    pub fn update_checkpoint(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+        call_id: Option<&str>,
+        result_ref: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE run_steps SET call_id = COALESCE(?4, call_id), result_ref = ?5, \
+             updated_at = ?6 WHERE run_id = ?1 AND item_index = ?2 AND step = ?3",
+            params![run_id, item_index, step, call_id, result_ref, now_epoch_s()],
+        )
+        .map_err(|e| format!("step-log checkpoint: {e}"))?;
+        Ok(())
+    }
+
+    fn finish(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+        status: &str,
+        call_id: Option<&str>,
+        result_ref: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO run_steps (run_id, item_index, step, status, attempts, call_id, result_ref, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7) \
+             ON CONFLICT (run_id, item_index, step) DO UPDATE SET \
+               status = ?4, call_id = COALESCE(?5, call_id), result_ref = ?6, updated_at = ?7",
+            params![run_id, item_index, step, status, call_id, result_ref, now_epoch_s()],
+        )
+        .map_err(|e| format!("step-log finish: {e}"))?;
+        Ok(())
+    }
+
+    /// Mark a step complete, with its outputs in `result_ref`
+    /// (JSON: asset handles, receipt ids, the item record).
+    pub fn mark_complete(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+        call_id: Option<&str>,
+        result_ref: &str,
+    ) -> Result<(), String> {
+        self.finish(run_id, item_index, step, "complete", call_id, result_ref)
+    }
+
+    /// Mark a step failed with a typed failure (the failure JSON,
+    /// including its correction text, rides in `result_ref`).
+    pub fn mark_failed(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+        result_ref: &str,
+    ) -> Result<(), String> {
+        self.finish(run_id, item_index, step, "failed", None, result_ref)
+    }
+}

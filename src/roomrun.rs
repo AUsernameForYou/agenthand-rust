@@ -1288,6 +1288,31 @@ pub struct RunContext<'a> {
     pub max_photos_per_item: usize,
     pub max_sam_calls_per_item: usize,
     pub sam_calls: std::cell::Cell<usize>,
+    /// P1 step log (tracker event 372): durable per-step state
+    /// for crash resume. None = unlogged run (pre-P1 behavior).
+    pub step_log: Option<std::rc::Rc<crate::sqlledger::RunStepLog>>,
+    /// The run id the step log keys on (empty when unlogged).
+    pub run_id: String,
+    /// Billed call ids returned by chain calls since the last
+    /// drain; the step logger records them against the open step
+    /// so a pending step's settled calls stay attributable.
+    pub call_ids: std::cell::RefCell<Vec<String>>,
+}
+
+/// Record a chain result's billed call id, when it carries one,
+/// for the step log.
+fn note_call_id(ctx: &RunContext, result: &Value) {
+    if let Some(cid) = result.get("call_id").and_then(Value::as_str) {
+        ctx.call_ids.borrow_mut().push(cid.to_string());
+    }
+}
+
+/// Drain the accumulated call ids, returning the most recent.
+fn take_last_call_id(ctx: &RunContext) -> Option<String> {
+    let mut ids = ctx.call_ids.borrow_mut();
+    let last = ids.last().cloned();
+    ids.clear();
+    last
 }
 
 /// What a chain result cost, billing-honestly: its own settled cost
@@ -1435,6 +1460,7 @@ fn probe_photo(
         // A raise-class failure (spend cap, integrity) propagates and
         // refuses the run, exactly as the Python exception does.
         let result = (ctx.chain.cut_out)(&handle, variant)?;
+        note_call_id(ctx, &result);
         photo_cost += call_cost(&result);
         if result.get("status").and_then(Value::as_str) == Some("ok") {
             success = Some((variant.clone(), result));
@@ -1659,6 +1685,7 @@ fn crop_listing(
             )
         }
     };
+    note_call_id(ctx, &result);
     let cost = call_cost(&result);
     let title = result.get("suggested_title");
     if result.get("status").and_then(Value::as_str) == Some("ok")
@@ -1750,15 +1777,29 @@ pub struct WorkItem {
     pub origin: String,
 }
 
-/// One item end to end: probe, pick the strongest sighting, draw,
-/// verify. The record is manifest-shaped from birth; every exit is a
-/// filled record, not an exception.
-fn process_item(
+/// The probe phase's outcome: the record so far (sightings and
+/// primary set, or the failure filled in), the primary sighting
+/// when one was chosen, and what the phase spent.
+struct ProbeOutcome {
+    record: Value,
+    primary: Option<Value>,
+    cost: f64,
+}
+
+/// One item's probe phase: probe the candidate photos, pick the
+/// strongest sighting. `prior_sightings` seeds the phase with
+/// checkpointed sightings from a crashed attempt (P1 resume):
+/// those photos are not re-probed and not re-billed. `on_photo`,
+/// when given, fires after each NEW sighting with the accumulated
+/// sightings + cost, so the caller can checkpoint progress.
+fn probe_item(
     ctx: &RunContext,
     item: &WorkItem,
     sources: &[PhotoSource],
     probe_all_candidates: bool,
-) -> Result<(Value, Option<Value>), String> {
+    prior_sightings: &[Value],
+    mut on_photo: Option<&mut dyn FnMut(&[Value], f64)>,
+) -> Result<ProbeOutcome, String> {
     let name = item.name.clone();
     let mut record = json!({
         "name": name,
@@ -1781,18 +1822,40 @@ fn process_item(
         "flags": item.flags,
         "cost_usd": 0.0,
     });
-    let mut item_cost = 0.0f64;
-    let mut sightings: Vec<Value> = Vec::new();
-    for &photo_index in &item.candidate_photo_indices {
-        let sighting = probe_photo(ctx, &name, &sources[photo_index], photo_index)?;
-        item_cost += sighting
-            .get("cost_usd")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let is_ok = sighting.get("status").and_then(Value::as_str) == Some("ok");
-        sightings.push(sighting);
-        if is_ok && !probe_all_candidates {
-            break;
+    let mut sightings: Vec<Value> = prior_sightings.to_vec();
+    let mut item_cost: f64 = sightings
+        .iter()
+        .map(|s| s.get("cost_usd").and_then(Value::as_f64).unwrap_or(0.0))
+        .sum();
+    let probed: std::collections::HashSet<i64> = sightings
+        .iter()
+        .filter_map(|s| s.get("photo_index").and_then(Value::as_i64))
+        .collect();
+    // A checkpointed ok sighting already satisfied the
+    // stop-at-first-ok rule in the crashed attempt; do not probe
+    // further on resume.
+    let prior_satisfied = !probe_all_candidates
+        && sightings
+            .iter()
+            .any(|s| s.get("status").and_then(Value::as_str) == Some("ok"));
+    if !prior_satisfied {
+        for &photo_index in &item.candidate_photo_indices {
+            if probed.contains(&(photo_index as i64)) {
+                continue;
+            }
+            let sighting = probe_photo(ctx, &name, &sources[photo_index], photo_index)?;
+            item_cost += sighting
+                .get("cost_usd")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let is_ok = sighting.get("status").and_then(Value::as_str) == Some("ok");
+            sightings.push(sighting);
+            if let Some(cb) = on_photo.as_deref_mut() {
+                cb(&sightings, item_cost);
+            }
+            if is_ok && !probe_all_candidates {
+                break;
+            }
         }
     }
     record["sightings"] = json!(sightings);
@@ -1832,7 +1895,11 @@ fn process_item(
             ),
         });
         record["cost_usd"] = json!(item_cost);
-        return Ok((record, None));
+        return Ok(ProbeOutcome {
+            record,
+            primary: None,
+            cost: item_cost,
+        });
     }
     // Python max() semantics: the FIRST sighting with the greatest
     // (opaque_pixels, is_still) key wins; strictly-greater replaces.
@@ -1859,10 +1926,186 @@ fn process_item(
         .map(|s| s.get("photo_index").cloned().unwrap_or(Value::Null))
         .filter(|idx| *idx != json!(primary_index))
         .collect::<Vec<_>>());
-    let outcome = stage_from_primary(ctx, &mut record, &name, sources, primary)?;
-    item_cost += outcome.cost;
-    record["cost_usd"] = json!(item_cost);
-    Ok((record, outcome.evidence))
+    Ok(ProbeOutcome {
+        record,
+        primary: Some(primary.clone()),
+        cost: item_cost,
+    })
+}
+
+/// One item end to end, unlogged: probe, pick the strongest
+/// sighting, draw, verify. The record is manifest-shaped from
+/// birth; every exit is a filled record, not an exception.
+fn process_item(
+    ctx: &RunContext,
+    item: &WorkItem,
+    sources: &[PhotoSource],
+    probe_all_candidates: bool,
+) -> Result<(Value, Option<Value>), String> {
+    let outcome = probe_item(ctx, item, sources, probe_all_candidates, &[], None)?;
+    let Some(primary) = outcome.primary else {
+        return Ok((outcome.record, None));
+    };
+    let mut record = outcome.record;
+    let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
+    record["cost_usd"] = json!(outcome.cost + stage.cost);
+    Ok((record, stage.evidence))
+}
+
+/// Parse a step row's JSON result_ref (Null when absent/corrupt —
+/// a corrupt ref re-runs the step rather than trusting it).
+fn step_ref(row: &crate::sqlledger::StepRow) -> Value {
+    row.result_ref
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// One item end to end, step-logged (P1, tracker event 372).
+///
+/// Resume semantics, by what a previous attempt left behind:
+/// - `draw` complete → replay the record + evidence verbatim; no
+///   billed call runs for this item.
+/// - `cut_out` failed → replay the failure record; the item is
+///   done (its failure, with correction text, is in the record).
+/// - `cut_out` complete → resume at the stage: stage from the
+///   recorded primary sighting; only the draw step runs live.
+/// - `cut_out` pending with a checkpoint → the checkpointed
+///   sightings (each written only after its probe returned, so
+///   each is fully billed) seed the probe phase; only unprobed
+///   photos run live. This is the reconciliation rule for the
+///   executed-but-unrecorded window: a sighting in the checkpoint
+///   is never re-billed, and the room ledger holds its settled
+///   receipts under the recorded call ids.
+/// - A `draw` step left pending by a crash re-runs the stage:
+///   draw is a single composed call whose outputs cannot be
+///   attributed before it returns, so its executed-but-unrecorded
+///   window is one draw call wide. That is the documented residue
+///   of the window; every other step closes it.
+#[allow(clippy::too_many_arguments)]
+fn process_item_logged(
+    ctx: &RunContext,
+    item: &WorkItem,
+    sources: &[PhotoSource],
+    probe_all_candidates: bool,
+    log: &crate::sqlledger::RunStepLog,
+    run_id: &str,
+    item_index: i64,
+) -> Result<(Value, Option<Value>), String> {
+    let draw_row = log.get(run_id, item_index, "draw")?;
+    let cut_row = log.get(run_id, item_index, "cut_out")?;
+    if let Some(row) = &draw_row {
+        if row.status == "complete" {
+            let refv = step_ref(row);
+            let mut record = refv["record"].clone();
+            record["replayed"] = json!(true);
+            // Evidence is an object when present; a stored null
+            // is the None case (stage evidence is never a bare
+            // null value when it exists).
+            let evidence = if refv["evidence"].is_null() {
+                None
+            } else {
+                Some(refv["evidence"].clone())
+            };
+            return Ok((record, evidence));
+        }
+    }
+    if let Some(row) = &cut_row {
+        if row.status == "failed" {
+            let refv = step_ref(row);
+            let mut record = refv["record"].clone();
+            record["replayed"] = json!(true);
+            return Ok((record, None));
+        }
+        if row.status == "complete" {
+            let refv = step_ref(row);
+            let mut record = refv["record"].clone();
+            let primary = refv["primary_sighting"].clone();
+            let probe_cost = refv["cost_usd"].as_f64().unwrap_or(0.0);
+            log.mark_pending(run_id, item_index, "draw", None)?;
+            // An Err here (infrastructure, not a typed failure)
+            // leaves `draw` pending — the documented one-call
+            // orphan window — and propagates, as an unlogged run
+            // would.
+            let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
+            record["cost_usd"] = json!(probe_cost + stage.cost);
+            let call_id = take_last_call_id(ctx);
+            log.mark_complete(
+                run_id,
+                item_index,
+                "draw",
+                call_id.as_deref(),
+                &json!({"record": record, "evidence": stage.evidence}).to_string(),
+            )?;
+            return Ok((record, stage.evidence));
+        }
+    }
+    // Fresh attempt, or a crash mid-probe: seed from the
+    // checkpoint the crashed attempt left, if any.
+    let prior: Vec<Value> = match &cut_row {
+        Some(row) if row.status == "pending" => step_ref(row)
+            .get("sightings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    log.mark_pending(run_id, item_index, "cut_out", None)?;
+    let outcome = {
+        let mut checkpoint = |sightings: &[Value], cost: f64| {
+            let call_id = take_last_call_id(ctx);
+            let _ = log.update_checkpoint(
+                run_id,
+                item_index,
+                "cut_out",
+                call_id.as_deref(),
+                &json!({"sightings": sightings, "cost_usd": cost}).to_string(),
+            );
+        };
+        probe_item(
+            ctx,
+            item,
+            sources,
+            probe_all_candidates,
+            &prior,
+            Some(&mut checkpoint),
+        )?
+    };
+    let Some(primary) = outcome.primary else {
+        log.mark_failed(
+            run_id,
+            item_index,
+            "cut_out",
+            &json!({"record": outcome.record}).to_string(),
+        )?;
+        return Ok((outcome.record, None));
+    };
+    let probe_call_id = take_last_call_id(ctx);
+    log.mark_complete(
+        run_id,
+        item_index,
+        "cut_out",
+        probe_call_id.as_deref(),
+        &json!({
+            "record": outcome.record.clone(),
+            "primary_sighting": primary,
+            "cost_usd": outcome.cost,
+        })
+        .to_string(),
+    )?;
+    log.mark_pending(run_id, item_index, "draw", None)?;
+    let mut record = outcome.record;
+    let stage = stage_from_primary(ctx, &mut record, &item.name, sources, &primary)?;
+    record["cost_usd"] = json!(outcome.cost + stage.cost);
+    let call_id = take_last_call_id(ctx);
+    log.mark_complete(
+        run_id,
+        item_index,
+        "draw",
+        call_id.as_deref(),
+        &json!({"record": record, "evidence": stage.evidence}).to_string(),
+    )?;
+    Ok((record, stage.evidence))
 }
 
 /// What one staging pass spent, and the plan that supplied the
@@ -1943,6 +2186,7 @@ fn stage_from_primary(
     } else {
         (ctx.chain.draw)(&fg_handle, &ctx.scene)?
     };
+    note_call_id(ctx, &draw_result);
     cost += call_cost(&draw_result);
     if draw_result.get("status").and_then(Value::as_str) != Some("ok") {
         // Python dict.get semantics: the error dict (or {} when the
@@ -3251,8 +3495,36 @@ fn run_room_body(
         opts.budget_usd
     ));
 
+    // ---- step log (P1, tracker event 372) ------------------------------
+    // Durable per-step state for crash resume, in the room's own
+    // directory beside its ledger. Rows are keyed by the run id the
+    // caller supplied (or run_room generated); a rerun with the
+    // same id replays what a crashed attempt settled.
+    let step_log = std::rc::Rc::new(
+        crate::sqlledger::RunStepLog::open(&out_dir.join("room-steps.sqlite3"))?,
+    );
+    let resumed = step_log.run_exists(room_id)?;
+
     // ---- plan pass: one identify per source photo --------------------
-    for source in sources.iter_mut() {
+    for (photo_index, source) in sources.iter_mut().enumerate() {
+        // A plan settled in a previous attempt replays from the
+        // step log: no second identify bill for the same photo.
+        if let Some(row) = step_log.get(room_id, photo_index as i64, "identify")? {
+            if row.status == "complete" || row.status == "failed" {
+                let refv = step_ref(&row);
+                source.plan = refv.get("plan").cloned().filter(|v| !v.is_null());
+                source.plan_error = refv
+                    .get("plan_error")
+                    .cloned()
+                    .filter(|v| !v.is_null());
+                source.handle = refv
+                    .get("handle")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                continue;
+            }
+        }
+        step_log.mark_pending(room_id, photo_index as i64, "identify", None)?;
         let data_uri = data_uri_for_path(&source.path)?;
         let result = (chain.identify)(&data_uri)?;
         if result.get("status").and_then(Value::as_str) == Some("ok") {
@@ -3284,6 +3556,23 @@ fn run_room_body(
                     }));
                 }
             }
+        }
+        let refj = json!({
+            "plan": source.plan,
+            "plan_error": source.plan_error,
+            "handle": source.handle,
+        });
+        let call_id = result.get("call_id").and_then(Value::as_str);
+        if source.plan.is_some() {
+            step_log.mark_complete(
+                room_id,
+                photo_index as i64,
+                "identify",
+                call_id,
+                &refj.to_string(),
+            )?;
+        } else {
+            step_log.mark_failed(room_id, photo_index as i64, "identify", &refj.to_string())?;
         }
     }
 
@@ -3370,11 +3659,14 @@ fn run_room_body(
         max_photos_per_item: opts.max_photos_per_item,
         max_sam_calls_per_item: MAX_SAM_CALLS_PER_ITEM,
         sam_calls: std::cell::Cell::new(0),
+        step_log: Some(step_log.clone()),
+        run_id: room_id.to_string(),
+        call_ids: std::cell::RefCell::new(Vec::new()),
     };
     let mut item_records: Vec<Value> = Vec::new();
     let mut item_evidence: Vec<Option<Value>> = Vec::new();
     let mut budget_stopped = false;
-    for item in &items_work {
+    for (item_index, item) in items_work.iter().enumerate() {
         if (spend_probe()? - spend_before) > opts.budget_usd {
             budget_stopped = true;
         }
@@ -3412,7 +3704,18 @@ fn run_room_body(
         }
         // The SAM budget is per item, not per run.
         ctx.sam_calls.set(0);
-        let (record, evidence) = process_item(&ctx, item, &sources, opts.probe_all_candidates)?;
+        let (record, evidence) = match &ctx.step_log {
+            Some(log) => process_item_logged(
+                &ctx,
+                item,
+                &sources,
+                opts.probe_all_candidates,
+                log,
+                room_id,
+                item_index as i64,
+            )?,
+            None => process_item(&ctx, item, &sources, opts.probe_all_candidates)?,
+        };
         item_records.push(record);
         item_evidence.push(evidence);
     }
@@ -3517,7 +3820,7 @@ fn run_room_body(
             "pulled_at": doc.get("pulled_at").cloned().unwrap_or(Value::Null),
         })
     });
-    let manifest = json!({
+    let mut manifest = json!({
         "room_id": room_id,
         "created_at": iso_now_micros(),
         "mode": mode,
@@ -3540,6 +3843,13 @@ fn run_room_body(
     });
     if let Some(comps_doc) = &opts.comps {
         market_pricing::write_priced_artifacts(out_dir, &manifest, comps_doc, &ctx.store)?;
+    }
+    // P1 honesty (spec point 4): a resumed run says so, and only
+    // then — a fresh run's manifest is byte-identical to the
+    // pre-P1 shape. Replayed items carry "replayed": true on
+    // their records (set in process_item_logged).
+    if resumed {
+        manifest["resumed"] = json!(true);
     }
     let manifest_path = out_dir.join("manifest.json");
     let serialized = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
