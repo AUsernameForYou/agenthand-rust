@@ -891,7 +891,18 @@ pub fn extract_item_data_for(data: &[u8], item: &Item) -> Res<Vec<u8>> {
             item.item_id, item.data_reference_index
         )));
     }
-    let mut out = Vec::with_capacity(item.total_extent_bytes() as usize);
+    // Capacity hint only — never size it from the file's declared
+    // extent lengths unclamped: a crafted iloc can declare a huge
+    // total and abort the process on this allocation before the
+    // per-extent bounds checks below ever run (allocation failure
+    // is an abort, not a catchable panic). Every extent's bytes
+    // come out of `data`, so the input length bounds a useful
+    // pre-size; overlapping extents still grow the Vec normally.
+    let hint = item
+        .extents
+        .iter()
+        .fold(0u64, |acc, e| acc.saturating_add(e.length));
+    let mut out = Vec::with_capacity((hint as usize).min(data.len()));
     for e in &item.extents {
         let start = e.offset as usize;
         let end = start
