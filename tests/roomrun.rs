@@ -23,10 +23,14 @@ use std::sync::Mutex;
 use agenthand::assets::{AssetStore, KIND_COMPOSITE, KIND_FOREGROUND};
 use agenthand::image::{encode_png_rgba, RgbaImage};
 use agenthand::roomrun::{
-    apply_candidate_coverage, bbox_iou, concept_variants, group_candidates, narration_cost_usd,
-    parse_narration_reply, probe_wav, project_narration_cost_usd, py_repr_str, rank_photos,
+    apply_candidate_coverage, bbox_iou, concept_variants, frame_gray_thumbnail,
+    frame_mean_abs_diff, group_candidates, interpret_narration_body, narrate_with_caller,
+    narration_cost_usd, narration_payload, parse_narration_reply, plan_narration_chunks,
+    prepare_narration_audio, probe_wav, project_narration_cost_usd, py_repr_str, rank_photos,
     run_room, sample_video_frames, token_similarity, Candidate, NarrationFn, PhotoSource,
-    RoomChain, RoomRunOptions, VerifyFn, NARRATION_MODEL,
+    RoomChain, RoomRunOptions, VerifyFn, FRAME_DEDUPE_MAX_MEAN_ABS_DIFF,
+    NARRATION_DEFAULT_MAX_PROJECTED_USD, NARRATION_MAX_DURATION_S, NARRATION_MAX_TOKENS,
+    NARRATION_MODEL,
 };
 use agenthand::{composite, config, ingest, ledger};
 use serde_json::{json, Value};
@@ -998,7 +1002,7 @@ fn room_run_spends_against_its_own_ledger() {
 #[test]
 fn sample_video_frames_without_ffmpeg() {
     let root = temp_root("frames");
-    let (frames, note) = sample_video_frames(
+    let (frames, note, dropped) = sample_video_frames(
         &root.join("nope.mp4"),
         &root.join("frames"),
         2.0,
@@ -1006,6 +1010,7 @@ fn sample_video_frames_without_ffmpeg() {
         Some(""),
     );
     assert!(frames.is_empty());
+    assert!(dropped.is_empty());
     let note = note.unwrap();
     assert!(note.contains("ffmpeg"), "got: {note}");
 }
@@ -1037,11 +1042,236 @@ fn sample_video_frames_extracts() {
         .status()
         .unwrap();
     assert!(status.success());
-    let (frames, note) = sample_video_frames(&video, &root.join("frames"), 1.0, 8, None);
+    let (frames, note, dropped) = sample_video_frames(&video, &root.join("frames"), 1.0, 8, None);
     assert!(note.is_none(), "got: {note:?}");
     let stamps: Vec<f64> = frames.iter().map(|(_, ts)| *ts).collect();
     assert_eq!(stamps, vec![0.0, 1.0, 2.0]);
     assert!(frames.iter().all(|(path, _)| path.exists()));
+    assert!(dropped.is_empty(), "testsrc moves every frame: {dropped:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Token savers (2026-10-31): narration audio prep + sampled-frame
+// dedupe. Measured savings are asserted, not assumed: audio duration
+// before/after the trim, frames dropped vs kept on a synthetic
+// sequence.
+// ---------------------------------------------------------------------------
+
+/// 6 s clip: 0.5 s tone, 3 s silence, 0.5 s tone, 2 s silence.
+fn speech_pause_wav(path: &Path, rate: u32) -> PathBuf {
+    let total = 6 * rate as usize;
+    let mut samples: Vec<i16> = Vec::with_capacity(total);
+    for i in 0..total {
+        let t = i as f64 / rate as f64;
+        if t < 0.5 || (3.5..4.0).contains(&t) {
+            samples.push(
+                (0.30 * 32767.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16,
+            );
+        } else {
+            samples.push(0);
+        }
+    }
+    write_test_wav(path, rate, &samples)
+}
+
+fn write_test_wav(path: &Path, rate: u32, samples: &[i16]) -> PathBuf {
+    let data_len = (samples.len() * 2) as u32;
+    let mut data: Vec<u8> = Vec::with_capacity(44 + samples.len() * 2);
+    data.extend_from_slice(b"RIFF");
+    data.extend_from_slice(&(36 + data_len).to_le_bytes());
+    data.extend_from_slice(b"WAVE");
+    data.extend_from_slice(b"fmt ");
+    data.extend_from_slice(&16u32.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&1u16.to_le_bytes());
+    data.extend_from_slice(&rate.to_le_bytes());
+    data.extend_from_slice(&(rate * 2).to_le_bytes());
+    data.extend_from_slice(&2u16.to_le_bytes());
+    data.extend_from_slice(&16u16.to_le_bytes());
+    data.extend_from_slice(b"data");
+    data.extend_from_slice(&data_len.to_le_bytes());
+    for s in samples {
+        data.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(path, data).unwrap();
+    path.to_path_buf()
+}
+
+/// (rate, samples) of a canonical 44-byte-header test WAV.
+fn read_test_wav(path: &Path) -> (u32, Vec<i16>) {
+    let data = std::fs::read(path).unwrap();
+    let rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+    let samples = data[44..]
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    (rate, samples)
+}
+
+#[test]
+fn prepare_narration_audio_keeps_speech_sample_exact() {
+    // At the 16 kHz target rate no resampling happens, so the
+    // prepared file must be the original speech slices sample for
+    // sample: [0, 0.7s] and [3.3s, 4.2s] (200 ms pads on both
+    // regions; the 2.6 s padded gap is far over the 800 ms bridge).
+    // 6.0 s -> 1.6 s.
+    let root = temp_root("prep16k");
+    let rate = 16000usize;
+    let source = speech_pause_wav(&root.join("clip.wav"), rate as u32);
+    let (_, original) = read_test_wav(&source);
+    let (prepared_path, prepared_s) = prepare_narration_audio(&source);
+    assert_ne!(prepared_path, source);
+    let prepared_s = prepared_s.expect("prepared duration");
+    assert!((prepared_s - 1.6).abs() < 0.02, "got {prepared_s}");
+    let (out_rate, prepared) = read_test_wav(&prepared_path);
+    assert_eq!(out_rate, 16000);
+    let mut expected: Vec<i16> = Vec::new();
+    expected.extend_from_slice(&original[..(0.7 * rate as f64) as usize]);
+    expected.extend_from_slice(
+        &original[(3.3 * rate as f64) as usize..(4.2 * rate as f64) as usize],
+    );
+    assert_eq!(prepared, expected);
+}
+
+#[test]
+fn prepare_narration_audio_downsamples_48k_to_16k() {
+    let root = temp_root("prep48k");
+    let source = speech_pause_wav(&root.join("clip48.wav"), 48000);
+    let (prepared_path, prepared_s) = prepare_narration_audio(&source);
+    assert_ne!(prepared_path, source);
+    let prepared_s = prepared_s.expect("prepared duration");
+    assert!((prepared_s - 1.6).abs() < 0.02, "got {prepared_s}");
+    let (out_rate, prepared) = read_test_wav(&prepared_path);
+    assert_eq!(out_rate, 16000);
+    let half = prepared.len() / 2;
+    let peak_of = |s: &[i16]| s.iter().map(|v| (*v as i32).abs()).max().unwrap_or(0);
+    assert!(peak_of(&prepared[..half]) as f64 > 0.2 * 32767.0);
+    assert!(peak_of(&prepared[half..]) as f64 > 0.2 * 32767.0);
+}
+
+#[test]
+fn prepare_narration_audio_silent_clip_falls_back() {
+    let root = temp_root("prepsilent");
+    let silent = wav_file(&root.join("silent.wav"), 2.0, 16000, 0.0);
+    let (path, prepared_s) = prepare_narration_audio(&silent);
+    assert_eq!(path, silent);
+    assert!(prepared_s.is_none());
+}
+
+#[test]
+fn narrated_run_records_prepared_duration() {
+    let _guard = env_lock();
+    let root = temp_root("preprecord");
+    let photos = vec![photo(&root, "case.png", [200, 90, 10, 255])];
+    let fake = FakeChain::new(
+        &root,
+        vec![plan("orange suitcase")],
+        contents(&[((0, "orange suitcase"), "case1")]),
+    );
+    let narration = FakeNarration::new(NARRATION_REPLY);
+    let mut opts = narrated_opts(&fake, &root, &narration);
+    opts.item_names = vec!["orange suitcase".to_string()];
+    opts.narrated_audios = vec![speech_pause_wav(&root.join("walk.wav"), 16000)];
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let record = &manifest["narration"]["files"][0];
+    assert!(record["error"].is_null(), "got: {record}");
+    assert_eq!(record["duration_s"], json!(6.0));
+    let prepared = record["prepared_duration_s"].as_f64().unwrap();
+    assert!((prepared - 1.6).abs() < 0.05, "got {prepared}");
+    // The model receives the prepared (shorter) file, not the raw one.
+    let calls = narration.calls.borrow();
+    assert_eq!(calls.len(), 1);
+    assert!(
+        calls[0].to_string_lossy().ends_with("-prepared.wav"),
+        "got: {}",
+        calls[0].display()
+    );
+}
+
+/// A 128x96 synthetic "photo": gray wall, one dark box at box_x.
+fn frame_image(dir: &Path, name: &str, box_x: u32, noise: bool) -> PathBuf {
+    let (w, h) = (128u32, 96u32);
+    let mut img = RgbaImage::solid(w, h, [170, 170, 170, 255]);
+    for y in 24..72 {
+        for x in box_x..box_x + 32 {
+            let i = ((y * w + x) * 4) as usize;
+            img.pixels[i..i + 4].copy_from_slice(&[40, 40, 40, 255]);
+        }
+    }
+    if noise {
+        // Deterministic ±2 noise (a small LCG), the recompression
+        // wobble a near-duplicate frame carries.
+        let mut state = 7u32;
+        for px in img.pixels.chunks_exact_mut(4) {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let d = ((state >> 24) % 5) as i32 - 2;
+            for c in 0..3 {
+                px[c] = (px[c] as i32 + d).clamp(0, 255) as u8;
+            }
+        }
+    }
+    let path = dir.join(name);
+    std::fs::write(&path, encode_png_rgba(&img)).unwrap();
+    path
+}
+
+#[test]
+fn frame_dedupe_drops_near_duplicate_keeps_new_angle() {
+    // The P12 constraint as a test pair: a lightly noised copy of
+    // the same view IS a near-duplicate and drops; the same object
+    // from a different position is information and stays.
+    let root = temp_root("dedupepair");
+    let a = frame_image(&root, "a.png", 16, false);
+    let b = frame_image(&root, "b.png", 16, true);
+    let c = frame_image(&root, "c.png", 80, false);
+    let ta = frame_gray_thumbnail(&a).unwrap();
+    let tb = frame_gray_thumbnail(&b).unwrap();
+    let tc = frame_gray_thumbnail(&c).unwrap();
+    let near = frame_mean_abs_diff(&ta, &tb);
+    let angle = frame_mean_abs_diff(&ta, &tc);
+    assert!(
+        near <= FRAME_DEDUPE_MAX_MEAN_ABS_DIFF,
+        "near-duplicate diff {near}"
+    );
+    assert!(
+        angle > FRAME_DEDUPE_MAX_MEAN_ABS_DIFF,
+        "different-angle diff {angle}"
+    );
+}
+
+#[test]
+fn sample_video_frames_dedupes_static_video() {
+    if !ffmpeg_available() {
+        return;
+    }
+    // A 6 s static scene sampled every second: 6 candidate frames,
+    // 5 near-duplicates dropped with scores in the record, 1 kept.
+    let root = temp_root("dedupestatic");
+    let still = frame_image(&root, "still.png", 16, false);
+    let video = root.join("static.mp4");
+    let status = Command::new("ffmpeg")
+        .args(["-v", "error", "-loop", "1", "-i"])
+        .arg(&still)
+        .args(["-t", "6", "-pix_fmt", "yuv420p"])
+        .arg(&video)
+        .arg("-y")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let (frames, note, dropped) =
+        sample_video_frames(&video, &root.join("frames"), 1.0, 8, None);
+    assert!(note.is_none(), "got: {note:?}");
+    assert_eq!(frames.len(), 1, "kept: {frames:?}");
+    assert_eq!(dropped.len(), 5, "dropped: {dropped:?}");
+    let stamps: Vec<f64> = dropped
+        .iter()
+        .map(|d| d["timestamp_s"].as_f64().unwrap())
+        .collect();
+    assert_eq!(stamps, vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    assert!(dropped
+        .iter()
+        .all(|d| d["similarity"].as_f64().unwrap() > 0.98));
+    assert!(frames[0].0.exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,10 +1405,10 @@ fn probe_wav_and_cost_projection() {
     assert_eq!(silent_peak, 0.0);
     // Published rates: $1.25/M in, $4.25/M out; audio priced at
     // 150 tokens/s plus the fixed prompt allowance, output at the cap.
-    let projected = project_narration_cost_usd(10.0, 4096);
+    let projected = project_narration_cost_usd(10.0, 16384);
     assert!(approx(
         projected,
-        (10.0 * 150.0 + 512.0) * 1.25e-6 + 4096.0 * 4.25e-6
+        (10.0 * 150.0 + 512.0) * 1.25e-6 + 16384.0 * 4.25e-6
     ));
     assert!(approx(
         narration_cost_usd(Some(
@@ -1188,6 +1418,249 @@ fn probe_wav_and_cost_projection() {
         1.25 + 4.25
     ));
     assert!(narration_cost_usd(Some(&json!({}))).is_none());
+}
+
+// The diagnostics behind the token-budget fix (film run P12,
+// 2026-10-31): on Daniel's real 58.9 s backyard clip the model's
+// reasoning ran 5,474 tokens and the full reply took 5,668 completion
+// tokens, while the shipped cap was 4096 -- so the shipped call could
+// only ever return an empty reply. The same call at an 8000 cap
+// recovered the full transcript and sort.
+const DIAGNOSTIC_COMPLETION_TOKENS: u32 = 5668;
+
+const DIAGNOSTIC_REPLY: &str = "TRANSCRIPT\nKeeping the cornhole. Probably selling this white bike.\n\nSELLING\nthis white bike\n\nKEEP\nthe cornhole\n\nMENTIONED\nNONE\n";
+
+#[test]
+fn narration_budget_covers_the_diagnostic_clip() {
+    let payload = narration_payload("data:audio/wav;base64,AAAA");
+    // The shipped request must leave room for the diagnostic clip's
+    // reasoning AND its answer; under the old 4096 cap this exact
+    // response could never have been produced.
+    assert_eq!(
+        payload["max_tokens"].as_u64().unwrap(),
+        NARRATION_MAX_TOKENS as u64
+    );
+    assert!(NARRATION_MAX_TOKENS > DIAGNOSTIC_COMPLETION_TOKENS);
+    // And the raise must not break the cost gate: the worst in-bounds
+    // projection (a full 5-minute clip at the narration limit) stays
+    // under the refusal cap.
+    let worst = project_narration_cost_usd(NARRATION_MAX_DURATION_S, NARRATION_MAX_TOKENS);
+    assert!(
+        worst < NARRATION_DEFAULT_MAX_PROJECTED_USD,
+        "worst projection {worst}"
+    );
+}
+
+#[test]
+fn narration_reply_with_heavy_reasoning_still_yields_its_answer() {
+    let body = json!({
+        "model": NARRATION_MODEL,
+        "choices": [{
+            "message": {"content": DIAGNOSTIC_REPLY},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": 1102,
+            "completion_tokens": DIAGNOSTIC_COMPLETION_TOKENS,
+            "completion_tokens_details": {"reasoning_tokens": 5474},
+        },
+    });
+    let result = interpret_narration_body(&body, 42).unwrap();
+    assert_eq!(result["reply"].as_str().unwrap(), DIAGNOSTIC_REPLY);
+    let parsed = parse_narration_reply(result["reply"].as_str());
+    assert_eq!(parsed.selling, vec!["this white bike".to_string()]);
+    assert_eq!(parsed.keep, vec!["the cornhole".to_string()]);
+}
+
+#[test]
+fn narration_empty_reply_is_a_loud_error_with_a_correction_path() {
+    let body = json!({
+        "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 1102, "completion_tokens": 16384},
+    });
+    let message = interpret_narration_body(&body, 42).unwrap_err();
+    assert!(message.contains("empty reply"), "{message}");
+    assert!(message.contains("16384 completion tokens"), "{message}");
+    assert!(
+        message.contains("Trim the recording to about a minute or less"),
+        "{message}"
+    );
+}
+
+#[test]
+fn narration_cut_off_reply_is_a_loud_error_with_a_correction_path() {
+    let body = json!({
+        "choices": [{
+            "message": {"content": "TRANSCRIPT\nKeeping the corn"},
+            "finish_reason": "length",
+        }],
+        "usage": {"prompt_tokens": 1102, "completion_tokens": 16384},
+    });
+    let message = interpret_narration_body(&body, 42).unwrap_err();
+    assert!(message.contains("cut off by the token budget"), "{message}");
+    assert!(
+        message.contains("Trim the recording to about a minute or less"),
+        "{message}"
+    );
+}
+
+#[test]
+fn plan_narration_chunks_shapes() {
+    // The diagnostic clip stays a single call, exactly as it ran.
+    assert_eq!(plan_narration_chunks(58.88), vec![(0.0, 58.88)]);
+    // Five minutes (Daniel, 2026-10-31: judges may try a long clip
+    // live) plans to exactly five minute-sized pieces.
+    assert_eq!(
+        plan_narration_chunks(300.0),
+        vec![
+            (0.0, 60.0),
+            (60.0, 120.0),
+            (120.0, 180.0),
+            (180.0, 240.0),
+            (240.0, 300.0),
+        ]
+    );
+    // A sliver remainder joins the previous piece instead of calling
+    // on its own; a real remainder gets its own piece.
+    assert_eq!(plan_narration_chunks(61.0), vec![(0.0, 61.0)]);
+    assert_eq!(
+        plan_narration_chunks(134.0),
+        vec![(0.0, 60.0), (60.0, 134.0)]
+    );
+    assert_eq!(
+        plan_narration_chunks(135.0),
+        vec![(0.0, 60.0), (60.0, 120.0), (120.0, 135.0)]
+    );
+}
+
+#[test]
+fn long_clip_narration_calls_per_piece_and_merges() {
+    let root = temp_root("pieces");
+    let wav = wav_file(&root.join("long.wav"), 130.0, 8000, 0.5);
+    let replies = [
+        "TRANSCRIPT\nFirst part.\n\nSELLING\nbike\n\nKEEP\nNONE\n\nMENTIONED\nNONE\n",
+        "TRANSCRIPT\nSecond part.\n\nSELLING\ngrill\n\nKEEP\ncornhole\n\nMENTIONED\nbubbles\n",
+    ];
+    let calls: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let call = |data_url: &str| -> Result<Value, String> {
+        let mut calls = calls.borrow_mut();
+        calls.push(data_url.to_string());
+        Ok(json!({
+            "reply": replies[calls.len() - 1],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 5000},
+            "latency_ms": 7,
+            "model": NARRATION_MODEL,
+        }))
+    };
+    let result = narrate_with_caller(&wav, &call).unwrap();
+    let calls = calls.borrow();
+    // 130 s plans to two pieces: the 10 s remainder merges into the
+    // second piece rather than calling on its own.
+    assert_eq!(calls.len(), 2);
+    // The second piece carries 70 s against the first's 60 s: the
+    // data URLs' lengths track the audio they encode, so no part of
+    // the clip was dropped or repeated at the boundary. (The Python
+    // suite proves the same coverage byte-exactly.)
+    let ratio = calls[1].len() as f64 / calls[0].len() as f64;
+    assert!(ratio > 1.1 && ratio < 1.25, "piece length ratio {ratio}");
+    let parsed = parse_narration_reply(result["reply"].as_str());
+    assert!(parsed.transcript.contains("First part."));
+    assert!(parsed.transcript.contains("Second part."));
+    assert_eq!(parsed.selling, vec!["bike".to_string(), "grill".to_string()]);
+    assert_eq!(parsed.keep, vec!["cornhole".to_string()]);
+    assert_eq!(parsed.mentioned, vec!["bubbles".to_string()]);
+    assert_eq!(
+        result["usage"],
+        json!({"prompt_tokens": 200, "completion_tokens": 10000})
+    );
+    assert_eq!(result["latency_ms"], 14);
+    // Piece files are transport; only the source WAV remains.
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["long.wav".to_string()]);
+}
+
+#[test]
+fn five_minute_clip_narration_is_five_calls() {
+    let root = temp_root("fivemin");
+    let wav = wav_file(&root.join("five.wav"), 300.0, 8000, 0.5);
+    let count: RefCell<usize> = RefCell::new(0);
+    let call = |_data_url: &str| -> Result<Value, String> {
+        *count.borrow_mut() += 1;
+        Ok(json!({
+            "reply": "TRANSCRIPT\npart\n\nSELLING\nNONE\n\nKEEP\nNONE\n\nMENTIONED\nNONE\n",
+            "usage": {"prompt_tokens": 1100, "completion_tokens": 5600},
+            "latency_ms": 5,
+            "model": NARRATION_MODEL,
+        }))
+    };
+    let result = narrate_with_caller(&wav, &call).unwrap();
+    assert_eq!(*count.borrow(), 5);
+    assert_eq!(result["usage"]["completion_tokens"], 5 * 5600);
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["five.wav".to_string()]);
+}
+
+#[test]
+fn long_clip_piece_failure_names_the_piece() {
+    let root = temp_root("piecefail");
+    let wav = wav_file(&root.join("long.wav"), 130.0, 8000, 0.5);
+    let count: RefCell<usize> = RefCell::new(0);
+    let call = |_data_url: &str| -> Result<Value, String> {
+        *count.borrow_mut() += 1;
+        if *count.borrow() == 2 {
+            return Err(
+                "RuntimeError: Baseten narration call returned an empty reply".to_string(),
+            );
+        }
+        Ok(json!({
+            "reply": "TRANSCRIPT\npart\n\nSELLING\nNONE\n",
+            "usage": {},
+            "latency_ms": 1,
+            "model": NARRATION_MODEL,
+        }))
+    };
+    let message = narrate_with_caller(&wav, &call).unwrap_err();
+    assert!(
+        message.contains("narration piece 2 of 2 failed"),
+        "{message}"
+    );
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["long.wav".to_string()]);
+}
+
+#[test]
+fn over_limit_clip_gets_a_polite_refusal_naming_the_limit() {
+    let _guard = env_lock();
+    let root = temp_root("toolong");
+    let photos = vec![photo(&root, "case.png", [200, 90, 10, 255])];
+    let fake = FakeChain::new(
+        &root,
+        vec![plan("orange suitcase")],
+        contents(&[((0, "orange suitcase"), "case1")]),
+    );
+    let narration = FakeNarration::new(NARRATION_REPLY);
+    let mut opts = narrated_opts(&fake, &root, &narration);
+    opts.item_names = vec!["orange suitcase".to_string()];
+    opts.narrated_audios = vec![wav_file(&root.join("toolong.wav"), 301.0, 8000, 0.5)];
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let record = &manifest["narration"]["files"][0];
+    assert_eq!(record["error"]["code"], "NARRATION_TOO_LONG");
+    let message = record["error"]["message"].as_str().unwrap();
+    // The refusal is the correction path (decision 114): it names
+    // the 5-minute limit and says what to do instead.
+    assert!(message.contains("5-minute limit"), "{message}");
+    assert!(message.contains("upload a shorter video"), "{message}");
+    assert!(narration.calls.borrow().is_empty()); // refused before any call
+    assert_eq!(manifest["items"][0]["status"], "staged"); // stills run intact
 }
 
 #[test]

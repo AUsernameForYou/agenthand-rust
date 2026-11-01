@@ -59,9 +59,49 @@ pub const DEFAULT_BUDGET_USD: f64 = 1.00;
 // transcript AND the sale intent in one call: narration is where a
 // video tour turns into the seller's item list.
 pub const NARRATION_MODEL: &str = "meta-models/muse-spark-open-1026";
-pub const NARRATION_MAX_TOKENS: u32 = 4096;
-pub const NARRATION_MAX_DURATION_S: f64 = 600.0;
-pub const NARRATION_DEFAULT_MAX_PROJECTED_USD: f64 = 0.25;
+/// Spark Open always reasons before it answers, and the reasoning
+/// grows with the clip. The voice spike showed a 1024-token cap fully
+/// consumed by reasoning, leaving an empty reply; 4096 covered the
+/// short spikes but not a real walkthrough: on Daniel's 58.9 s
+/// backyard clip the model's reasoning alone ran 5,474 tokens (5,668
+/// completion total) before any answer text, so the shipped 4096 cap
+/// returned an empty reply (film run P12, 2026-10-31; the same call
+/// at an 8000 cap recovered the full transcript and sort). The cap is
+/// 16384 PER PIECE: narration splits any clip longer than
+/// NARRATION_CHUNK_SECONDS into pieces (below), so no single call
+/// ever faces more than a minute of audio. A minute at the worst
+/// observed reasoning rate (~121 tokens/s, the 24 s voice spike)
+/// needs ~7,300 reasoning tokens plus its share of transcript, so
+/// 16384 carries >2x headroom per piece; for the 58.9 s diagnostic
+/// clip in one piece it is ~2.9x the whole observed completion. The
+/// cap is a fixed constant rather than duration-scaled on purpose:
+/// billing is per token actually used, so the cap only feeds the
+/// cost projection; a formula would add cross-build parity surface
+/// for no billing benefit. A piece whose reasoning still eats the
+/// whole budget fails loudly with a correction path (see
+/// interpret_narration_body), never a silent empty result.
+pub const NARRATION_MAX_TOKENS: u32 = 16384;
+/// Pieces are a minute because that is the proven envelope: the
+/// diagnostic clip (58.9 s, one call) is the longest single call ever
+/// observed end to end, request size and latency included. A trailing
+/// remainder shorter than the merge bound joins the previous piece
+/// instead of becoming a sliver call of its own.
+pub const NARRATION_CHUNK_SECONDS: f64 = 60.0;
+pub const NARRATION_CHUNK_MERGE_REMAINDER_S: f64 = 15.0;
+/// The narration limit: clips up to 5 minutes are accepted (chunked
+/// into per-minute calls); a longer clip gets the polite
+/// NARRATION_TOO_LONG refusal naming this limit (Daniel, 2026-10-31).
+/// Baseten caps files at 5 minutes too, so the limit also matches
+/// the upstream ceiling.
+pub const NARRATION_MAX_DURATION_S: f64 = 300.0;
+/// A narration file whose worst-case projection exceeds this is
+/// refused before any call is made. The projection is honestly
+/// worst-case (every piece priced at the full token cap): a
+/// 5-minute file projects to ~$0.41 worst case against ~$0.13 of
+/// expected actual usage at observed rates, so $0.50 covers the
+/// whole supported envelope with headroom and the gate only trips
+/// on a pathological input or a misprobed duration.
+pub const NARRATION_DEFAULT_MAX_PROJECTED_USD: f64 = 0.50;
 pub const NARRATION_TOKENS_PER_SECOND: f64 = 150.0;
 pub const NARRATION_PROMPT_TOKENS_FLOOR: f64 = 512.0;
 pub const NARRATION_SILENCE_PEAK: f64 = 0.01; // ~ -40 dBFS
@@ -488,22 +528,89 @@ pub fn collect_stills(paths: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
+// ----------------------------------------------------------------------
+// Sampled-frame dedupe (token saver, 2026-10-31): frames are compared
+// against the last KEPT frame as 16x16 grayscale box-mean thumbnails;
+// a candidate whose mean absolute thumbnail difference is at most
+// FRAME_DEDUPE_MAX_MEAN_ABS_DIFF gray levels is a near-duplicate and
+// is dropped before any paid identify call. The bar is deliberately
+// strict: the P12 run showed a second angle of the same item is
+// information, not duplication, and a moved camera or repositioned
+// object scores far above this bound (see the test pair in
+// tests/roomrun.rs). Every drop is logged with its similarity score
+// in the run record ("frames_dropped").
+// ----------------------------------------------------------------------
+
+pub const FRAME_DEDUPE_CELLS: usize = 16;
+pub const FRAME_DEDUPE_MAX_MEAN_ABS_DIFF: f64 = 3.0;
+
+/// 16x16 grayscale box-mean thumbnail of an image file, or None.
+/// Gray uses integer Rec. 601 luma ((299R + 587G + 114B) / 1000);
+/// each cell averages the source box [c*W/16, (c+1)*W/16) on both
+/// axes. The Python build computes the identical values.
+pub fn frame_gray_thumbnail(path: &Path) -> Option<[f64; 256]> {
+    let data = std::fs::read(path).ok()?;
+    let img = crate::image::decode_image(&data).ok()?.into_rgba();
+    let (w, h) = (img.width as usize, img.height as usize);
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let cells = FRAME_DEDUPE_CELLS;
+    let mut thumb = [0.0f64; 256];
+    for cy in 0..cells {
+        let y0 = cy * h / cells;
+        let y1 = ((cy + 1) * h / cells).max(y0 + 1);
+        for cx in 0..cells {
+            let x0 = cx * w / cells;
+            let x1 = ((cx + 1) * w / cells).max(x0 + 1);
+            let mut sum = 0.0f64;
+            let mut count = 0.0f64;
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = (y * w + x) * 4;
+                    let gray = (299 * img.pixels[i] as u32
+                        + 587 * img.pixels[i + 1] as u32
+                        + 114 * img.pixels[i + 2] as u32)
+                        / 1000;
+                    sum += gray as f64;
+                    count += 1.0;
+                }
+            }
+            thumb[cy * cells + cx] = sum / count;
+        }
+    }
+    Some(thumb)
+}
+
+/// Mean absolute difference between two grayscale thumbnails.
+pub fn frame_mean_abs_diff(a: &[f64; 256], b: &[f64; 256]) -> f64 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x - y).abs())
+        .sum::<f64>()
+        / 256.0
+}
+
 /// Extract stills from a seller's room video with the system ffmpeg.
 ///
 /// The room pool deserves more than a poster frame: items are named
 /// against the whole walk-through. Frames are sampled sparsely; an
 /// un-sampleable video is a note in the manifest, never a run error.
+/// Returns (kept frames, note, dropped-frame records with similarity
+/// scores) — near-duplicates are dropped during sampling, before any
+/// paid identify call.
 pub fn sample_video_frames(
     video_path: &Path,
     out_dir: &Path,
     every_seconds: f64,
     max_frames: usize,
     ffmpeg: Option<&str>,
-) -> (Vec<(PathBuf, f64)>, Option<String>) {
+) -> (Vec<(PathBuf, f64)>, Option<String>, Vec<Value>) {
     let Some(ffmpeg_bin) = resolve_ffmpeg(ffmpeg) else {
         return (
             Vec::new(),
             Some("ffmpeg not found on PATH; video frames not sampled".to_string()),
+            Vec::new(),
         );
     };
     let probe = Command::new("ffprobe")
@@ -533,6 +640,7 @@ pub fn sample_video_frames(
                 "ffprobe could not read {}; frames not sampled",
                 video_path.display()
             )),
+            Vec::new(),
         );
     };
     let _ = std::fs::create_dir_all(out_dir);
@@ -541,6 +649,8 @@ pub fn sample_video_frames(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let mut frames: Vec<(PathBuf, f64)> = Vec::new();
+    let mut dropped: Vec<Value> = Vec::new();
+    let mut last_thumb: Option<[f64; 256]> = None;
     let mut t = 0.0f64;
     while t < duration && frames.len() < max_frames {
         let frame_path = out_dir.join(format!("{stem}-t{t:05.1}s.jpg"));
@@ -566,7 +676,26 @@ pub fn sample_video_frames(
                 .map(|m| m.len() > 0)
                 .unwrap_or(false);
         if ok {
+            let thumb = frame_gray_thumbnail(&frame_path);
+            let diff = match (&thumb, &last_thumb) {
+                (Some(a), Some(b)) => Some(frame_mean_abs_diff(a, b)),
+                _ => None,
+            };
+            if let Some(diff) = diff {
+                if diff <= FRAME_DEDUPE_MAX_MEAN_ABS_DIFF {
+                    dropped.push(json!({
+                        "timestamp_s": python_round(t, 2),
+                        "similarity": python_round(1.0 - diff / 255.0, 4),
+                    }));
+                    let _ = std::fs::remove_file(&frame_path);
+                    t += every_seconds;
+                    continue;
+                }
+            }
             frames.push((frame_path, python_round(t, 2)));
+            if thumb.is_some() {
+                last_thumb = thumb;
+            }
         }
         t += every_seconds;
     }
@@ -577,18 +706,51 @@ pub fn sample_video_frames(
                 "ffmpeg extracted no frames from {}",
                 video_path.display()
             )),
+            dropped,
         );
     }
-    (frames, None)
+    (frames, None, dropped)
 }
 
 // ----------------------------------------------------------------------
 // Narration: Baseten Spark Open (partner-credit pool)
 // ----------------------------------------------------------------------
 
+/// Split a clip's timeline into narration pieces.
+///
+/// Pure. A clip at or under NARRATION_CHUNK_SECONDS is one piece (the
+/// only shape older runs ever made). Longer clips cut into
+/// chunk-sized windows; a trailing remainder under
+/// NARRATION_CHUNK_MERGE_REMAINDER_S joins the previous window
+/// instead of becoming a sliver call. A 5-minute clip plans to
+/// exactly 5 pieces.
+pub fn plan_narration_chunks(duration_s: f64) -> Vec<(f64, f64)> {
+    if duration_s <= NARRATION_CHUNK_SECONDS {
+        return vec![(0.0, duration_s)];
+    }
+    let mut chunks: Vec<(f64, f64)> = Vec::new();
+    let mut start = 0.0;
+    while duration_s - start > NARRATION_CHUNK_SECONDS {
+        chunks.push((start, start + NARRATION_CHUNK_SECONDS));
+        start += NARRATION_CHUNK_SECONDS;
+    }
+    if !chunks.is_empty() && duration_s - start < NARRATION_CHUNK_MERGE_REMAINDER_S {
+        let last = chunks.last_mut().expect("chunks is non-empty");
+        last.1 = duration_s;
+    } else {
+        chunks.push((start, duration_s));
+    }
+    chunks
+}
+
+/// Worst-case price of narrating one file at the published rates.
+///
+/// Output is priced per planned piece at the full token cap: with
+/// chunking, a long file's worst case is pieces x cap, not one cap.
 pub fn project_narration_cost_usd(duration_s: f64, max_tokens: u32) -> f64 {
     let prompt_tokens = duration_s * NARRATION_TOKENS_PER_SECOND + NARRATION_PROMPT_TOKENS_FLOOR;
-    prompt_tokens * 1.25 / 1_000_000.0 + max_tokens as f64 * 4.25 / 1_000_000.0
+    let pieces = plan_narration_chunks(duration_s).len() as f64;
+    prompt_tokens * 1.25 / 1_000_000.0 + pieces * max_tokens as f64 * 4.25 / 1_000_000.0
 }
 
 /// Real cost from reported usage; None when usage is absent (the
@@ -703,6 +865,163 @@ pub fn parse_narration_reply(text: Option<&str>) -> NarrationParse {
         keep: clean_items(&sections[2]),
         mentioned: clean_items(&sections[3]),
     }
+}
+
+// ----------------------------------------------------------------------
+// Narration audio prep (token saver, 2026-10-31): trim silence and
+// downsample before the narration call. Detection is deliberately
+// conservative: a 10 ms frame counts as speech when its peak reaches
+// the same -40 dBFS floor the silence gate uses, every kept region
+// is padded 200 ms on both sides, and gaps up to 800 ms are bridged,
+// so nothing at or above the floor can be clipped. Any prep failure
+// falls back to the original WAV: prep is an optimization, never a
+// new failure mode. The 5-minute refusal and the cost projection
+// stay priced on the ORIGINAL duration; this only shrinks the send.
+// ----------------------------------------------------------------------
+
+pub const NARRATION_PREP_TARGET_RATE: u32 = 16000;
+const NARRATION_PREP_FRAME_S: f64 = 0.01;
+const NARRATION_PREP_PAD_S: f64 = 0.2;
+const NARRATION_PREP_BRIDGE_S: f64 = 0.8;
+
+/// Trim silence from a narration WAV and downsample it for the call.
+/// Returns (path to send, prepared duration in seconds when a shorter
+/// prepared file was written).
+pub fn prepare_narration_audio(wav_path: &Path) -> (PathBuf, Option<f64>) {
+    let fallback = || (wav_path.to_path_buf(), None);
+    let Ok(data) = std::fs::read(wav_path) else {
+        return fallback();
+    };
+    if data.len() < 44 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return fallback();
+    }
+    let mut fmt: Option<(u16, u16, u32, usize)> = None; // (format, channels, rate, sampwidth)
+    let mut pcm: Option<&[u8]> = None;
+    let mut pos = 12usize;
+    while pos + 8 <= data.len() {
+        let id = &data[pos..pos + 4];
+        let size =
+            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                as usize;
+        let start = pos + 8;
+        let end = (start + size).min(data.len());
+        match id {
+            b"fmt " => {
+                if end - start >= 16 {
+                    let audio_format = u16::from_le_bytes([data[start], data[start + 1]]);
+                    let channels = u16::from_le_bytes([data[start + 2], data[start + 3]]);
+                    let rate = u32::from_le_bytes([
+                        data[start + 4],
+                        data[start + 5],
+                        data[start + 6],
+                        data[start + 7],
+                    ]);
+                    let bits = u16::from_le_bytes([data[start + 14], data[start + 15]]);
+                    fmt = Some((audio_format, channels, rate, (bits as usize + 7) / 8));
+                }
+            }
+            b"data" => pcm = Some(&data[start..end]),
+            _ => {}
+        }
+        pos = start + size + (size % 2);
+    }
+    let Some((audio_format, channels, rate, sampwidth)) = fmt else {
+        return fallback();
+    };
+    if audio_format != 1 || sampwidth != 2 || !(1..=2).contains(&channels) || rate == 0 {
+        return fallback();
+    }
+    let Some(raw) = pcm else { return fallback() };
+    let n_pairs = raw.len() / 2;
+    let mut samples: Vec<i16> = Vec::with_capacity(n_pairs);
+    for i in 0..n_pairs {
+        samples.push(i16::from_le_bytes([raw[2 * i], raw[2 * i + 1]]));
+    }
+    if channels == 2 {
+        let mut mono: Vec<i16> = Vec::with_capacity(samples.len() / 2);
+        let mut i = 0;
+        while i + 1 < samples.len() {
+            // i32 division truncates toward zero, as in the Python build.
+            mono.push(((samples[i] as i32 + samples[i + 1] as i32) / 2) as i16);
+            i += 2;
+        }
+        samples = mono;
+    }
+    let total = samples.len();
+    if total == 0 {
+        return fallback();
+    }
+    let frame_len = ((rate as f64 * NARRATION_PREP_FRAME_S) as usize).max(1);
+    let floor_peak = NARRATION_SILENCE_PEAK * 32767.0;
+    let mut speech: Vec<bool> = Vec::new();
+    let mut start = 0usize;
+    while start < total {
+        let end = (start + frame_len).min(total);
+        let mut peak = 0i32;
+        for s in &samples[start..end] {
+            peak = peak.max((*s as i32).abs());
+        }
+        speech.push(peak as f64 >= floor_peak);
+        start += frame_len;
+    }
+    if !speech.iter().any(|&s| s) {
+        return fallback();
+    }
+    let pad = (rate as f64 * NARRATION_PREP_PAD_S) as usize;
+    let bridge = (rate as f64 * NARRATION_PREP_BRIDGE_S) as usize;
+    let mut regions: Vec<(usize, usize)> = Vec::new();
+    for (index, &is_speech) in speech.iter().enumerate() {
+        if !is_speech {
+            continue;
+        }
+        let lo = (index * frame_len).saturating_sub(pad);
+        let hi = ((index + 1) * frame_len + pad).min(total);
+        if let Some(last) = regions.last_mut() {
+            if lo <= last.1 + bridge {
+                last.1 = hi;
+                continue;
+            }
+        }
+        regions.push((lo, hi));
+    }
+    let mut kept: Vec<i16> = Vec::new();
+    for (lo, hi) in &regions {
+        kept.extend_from_slice(&samples[*lo..*hi]);
+    }
+    let mut out_rate = rate;
+    if rate % NARRATION_PREP_TARGET_RATE == 0 {
+        let factor = (rate / NARRATION_PREP_TARGET_RATE) as usize;
+        if factor > 1 {
+            let usable = kept.len() - kept.len() % factor;
+            let mut down: Vec<i16> = Vec::with_capacity(usable / factor);
+            let mut i = 0;
+            while i < usable {
+                let sum: i32 = kept[i..i + factor].iter().map(|&s| s as i32).sum();
+                let mean = (sum as f64 / factor as f64).round();
+                down.push(mean.clamp(-32768.0, 32767.0) as i16);
+                i += factor;
+            }
+            kept = down;
+            out_rate = rate / factor as u32;
+        }
+    }
+    if kept.len() >= total && out_rate == rate {
+        return fallback();
+    }
+    let stem = wav_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let out_path = wav_path.with_file_name(format!("{stem}-prepared.wav"));
+    let mut bytes = Vec::with_capacity(kept.len() * 2);
+    for s in &kept {
+        bytes.extend_from_slice(&s.to_le_bytes());
+    }
+    if write_wav_piece(&out_path, 1, out_rate, 2, &bytes).is_err() {
+        return fallback();
+    }
+    let duration = kept.len() as f64 / out_rate as f64;
+    (out_path, Some(duration))
 }
 
 /// (duration_seconds, peak_fraction) for a PCM WAV, measured with a
@@ -1075,14 +1394,76 @@ fn build_narration_client() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| format!("URLError: cannot build HTTP client: {e}"))
 }
 
-/// The production narration call (Baseten Spark Open, partner pool).
+/// The narration request body. Pure, so tests can pin the budget.
 ///
-/// The key lives behind Muse's credential helper and is never read
-/// here: the helper issues an hsurr surrogate that the egress proxy
-/// swaps for the real key, exactly the discipline the Python helper
-/// (send_audio.py in the voice spike) proved on 2026-10-28.
-pub fn default_narration_fn(audio_path: &Path) -> NarrationResult {
-    let surrogate = fetch_baseten_surrogate()?;
+/// The max_tokens value is the fix for the P12 failure: it must stay
+/// well above the reasoning a real walkthrough generates before any
+/// answer text (5,474 tokens on the 58.9 s diagnostic clip).
+pub fn narration_payload(data_url: &str) -> Value {
+    json!({
+        "model": NARRATION_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": NARRATION_PROMPT},
+                {"type": "audio_url", "audio_url": {"url": data_url}},
+            ],
+        }],
+        "max_tokens": NARRATION_MAX_TOKENS,
+    })
+}
+
+/// Usage parenthetical for the budget error, when it was reported.
+fn narration_budget_remedy(usage: &Value) -> String {
+    match usage.get("completion_tokens").and_then(Value::as_i64) {
+        Some(completion) => {
+            format!(" (usage: {completion} completion tokens, budget {NARRATION_MAX_TOKENS})")
+        }
+        None => String::new(),
+    }
+}
+
+/// Turn a Baseten chat-completions body into the narration record.
+///
+/// Pure, so tests can drive it with stubbed bodies. The failure this
+/// guards is silent degradation: a reply whose reasoning ate the
+/// whole budget comes back empty (or cut off mid-answer), and an
+/// empty transcript would otherwise flow into the manifest as if
+/// the seller said nothing. Both shapes error with the cause and a
+/// correction path (decision 114); narrate_one records the failure
+/// as a NARRATION_FAILED row and the stills run continues.
+pub fn interpret_narration_body(body: &Value, latency_ms: i64) -> NarrationResult {
+    let choice = body.pointer("/choices/0").cloned().unwrap_or_else(|| json!({}));
+    let content = choice
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let usage = body.get("usage").cloned().unwrap_or_else(|| json!({}));
+    let remedy = "Trim the recording to about a minute or less and narrate that, or re-record a shorter walkthrough.";
+    if content.trim().is_empty() {
+        return Err(format!(
+            "RuntimeError: Baseten narration call returned an empty reply: the model's reasoning spent the token budget before any transcript was written{}. {remedy}",
+            narration_budget_remedy(&usage)
+        ));
+    }
+    if choice.get("finish_reason").and_then(Value::as_str) == Some("length") {
+        return Err(format!(
+            "RuntimeError: Baseten narration call was cut off by the token budget before the reply finished (finish_reason 'length'{}); the transcript would be incomplete. {remedy}",
+            narration_budget_remedy(&usage)
+        ));
+    }
+    Ok(json!({
+        "reply": content,
+        "usage": usage,
+        "latency_ms": latency_ms,
+        "model": body.get("model").cloned().unwrap_or(json!(NARRATION_MODEL)),
+    }))
+}
+
+/// Build the data: URL for an audio file (the wire shape the spike
+/// proved: base64 bytes behind an audio_url content part).
+fn narration_data_url(audio_path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(audio_path)
         .map_err(|e| format!("RuntimeError: could not read narration audio: {e}"))?;
     let mime = match suffix_lower(audio_path).as_str() {
@@ -1096,22 +1477,225 @@ pub fn default_narration_fn(audio_path: &Path) -> NarrationResult {
         _ => "application/octet-stream",
     };
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let payload = json!({
-        "model": NARRATION_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": NARRATION_PROMPT},
-                {"type": "audio_url", "audio_url": {"url": format!("data:{mime};base64,{encoded}")}},
-            ],
-        }],
-        "max_tokens": NARRATION_MAX_TOKENS,
+    Ok(format!("data:{mime};base64,{encoded}"))
+}
+
+/// Write one WAV per planned chunk, beside the source WAV.
+///
+/// Walks the RIFF chunks the way probe_wav does and re-frames the
+/// PCM data under a canonical header carrying the source's format.
+/// The caller owns the piece files and deletes them; pieces are
+/// transport, never deliverables.
+pub fn slice_wav_pieces(
+    wav_path: &Path,
+    chunks: &[(f64, f64)],
+) -> Result<Vec<PathBuf>, String> {
+    let data = std::fs::read(wav_path).map_err(|e| e.to_string())?;
+    if data.len() < 44 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err("file does not start with RIFF id".to_string());
+    }
+    let mut fmt: Option<(u16, u16, u32, usize)> = None; // (format, channels, rate, sampwidth)
+    let mut pcm: Option<(usize, usize)> = None; // (start, len)
+    let mut pos = 12usize;
+    while pos + 8 <= data.len() {
+        let id = &data[pos..pos + 4];
+        let size =
+            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+                as usize;
+        let start = pos + 8;
+        let end = (start + size).min(data.len());
+        match id {
+            b"fmt " => {
+                if end - start >= 16 {
+                    let audio_format = u16::from_le_bytes([data[start], data[start + 1]]);
+                    let channels = u16::from_le_bytes([data[start + 2], data[start + 3]]);
+                    let rate = u32::from_le_bytes([
+                        data[start + 4],
+                        data[start + 5],
+                        data[start + 6],
+                        data[start + 7],
+                    ]);
+                    let bits = u16::from_le_bytes([data[start + 14], data[start + 15]]);
+                    fmt = Some((audio_format, channels, rate, (bits as usize + 7) / 8));
+                }
+            }
+            b"data" => {
+                pcm = Some((start, end - start));
+            }
+            _ => {}
+        }
+        pos = start + size + (size % 2);
+    }
+    let (audio_format, channels, rate, sampwidth) = fmt.ok_or("fmt chunk not found")?;
+    if audio_format != 1 {
+        return Err(format!("unknown format: {audio_format}"));
+    }
+    let (data_start, data_len) = pcm.ok_or("data chunk not found")?;
+    let frame_bytes = sampwidth.max(1) * (channels as usize).max(1);
+    let stem = wav_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut pieces = Vec::new();
+    for (i, (start_s, end_s)) in chunks.iter().enumerate() {
+        let start_f = (start_s * rate as f64).round() as usize;
+        let end_f = (end_s * rate as f64).round() as usize;
+        let byte_from = data_start + (start_f * frame_bytes).min(data_len);
+        let byte_to = data_start + (end_f * frame_bytes).min(data_len);
+        let piece = wav_path.with_file_name(format!("{stem}.piece{:02}.wav", i + 1));
+        write_wav_piece(
+            &piece,
+            channels,
+            rate,
+            sampwidth,
+            &data[byte_from..byte_to.max(byte_from)],
+        )?;
+        pieces.push(piece);
+    }
+    Ok(pieces)
+}
+
+fn write_wav_piece(
+    path: &Path,
+    channels: u16,
+    rate: u32,
+    sampwidth: usize,
+    pcm: &[u8],
+) -> Result<(), String> {
+    let block_align = channels * sampwidth as u16;
+    let byte_rate = rate * block_align as u32;
+    let data_len = pcm.len() as u32;
+    let mut out = Vec::with_capacity(44 + pcm.len());
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&block_align.to_le_bytes());
+    out.extend_from_slice(&((sampwidth * 8) as u16).to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    out.extend_from_slice(pcm);
+    std::fs::write(path, out).map_err(|e| e.to_string())
+}
+
+/// Fold per-piece narration records into the file's one record.
+///
+/// Replies join in timeline order; parse_narration_reply reads the
+/// repeated headings as one document, so the transcript reads
+/// continuously (a sentence can straddle a piece boundary) and the
+/// item lists union. Usage sums the pieces' prompt/completion
+/// tokens, which is what the cost estimate prices.
+pub fn merge_narration_replies(results: &[Value]) -> Value {
+    let token_sum = |key: &str| -> i64 {
+        results
+            .iter()
+            .map(|r| {
+                r.pointer(&format!("/usage/{key}"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+            })
+            .sum()
+    };
+    let any_usage = results.iter().any(|r| {
+        r.get("usage")
+            .and_then(Value::as_object)
+            .map(|o| !o.is_empty())
+            .unwrap_or(false)
     });
-    let client = build_narration_client()?;
+    let usage = if any_usage {
+        json!({
+            "prompt_tokens": token_sum("prompt_tokens"),
+            "completion_tokens": token_sum("completion_tokens"),
+        })
+    } else {
+        json!({})
+    };
+    json!({
+        "reply": results
+            .iter()
+            .map(|r| r["reply"].as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        "usage": usage,
+        "latency_ms": results
+            .iter()
+            .map(|r| r["latency_ms"].as_i64().unwrap_or(0))
+            .sum::<i64>(),
+        "model": results[0]
+            .get("model")
+            .cloned()
+            .unwrap_or(json!(NARRATION_MODEL)),
+    })
+}
+
+/// Production narration for one extracted WAV, with the per-piece
+/// call injected (tests drive it with a fake; production passes the
+/// real Baseten call).
+///
+/// Clips up to a minute make the single call older runs always made.
+/// Longer clips are sliced into planned pieces, one call per piece,
+/// and the replies merge into the file's one record, so a 5-minute
+/// walkthrough narrates end to end instead of dying on the first
+/// call's token budget. A WAV the slicer cannot cut (a non-PCM
+/// original used as-is) falls back to the single call, which then
+/// succeeds or fails loudly on its own budget.
+pub fn narrate_with_caller(
+    audio_path: &Path,
+    call: &dyn Fn(&str) -> NarrationResult,
+) -> NarrationResult {
+    let duration = probe_wav(audio_path).map(|(d, _)| d).unwrap_or(0.0);
+    let chunks = plan_narration_chunks(duration);
+    if chunks.len() <= 1 {
+        return call(&narration_data_url(audio_path)?);
+    }
+    let pieces = match slice_wav_pieces(audio_path, &chunks) {
+        Ok(pieces) => pieces,
+        Err(_) => return call(&narration_data_url(audio_path)?),
+    };
+    let total = pieces.len();
+    let mut results: Vec<Value> = Vec::new();
+    let mut failure: Option<String> = None;
+    for (i, piece) in pieces.iter().enumerate() {
+        let step = narration_data_url(piece).and_then(|url| call(&url));
+        match step {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                let inner = e.strip_prefix("RuntimeError: ").unwrap_or(&e);
+                failure = Some(format!(
+                    "RuntimeError: narration piece {} of {} failed: {}",
+                    i + 1,
+                    total,
+                    inner
+                ));
+                break;
+            }
+        }
+    }
+    for piece in &pieces {
+        let _ = std::fs::remove_file(piece);
+    }
+    if let Some(failure) = failure {
+        return Err(failure);
+    }
+    Ok(merge_narration_replies(&results))
+}
+
+/// ONE Muse Spark Open call via Baseten for one piece of audio.
+fn call_narration_once(
+    client: &reqwest::blocking::Client,
+    surrogate: &str,
+    data_url: &str,
+) -> NarrationResult {
+    let payload = narration_payload(data_url);
     let started = Instant::now();
     let response = client
         .post(format!("{BASETEN_BASE_URL}/chat/completions"))
-        .bearer_auth(&surrogate)
+        .bearer_auth(surrogate)
         .json(&payload)
         .send()
         .map_err(|e| format!("URLError: {e}"))?;
@@ -1128,20 +1712,21 @@ pub fn default_narration_fn(audio_path: &Path) -> NarrationResult {
         .json()
         .map_err(|_| "DynamicCredentialError: provider response was not valid JSON".to_string())?;
     let latency_ms = python_round(started.elapsed().as_secs_f64() * 1000.0, 0) as i64;
-    let content = body
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    if content.trim().is_empty() {
-        return Err("RuntimeError: Baseten narration call returned an empty reply".to_string());
-    }
-    Ok(json!({
-        "reply": content,
-        "usage": body.get("usage").cloned().unwrap_or_else(|| json!({})),
-        "latency_ms": latency_ms,
-        "model": body.get("model").cloned().unwrap_or(json!(NARRATION_MODEL)),
-    }))
+    interpret_narration_body(&body, latency_ms)
+}
+
+/// The production narration entry (Baseten Spark Open, partner pool).
+///
+/// The key lives behind Muse's credential helper and is never read
+/// here: the helper issues an hsurr surrogate that the egress proxy
+/// swaps for the real key, exactly the discipline the Python helper
+/// (send_audio.py in the voice spike) proved on 2026-10-28.
+pub fn default_narration_fn(audio_path: &Path) -> NarrationResult {
+    let surrogate = fetch_baseten_surrogate()?;
+    let client = build_narration_client()?;
+    narrate_with_caller(audio_path, &|data_url: &str| {
+        call_narration_once(&client, &surrogate, data_url)
+    })
 }
 
 fn empty_narration_record(path: &Path, kind: &str) -> Value {
@@ -1150,6 +1735,7 @@ fn empty_narration_record(path: &Path, kind: &str) -> Value {
         "kind": kind,
         "audio_file": Value::Null,
         "duration_s": Value::Null,
+        "prepared_duration_s": Value::Null,
         "peak_fraction": Value::Null,
         "transcript": Value::Null,
         "named_items": [],
@@ -1197,8 +1783,7 @@ fn narrate_one(
         record["error"] = json!({
             "code": "NARRATION_TOO_LONG",
             "message": format!(
-                "narration runs {duration:.0}s; the per-call sanity bound is {:.0}s",
-                NARRATION_MAX_DURATION_S
+                "narration runs {duration:.0}s, over the 5-minute limit for a narrated clip; upload a shorter video (5 minutes or less), or trim this one to the part that matters, and run it again"
             ),
         });
         return record;
@@ -1209,8 +1794,8 @@ fn narrate_one(
         record["error"] = json!({
             "code": "NARRATION_COST_REFUSED",
             "message": format!(
-                "projected narration cost ${projected:.4} exceeds the per-call cap \
-                 ${max_projected_usd:.2}; the call was refused before it was made"
+                "projected narration cost ${projected:.4} exceeds the per-file cap \
+                 ${max_projected_usd:.2}; the narration was refused before any call was made"
             ),
         });
         return record;
@@ -1225,7 +1810,11 @@ fn narrate_one(
         });
         return record;
     }
-    let result = match narration_fn(&wav_path) {
+    let (send_path, prepared_s) = prepare_narration_audio(&wav_path);
+    if let Some(prepared) = prepared_s {
+        record["prepared_duration_s"] = json!(python_round(prepared, 2));
+    }
+    let result = match narration_fn(&send_path) {
         Ok(result) => result,
         Err(message) => {
             record["error"] = json!({
@@ -3909,7 +4498,7 @@ fn run_room_body(
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let (frames, note) = sample_video_frames(
+        let (frames, note, dropped) = sample_video_frames(
             video,
             &out_dir.join("frames").join(&stem),
             opts.frame_every_seconds,
@@ -3932,6 +4521,7 @@ fn run_room_body(
         video_notes.push(json!({
             "path": video.to_string_lossy(),
             "frames_sampled": frames.len(),
+            "frames_dropped": dropped,
             "frame_every_seconds": opts.frame_every_seconds,
             "note": note,
         }));
