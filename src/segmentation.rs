@@ -5,6 +5,8 @@
 //!   dominated by one connected region).
 //! - `extract_foreground` builds the transparent foreground: source
 //!   pixels exactly where the mask is on, transparent black elsewhere.
+//! - `union_masks` merges every SAM record for the phrase that clears
+//!   the speck floor (several lawns, fence runs, patio pieces).
 //! - `run_attempts` tries the concept phrase, retries ONCE with the
 //!   first alternate, and traces every attempt.
 
@@ -169,18 +171,16 @@ pub struct MaskAssessment {
     pub rejection: Option<&'static str>,
 }
 
-/// (component_count, largest_component_size) of a 0/1 raster,
-/// 4-connectivity flood fill.
-fn label_components(binary: &[u8], width: usize, height: usize) -> (u64, u64) {
+/// Component sizes of a 0/1 raster, largest first (4-connectivity
+/// flood fill).
+fn component_sizes(binary: &[u8], width: usize, height: usize) -> Vec<u64> {
     let mut visited = vec![false; binary.len()];
-    let mut components = 0u64;
-    let mut largest = 0u64;
+    let mut sizes: Vec<u64> = Vec::new();
     let mut stack: Vec<usize> = Vec::new();
     for start in 0..binary.len() {
         if binary[start] == 0 || visited[start] {
             continue;
         }
-        components += 1;
         let mut size = 0u64;
         stack.clear();
         stack.push(start);
@@ -205,14 +205,24 @@ fn label_components(binary: &[u8], width: usize, height: usize) -> (u64, u64) {
                 stack.push(i + width);
             }
         }
-        largest = largest.max(size);
+        sizes.push(size);
     }
     let _ = height;
-    (components, largest)
+    sizes.sort_unstable_by(|a, b| b.cmp(a));
+    sizes
 }
 
 /// Assess a mask against the coverage and dominance gates.
 pub fn assess_mask(mask: &GrayImage) -> MaskAssessment {
+    assess_mask_regions(mask, 1)
+}
+
+/// `assess_mask` for a union of `regions` SAM records: the dominance
+/// gate counts the `regions` largest connected components together
+/// (each record is one intended region), so two patio chairs or three
+/// fence runs pass while a single record shattered into specks still
+/// fails. `regions == 1` is exactly `assess_mask`.
+pub fn assess_mask_regions(mask: &GrayImage, regions: usize) -> MaskAssessment {
     let width = mask.width as usize;
     let height = mask.height as usize;
     let frame_pixels = (width * height) as f64;
@@ -237,8 +247,10 @@ pub fn assess_mask(mask: &GrayImage) -> MaskAssessment {
             rejection: Some("empty"),
         };
     }
-    let (components, largest) = label_components(&binary, width, height);
-    let dominant = largest as f64 / mask_pixels as f64;
+    let sizes = component_sizes(&binary, width, height);
+    let components = sizes.len() as u64;
+    let dominant_pixels: u64 = sizes.iter().take(regions.max(1)).sum();
+    let dominant = dominant_pixels as f64 / mask_pixels as f64;
     let rejection = if coverage < MIN_COVERAGE {
         Some("empty")
     } else if coverage >= MAX_COVERAGE {
@@ -386,9 +398,13 @@ pub fn mask_iou(a: &GrayImage, b: &GrayImage) -> Result<f64, String> {
 }
 
 /// The product layer: source pixels through the mask, nothing else.
-/// Binary masks select exactly; a partial mask value blends per
-/// Pillow's `Image.composite` (never produced by the SAM path, whose
-/// rasters are binary by construction).
+/// Binary masks select exactly. A partial mask value keeps the
+/// source RGB straight and scales only alpha (never produced by the
+/// SAM path, whose rasters are binary by construction). The former
+/// `Image.composite` blend against transparent black also scaled RGB,
+/// a premultiplied colour stored as straight alpha, which composited
+/// as a dark fringe; Python mirror: `putalpha(multiply(A, mask))`
+/// with RGB zeroed only where the mask is 0.
 pub fn extract_foreground(source: &RgbaImage, mask: &GrayImage) -> RgbaImage {
     assert_eq!(source.width, mask.width);
     assert_eq!(source.height, mask.height);
@@ -399,10 +415,9 @@ pub fn extract_foreground(source: &RgbaImage, mask: &GrayImage) -> RgbaImage {
         if m == 255 {
             out[j..j + 4].copy_from_slice(&source.pixels[j..j + 4]);
         } else if m > 0 {
-            // Image.composite blend against transparent black.
-            for c in 0..4 {
-                out[j + c] = ((source.pixels[j + c] as u32 * m) / 255) as u8;
-            }
+            // Straight alpha: colour unchanged, coverage in alpha.
+            out[j..j + 3].copy_from_slice(&source.pixels[j..j + 3]);
+            out[j + 3] = ((source.pixels[j + 3] as u32 * m) / 255) as u8;
         }
     }
     RgbaImage {
@@ -413,16 +428,95 @@ pub fn extract_foreground(source: &RgbaImage, mask: &GrayImage) -> RgbaImage {
     }
 }
 
-fn choose_mask(masks: &[DecodedMask]) -> &DecodedMask {
-    // Python's max() keeps the FIRST maximum on ties; Rust's
-    // max_by_key keeps the last, so scan manually.
-    let mut best = &masks[0];
-    for m in &masks[1..] {
-        if m.mask_pixels > best.mask_pixels {
-            best = m;
-        }
+/// A SAM record joins the union only when it alone would clear the
+/// coverage floor (`MIN_COVERAGE` of the frame); smaller records are
+/// specks (a bolt, a leaf, a glint) and are dropped.
+pub const REGION_MIN_COVERAGE: f64 = MIN_COVERAGE;
+
+/// Every record for one phrase, merged.
+pub struct MaskUnion {
+    /// Full-frame 0/255 union of the kept records.
+    pub image: Vec<u8>,
+    /// Kept records' ids, largest first.
+    pub object_ids: Vec<String>,
+    /// Records dropped under the speck floor.
+    pub dropped: usize,
+    /// Half-open union of the kept records' bounds.
+    pub bounds: (i64, i64, i64, i64),
+}
+
+/// Union every record that clears the speck floor (port target for
+/// the Python `_union_masks`, replacing the largest-record `max()`).
+/// When no record clears the floor, the largest record alone is
+/// returned so the quality gate rejects it with its real numbers
+/// instead of the attempt reading as a zero-match. `masks` must be
+/// non-empty.
+pub fn union_masks(masks: &[DecodedMask], frame_width: usize, frame_height: usize) -> MaskUnion {
+    let frame_pixels = (frame_width * frame_height) as f64;
+    let floor = ((REGION_MIN_COVERAGE * frame_pixels).ceil() as u64).max(1);
+    let on_pixels = |m: &DecodedMask| m.image.iter().filter(|&&v| v != 0).count() as u64;
+    let mut order: Vec<(u64, usize)> = masks
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (on_pixels(m), i))
+        .collect();
+    // Largest first; ties keep wire order (Python's stable sort).
+    order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut kept: Vec<usize> = order
+        .iter()
+        .filter(|(n, _)| *n >= floor)
+        .map(|&(_, i)| i)
+        .collect();
+    let dropped = masks.len() - kept.len();
+    if kept.is_empty() {
+        kept.push(order[0].1);
     }
-    best
+    let mut image = vec![0u8; frame_width * frame_height];
+    let mut bounds = masks[kept[0]].bounds;
+    for &i in &kept {
+        let m = &masks[i];
+        for (dst, &src) in image.iter_mut().zip(m.image.iter()) {
+            if src != 0 {
+                *dst = 255;
+            }
+        }
+        bounds = (
+            bounds.0.min(m.bounds.0),
+            bounds.1.min(m.bounds.1),
+            bounds.2.max(m.bounds.2),
+            bounds.3.max(m.bounds.3),
+        );
+    }
+    MaskUnion {
+        image,
+        object_ids: kept.iter().map(|&i| masks[i].object_id.clone()).collect(),
+        dropped: if dropped == masks.len() {
+            dropped - 1
+        } else {
+            dropped
+        },
+        bounds,
+    }
+}
+
+/// Plain-words reason for a rejected mask. A non-empty mask under the
+/// coverage floor carries the shared "empty" wire code; the text says
+/// which it is.
+pub fn rejection_reason(assessment: &MaskAssessment) -> String {
+    match assessment.rejection {
+        Some("empty") if assessment.mask_pixels > 0 => format!(
+            "too small ({} px, under {}% of the frame), nothing worth staging",
+            assessment.mask_pixels,
+            MIN_COVERAGE * 100.0
+        ),
+        Some("empty") => "empty (SAM selected no pixels)".to_string(),
+        Some("full_frame") => {
+            "it covers the whole frame, so there is nothing around it to stage".to_string()
+        }
+        Some("fragmented") => "fragmented (no dominant region)".to_string(),
+        Some(other) => other.to_string(),
+        None => "not accepted".to_string(),
+    }
 }
 
 /// The winning attempt's mask, the full attempt log, and billed usage.
@@ -480,15 +574,18 @@ pub fn run_attempts(
             last_code = "NO_MATCH";
             continue;
         }
-        let chosen = choose_mask(&masks);
+        let chosen = union_masks(&masks, frame_width as usize, frame_height as usize);
         let mask_gray = GrayImage {
             width: frame_width,
             height: frame_height,
-            pixels: chosen.image.clone(),
+            pixels: chosen.image,
             icc_profile: None,
         };
-        let assessment = assess_mask(&mask_gray);
-        trace["object_id"] = json!(chosen.object_id);
+        let assessment = assess_mask_regions(&mask_gray, chosen.object_ids.len());
+        trace["object_id"] = json!(chosen.object_ids[0]);
+        trace["object_ids"] = json!(chosen.object_ids);
+        trace["regions"] = json!(chosen.object_ids.len());
+        trace["specks_dropped"] = json!(chosen.dropped);
         // N28: full geometry of the chosen mask in the trace
         // (bounds are inclusive [left, top, right, bottom] in the
         // frame named by frame_width/frame_height).
@@ -500,11 +597,11 @@ pub fn run_attempts(
         if !assessment.accepted {
             trace["outcome"] = json!("poor_mask");
             trace["rejection"] = json!(assessment.rejection);
+            let reason = rejection_reason(&assessment);
             last_rejection = Some(format!(
-                "mask bounds {:?} (inclusive) in a {frame_width}x{frame_height} frame, coverage {}, rejected: {}",
+                "mask bounds {:?} (inclusive) in a {frame_width}x{frame_height} frame, coverage {}, rejected: {reason}",
                 chosen.bounds,
                 crate::round6(assessment.coverage),
-                assessment.rejection.as_deref().unwrap_or("not accepted")
             ));
             attempts.push(trace);
             last_code = "POOR_MASK";

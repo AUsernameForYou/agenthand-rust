@@ -291,6 +291,37 @@ fn post_json(client: &MetaClient, key: &str, path: &str, body: &Value) -> Result
     serde_json::from_str(&text).map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
 }
 
+/// POST a prebuilt body (multipart for the edit endpoint); same
+/// transport, error shape and JSON parsing as `post_json`.
+fn post_body(
+    client: &MetaClient,
+    key: &str,
+    path: &str,
+    content_type: &str,
+    body: &[u8],
+) -> Result<Value, String> {
+    let response = client
+        .execute(|c| {
+            c.post(format!("{META_BASE_URL}{path}"))
+                .bearer_auth(key)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(body.to_vec())
+                .send()
+        })
+        .map_err(|e| format!("Meta API request to {path} failed: {}", error_chain(&e)))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .map_err(|e| format!("Meta API response read failed: {}", error_chain(&e)))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Meta API {path} returned HTTP {status}: {}",
+            text.chars().take(500).collect::<String>()
+        ));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("Meta API {path} returned non-JSON: {e}"))
+}
+
 // ---------------------------------------------------------------------------
 // identify: schema, instructions, parsing, phrase hygiene, repair.
 // ---------------------------------------------------------------------------
@@ -1035,6 +1066,201 @@ pub fn request_plate_image(
                 message: format!("The muse-image plate call failed: {e}"),
             }
         }
+    })?;
+    let png_bytes = plate_bytes_from_response(client, &response)?;
+    let mut usage = Usage {
+        images: 1,
+        ..Default::default()
+    };
+    if let Some(raw) = response.get("usage") {
+        usage.input_tokens = raw
+            .get("input_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        usage.output_tokens = raw
+            .get("output_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+    }
+    Ok((png_bytes, usage))
+}
+
+// ---------------------------------------------------------------------------
+// Muse Image edit plates (images/edits): the plate is the ORIGINAL photo
+// with the product region greyed out, edited in its own perspective.
+// ---------------------------------------------------------------------------
+
+const PLATE_EDIT_OBJECT: &str = "Edit @Image1. It is a real photo in which one region has been filled flat grey. Fill the grey region with the continuous background that would be behind it: the same ground, floor, wall and surfaces, continuing their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in the grey region. No people, animals, text, logos or watermark.";
+
+const PLATE_EDIT_SURFACE: &str = "Edit @Image1. It is a real photo in which the main surface has been filled flat grey. Continue the surroundings: keep everything outside the grey region where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the grey region with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
+
+/// The geometry-aware edit prompt (identical to the Mac probe's).
+/// `fills_frame` switches to the "continue the surroundings" wording
+/// for surfaces and subjects cut by the frame. The caller's scene
+/// text rides as styling only: the geometry is the photo's.
+pub fn plate_edit_prompt(scene_prompt: &str, fills_frame: bool) -> String {
+    let base = if fills_frame {
+        PLATE_EDIT_SURFACE
+    } else {
+        PLATE_EDIT_OBJECT
+    };
+    let scene = scene_prompt.trim();
+    if scene.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base} Styling only (keep the geometry): {scene}")
+    }
+}
+
+/// How the edit request is shaped on the wire. Every field can be set
+/// from the environment, so the shape the Mac probe proves can be
+/// adopted without a rebuild:
+/// - `AGENTHAND_EDIT_PATH` (default `/images/edits`)
+/// - `AGENTHAND_EDIT_TRANSPORT` = `multipart` (default) | `json`
+/// - `AGENTHAND_EDIT_IMAGE_FIELD` (default `image`; e.g. `image[]`,
+///   `images`, `reference_images`)
+/// - `AGENTHAND_EDIT_IMAGE_ARRAY` = `1` to send JSON images as an array
+/// - `AGENTHAND_EDIT_SIZE_FIELD` (default `size`; e.g. `aspect_ratio`)
+/// - `AGENTHAND_EDIT_SIZE_STYLE` = `pixels` (default, `1536x1024`) |
+///   `ratio` (`3:2`)
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlateEditConfig {
+    pub path: String,
+    pub multipart: bool,
+    pub image_field: String,
+    pub image_as_array: bool,
+    pub size_field: String,
+    pub size_as_ratio: bool,
+}
+
+impl Default for PlateEditConfig {
+    fn default() -> Self {
+        PlateEditConfig {
+            path: "/images/edits".to_string(),
+            multipart: true,
+            image_field: "image".to_string(),
+            image_as_array: false,
+            size_field: "size".to_string(),
+            size_as_ratio: false,
+        }
+    }
+}
+
+impl PlateEditConfig {
+    pub fn from_env() -> Self {
+        let get = |name: &str| std::env::var(name).unwrap_or_default().trim().to_string();
+        let mut cfg = PlateEditConfig::default();
+        let path = get("AGENTHAND_EDIT_PATH");
+        if path.starts_with('/') {
+            cfg.path = path;
+        }
+        cfg.multipart = get("AGENTHAND_EDIT_TRANSPORT") != "json";
+        let field = get("AGENTHAND_EDIT_IMAGE_FIELD");
+        if !field.is_empty() {
+            cfg.image_field = field;
+        }
+        cfg.image_as_array = matches!(
+            get("AGENTHAND_EDIT_IMAGE_ARRAY").as_str(),
+            "1" | "true" | "yes"
+        );
+        let size_field = get("AGENTHAND_EDIT_SIZE_FIELD");
+        if !size_field.is_empty() {
+            cfg.size_field = size_field;
+        }
+        cfg.size_as_ratio = get("AGENTHAND_EDIT_SIZE_STYLE") == "ratio";
+        cfg
+    }
+
+    /// The size value for a pixel size string like `1536x1024`.
+    pub fn size_value(&self, pixels: &str) -> String {
+        if !self.size_as_ratio {
+            return pixels.to_string();
+        }
+        match pixels {
+            "1536x1024" => "3:2",
+            "1024x1536" => "2:3",
+            "1792x1024" => "16:9",
+            "1024x1792" => "9:16",
+            _ => "1:1",
+        }
+        .to_string()
+    }
+}
+
+/// A multipart/form-data body: text fields, then one PNG file part.
+/// Returns (content type, body).
+pub fn multipart_body(
+    boundary: &str,
+    fields: &[(&str, String)],
+    file_field: &str,
+    png: &[u8],
+) -> (String, Vec<u8>) {
+    let mut body = Vec::with_capacity(png.len() + 1024);
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"image1.png\"\r\nContent-Type: image/png\r\n\r\n").as_bytes(),
+    );
+    body.extend_from_slice(png);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+/// One real muse-image edit call over the item-masked reference;
+/// (plate image bytes as RGBA PNG, usage). The reference must already
+/// have the product region greyed out (`staging::masked_reference`).
+pub fn request_plate_edit(
+    client: &MetaClient,
+    key: &str,
+    reference_png: &[u8],
+    prompt: &str,
+    size: &str,
+    model: &str,
+    cfg: &PlateEditConfig,
+) -> Result<(Vec<u8>, Usage), ImageError> {
+    let size_value = cfg.size_value(size);
+    let sent = if cfg.multipart {
+        let fields = [
+            ("model", model.to_string()),
+            ("prompt", prompt.to_string()),
+            (cfg.size_field.as_str(), size_value),
+            ("n", "1".to_string()),
+            ("output_format", "png".to_string()),
+        ];
+        let boundary = format!("agenthand-{}", uuid::Uuid::new_v4().simple());
+        let (content_type, body) =
+            multipart_body(&boundary, &fields, &cfg.image_field, reference_png);
+        post_body(client, key, &cfg.path, &content_type, &body)
+    } else {
+        let data_uri = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(reference_png)
+        );
+        let mut body = json!({
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "output_format": "png"
+        });
+        body[cfg.size_field.as_str()] = json!(size_value);
+        body[cfg.image_field.as_str()] = if cfg.image_as_array {
+            json!([data_uri])
+        } else {
+            json!(data_uri)
+        };
+        post_json(client, key, &cfg.path, &body)
+    };
+    let response = sent.map_err(|e| ImageError {
+        code: if e.contains("refus") {
+            "IMAGE_REFUSED"
+        } else {
+            "IMAGE_CALL_FAILED"
+        }
+        .to_string(),
+        message: format!("The muse-image edit call failed: {e}"),
     })?;
     let png_bytes = plate_bytes_from_response(client, &response)?;
     let mut usage = Usage {

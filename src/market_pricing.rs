@@ -443,29 +443,16 @@ pub fn presentation_thumbnail(store: &AssetStore, item: &Value, size: u32) -> Rg
     let py0 = py1.saturating_sub(item_h);
     // Soft elliptical contact shadow under the item, its alpha
     // forced to zero at every fully opaque product pixel.
-    let mut canvas = RgbaImage::solid(size, size, [0, 0, 0, 0]);
     let cx = (px0 as f64 + (px0 + item_w) as f64) / 2.0;
     let cy = py1 as f64 + 0.015 * size as f64;
     let rx = item_w as f64 * 0.44;
     let ry = (item_h as f64 * 0.055).max(5.0);
-    for y in 0..size {
-        for x in 0..size {
-            let d = (((x as f64 - cx) / rx).powi(2) + ((y as f64 - cy) / ry).powi(2)).sqrt();
-            if d >= 1.5 {
-                continue;
-            }
-            let mut alpha = (110.0 * (1.5 - d) / 1.5) as u8;
+    let canvas =
+        crate::composite::elliptical_contact_shadow(size, size, (cx, cy), (rx, ry), |x, y| {
             let lx = x.wrapping_sub(px0);
             let ly = y.wrapping_sub(py0);
-            if lx < item_w && ly < item_h && placed_item.pixel(lx, ly)[3] == 255 {
-                alpha = 0;
-            }
-            if alpha > 0 {
-                let i = ((y * size + x) * 4) as usize;
-                canvas.pixels[i..i + 4].copy_from_slice(&[58, 50, 40, alpha]);
-            }
-        }
-    }
+            lx < item_w && ly < item_h && placed_item.pixel(lx, ly)[3] == 255
+        });
     let mut out = crate::composite::alpha_composite(&tile, &canvas);
     // The item itself, placed on its own transparent canvas so the
     // composite math is the production alpha_composite.

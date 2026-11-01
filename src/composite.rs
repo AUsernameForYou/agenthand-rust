@@ -100,6 +100,197 @@ pub fn generate_background_plate(prompt: &str, width: u32, height: u32) -> RgbaI
     RgbaImage::new(width, height, pixels)
 }
 
+/// A soft elliptical contact shadow on a transparent canvas: colour
+/// (58, 50, 40), alpha 110 at the centre falling linearly to 0 at
+/// 1.5 radii, forced to 0 wherever `opaque(x, y)` (a fully opaque
+/// product pixel). Shared by the priced-table thumbnails and the
+/// source-derived staging plates; only the ellipse's 1.5-radius box
+/// is visited (every pixel outside it is 0 either way).
+pub fn elliptical_contact_shadow(
+    width: u32,
+    height: u32,
+    center: (f64, f64),
+    radii: (f64, f64),
+    opaque: impl Fn(u32, u32) -> bool,
+) -> RgbaImage {
+    let (cx, cy) = center;
+    let (rx, ry) = radii;
+    let mut canvas = RgbaImage::solid(width, height, [0, 0, 0, 0]);
+    let span = |c: f64, r: f64, limit: u32| -> (u32, u32) {
+        let lo = (c - 1.5 * r).floor().max(0.0).min(limit as f64) as u32;
+        let hi = (c + 1.5 * r).ceil().max(0.0).min(limit as f64) as u32;
+        (lo, hi.max(lo))
+    };
+    let (x0, x1) = span(cx, rx, width);
+    let (y0, y1) = span(cy, ry, height);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let d = (((x as f64 - cx) / rx).powi(2) + ((y as f64 - cy) / ry).powi(2)).sqrt();
+            if d >= 1.5 {
+                continue;
+            }
+            let mut alpha = (110.0 * (1.5 - d) / 1.5) as u8;
+            if opaque(x, y) {
+                alpha = 0;
+            }
+            if alpha > 0 {
+                let i = ((y * width + x) * 4) as usize;
+                canvas.pixels[i..i + 4].copy_from_slice(&[58, 50, 40, alpha]);
+            }
+        }
+    }
+    canvas
+}
+
+/// Bounding box (left, top, right, bottom; half-open) of the fully
+/// opaque product pixels, or None when there are none.
+pub fn opaque_bbox(foreground: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
+    let (w, h) = (foreground.width, foreground.height);
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            if foreground.pixels[((y * w + x) * 4 + 3) as usize] == OPAQUE_ALPHA_THRESHOLD {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    (x0 != u32::MAX).then_some((x0, y0, x1, y1))
+}
+
+/// Draw the product's contact shadow onto a plate at the product's
+/// own position (plate and foreground share the source frame): the
+/// thumbnail ellipse, centred on the opaque bbox's bottom edge,
+/// 0.88 x its width, 0.055 x its height tall (at least 5 px). Plate
+/// pixels only; product pixels are composited over it untouched.
+pub fn apply_contact_shadow(plate: &RgbaImage, foreground: &RgbaImage) -> RgbaImage {
+    assert_eq!(
+        (plate.width, plate.height),
+        (foreground.width, foreground.height)
+    );
+    let Some((x0, y0, x1, y1)) = opaque_bbox(foreground) else {
+        return plate.clone();
+    };
+    let (item_w, item_h) = ((x1 - x0) as f64, (y1 - y0) as f64);
+    let w = foreground.width;
+    let shadow = elliptical_contact_shadow(
+        plate.width,
+        plate.height,
+        ((x0 as f64 + x1 as f64) / 2.0, y1 as f64),
+        (item_w * 0.44, (item_h * 0.055).max(5.0)),
+        |x, y| foreground.pixels[((y * w + x) * 4 + 3) as usize] == OPAQUE_ALPHA_THRESHOLD,
+    );
+    let mut out = alpha_composite(plate, &shadow);
+    out.icc_profile = plate.icc_profile.clone();
+    out
+}
+
+/// Square (Chebyshev) dilation of a 0/1 plane by `r`, separable.
+pub fn dilate_square(plane: &[u8], width: usize, height: usize, r: usize) -> Vec<u8> {
+    if r == 0 {
+        return plane.to_vec();
+    }
+    let mut horizontal = vec![0u8; plane.len()];
+    for y in 0..height {
+        let row = &plane[y * width..(y + 1) * width];
+        for x in 0..width {
+            let lo = x.saturating_sub(r);
+            let hi = (x + r + 1).min(width);
+            horizontal[y * width + x] = u8::from(row[lo..hi].iter().any(|&v| v != 0));
+        }
+    }
+    let mut out = vec![0u8; plane.len()];
+    for x in 0..width {
+        for y in 0..height {
+            let lo = y.saturating_sub(r);
+            let hi = (y + r + 1).min(height);
+            out[y * width + x] = u8::from((lo..hi).any(|yy| horizontal[yy * width + x] != 0));
+        }
+    }
+    out
+}
+
+/// Plate-side edge matte: the `matte_px` (1 or 2) rings of plate
+/// pixels around the opaque product take a share of the local product
+/// colour (ring 1: 50%, ring 2: 25%; mean of the opaque pixels in the
+/// ring pixel's (2d+1)^2 window), so the hard SAM edge reads as a
+/// photographed edge instead of a paste. Nothing is eroded and no
+/// product pixel is written: the rings lie strictly outside the
+/// opaque mask, so the Fidelity Lock count is untouched. Callers cap
+/// `matte_px` at 1 for thin structures (pickets, spokes) so a thin
+/// part is not haloed to several times its width.
+pub fn apply_edge_matte(plate: &RgbaImage, foreground: &RgbaImage, matte_px: u32) -> RgbaImage {
+    assert_eq!(
+        (plate.width, plate.height),
+        (foreground.width, foreground.height)
+    );
+    let mut out = plate.clone();
+    let Some((bx0, by0, bx1, by1)) = opaque_bbox(foreground) else {
+        return out;
+    };
+    let matte = matte_px.min(2) as usize;
+    if matte == 0 {
+        return out;
+    }
+    // Work inside the bbox grown by the matte width.
+    let (fw, fh) = (foreground.width as usize, foreground.height as usize);
+    let x0 = (bx0 as usize).saturating_sub(matte);
+    let y0 = (by0 as usize).saturating_sub(matte);
+    let x1 = (bx1 as usize + matte).min(fw);
+    let y1 = (by1 as usize + matte).min(fh);
+    let (w, h) = (x1 - x0, y1 - y0);
+    let opaque_at =
+        |x: usize, y: usize| foreground.pixels[(y * fw + x) * 4 + 3] == OPAQUE_ALPHA_THRESHOLD;
+    let mut plane = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            plane[y * w + x] = u8::from(opaque_at(x0 + x, y0 + y));
+        }
+    }
+    let rings: Vec<Vec<u8>> = (1..=matte)
+        .map(|r| dilate_square(&plane, w, h, r))
+        .collect();
+    const SHARE: [u32; 2] = [128, 64]; // 50%, 25% of 256
+    for y in 0..h {
+        for x in 0..w {
+            if plane[y * w + x] != 0 {
+                continue;
+            }
+            let Some(d) = (0..matte).find(|&k| rings[k][y * w + x] != 0) else {
+                continue;
+            };
+            let r = d + 1;
+            let (gx, gy) = (x0 + x, y0 + y);
+            let mut sum = [0u32; 3];
+            let mut n = 0u32;
+            for yy in gy.saturating_sub(r)..(gy + r + 1).min(fh) {
+                for xx in gx.saturating_sub(r)..(gx + r + 1).min(fw) {
+                    if opaque_at(xx, yy) {
+                        let j = (yy * fw + xx) * 4;
+                        for c in 0..3 {
+                            sum[c] += foreground.pixels[j + c] as u32;
+                        }
+                        n += 1;
+                    }
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            let share = SHARE[d];
+            let j = (gy * fw + gx) * 4;
+            for c in 0..3 {
+                let product = (sum[c] + n / 2) / n;
+                let base = out.pixels[j + c] as u32;
+                out.pixels[j + c] = ((base * (256 - share) + product * share + 128) >> 8) as u8;
+            }
+        }
+    }
+    out
+}
+
 /// Resize/crop the PLATE to the product's dimensions. Never the reverse.
 fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<String>) {
     if plate.width == width && plate.height == height {

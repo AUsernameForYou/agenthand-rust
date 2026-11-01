@@ -9,13 +9,15 @@
 //! draw's image preview as an image content block) with no SDK
 //! version skew to audit. Revisit rmcp once parity is proven.
 
-use crate::assets::{AssetStore, KIND_MASK, KIND_OVERLAY};
+use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_MASK, KIND_OVERLAY, KIND_PLATE};
+use crate::backdrop;
 use crate::billing::{self, BillingSummary};
 use crate::composite;
 use crate::config;
 use crate::ingest;
 use crate::meta::{self, IdentifyError, CUT_OUT_MODEL, DRAW_BACKGROUND_MODEL, IDENTIFY_MODEL};
 use crate::segmentation;
+use crate::staging::{self, SubjectGeometry};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::io::{BufRead, Write};
@@ -593,9 +595,206 @@ fn generate_background_plate(
     }
 }
 
+/// A plate ready to composite, with what draw reports about it.
+struct StagedPlate {
+    handle: String,
+    billing: BillingSummary,
+    kind_override: Option<(&'static str, Value)>,
+    note: String,
+    extra: Value,
+}
+
+/// Build the plate from the ORIGINAL photo (plate mode `source_edit`):
+/// grey out the product region, send that reference to the muse-image
+/// edit endpoint, resize the edit back onto the photo's frame, then
+/// draw the contact shadow and edge matte around the product. When
+/// the edit call itself fails, the code-only plate stands in
+/// (`source_blur`) and the failure is reported; a refusal before the
+/// call (spend cap, ledger) is returned as an error, nothing staged.
+fn stage_source_plate(
+    store: &AssetStore,
+    foreground_handle: &str,
+    foreground: &crate::image::RgbaImage,
+    geometry: &SubjectGeometry,
+    scene_prompt: &str,
+) -> Result<StagedPlate, meta::ImageError> {
+    let staging_err = |message: String| meta::ImageError {
+        code: "STAGING_FAILED".to_string(),
+        message,
+    };
+    let chain = store.lineage(foreground_handle).map_err(staging_err)?;
+    let source_record = chain.last().expect("lineage is non-empty").clone();
+    let source = store
+        .read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))
+        .map_err(staging_err)?;
+    if (source.width, source.height) != (foreground.width, foreground.height) {
+        return Err(staging_err(format!(
+            "source {}x{} and foreground {}x{} frames differ; the plate must share the product's frame",
+            source.width, source.height, foreground.width, foreground.height
+        )));
+    }
+    let size = meta::closest_image_size(Some(source.width), Some(source.height));
+    let (ref_w, ref_h) = size
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+        .unwrap_or((1024, 1024));
+    let (reference, hole_pixels) = staging::masked_reference(&source, foreground, ref_w, ref_h);
+    let reference_png = crate::image::encode_png_rgba(&reference);
+    let prompt = meta::plate_edit_prompt(scene_prompt, geometry.fills_frame);
+    let cfg = meta::PlateEditConfig::from_env();
+
+    let key = meta::require_meta_api_key().map_err(|e| meta::ImageError {
+        code: "NOT_CONFIGURED".to_string(),
+        message: e,
+    })?;
+    let client = meta::build_client().map_err(|e| meta::ImageError {
+        code: "IMAGE_CALL_FAILED".to_string(),
+        message: e,
+    })?;
+    let projected =
+        meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL).map_err(|e| meta::ImageError {
+            code: "IMAGE_CALL_FAILED".to_string(),
+            message: e,
+        })?;
+    let bytes_cell: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+    let err_cell: RefCell<Option<meta::ImageError>> = RefCell::new(None);
+    let call_id = new_call_id();
+    let result = billing::billed_call(
+        "draw",
+        Some(DRAW_BACKGROUND_MODEL),
+        projected,
+        "ok",
+        "",
+        &call_id,
+        || match meta::request_plate_edit(
+            &client,
+            &key,
+            &reference_png,
+            &prompt,
+            &size,
+            DRAW_BACKGROUND_MODEL,
+            &cfg,
+        ) {
+            Ok((png_bytes, usage)) => {
+                *bytes_cell.borrow_mut() = Some(png_bytes);
+                Ok(usage)
+            }
+            Err(e) => {
+                let message = e.message.clone();
+                *err_cell.borrow_mut() = Some(e);
+                Err(message)
+            }
+        },
+    );
+    let edited = match &result {
+        Ok(_) => bytes_cell.into_inner().and_then(|b| {
+            crate::image::decode_image(&b)
+                .ok()
+                .map(|d| (crate::image::sha256_hex(&b), d.into_rgba()))
+        }),
+        Err(_) => None,
+    };
+    let (plate, kind, edit, billing, fallback) = match (result, edited, err_cell.into_inner()) {
+        (Ok(billing), Some((output_sha256, image)), _) => (
+            staging::plate_from_edit(&image, source.width, source.height),
+            backdrop::PLATE_KIND_SOURCE_EDIT,
+            json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "output_sha256": output_sha256}),
+            billing,
+            None,
+        ),
+        // Refused before any call (spend cap, ledger, pricing): no
+        // reservation was written, so nothing is staged or counted.
+        (Err(message), _, None) => {
+            return Err(meta::ImageError {
+                code: "IMAGE_CALL_FAILED".to_string(),
+                message,
+            })
+        }
+        (outcome, _, failure) => {
+            let (code, message) = match failure {
+                Some(e) => (e.code, e.message),
+                None => (
+                    "BAD_IMAGE_RESPONSE".to_string(),
+                    "the edit image did not decode".to_string(),
+                ),
+            };
+            let billing = match outcome {
+                Ok(settled) => settled,
+                // The failed call's reservation stays counted under the
+                // fail-closed ledger rule; report that amount.
+                Err(_) => BillingSummary {
+                    call_id: call_id.clone(),
+                    projected_usd: projected,
+                    actual_usd: projected,
+                    usage: crate::pricing::Usage::default(),
+                },
+            };
+            (
+                staging::fallback_plate(&source, foreground),
+                backdrop::PLATE_KIND_SOURCE_BLUR,
+                json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "failed": {"code": code, "message": message}}),
+                billing,
+                Some(json!({"code": code, "message": message})),
+            )
+        }
+    };
+    let finished = staging::finish_plate(&plate, foreground, geometry);
+    let handle = store
+        .put_image(&finished, KIND_PLATE, Some(&source_record.asset_id))
+        .map_err(staging_err)?;
+    let backdrop_value = backdrop::source_plate_receipt_value(
+        kind,
+        geometry.to_json(),
+        json!({
+            "sha256": crate::image::sha256_hex(&reference_png),
+            "size": size,
+            "fill_rgb": staging::REFERENCE_GREY,
+            "dilate_px": staging::REFERENCE_DILATE_PX,
+            "hole_pixels": hole_pixels,
+            "product_region": "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
+        }),
+        edit,
+        geometry.shadow,
+        geometry.matte_px,
+    );
+    let note = if fallback.is_none() {
+        "Background plate built from the original photo: the product region was greyed out before upload (its pixels never reached the image model), muse-image-1.0 filled and tidied the surroundings in the photo's own perspective and light, and the stored product layer was composited back untouched at its original position and scale."
+    } else {
+        "The muse-image edit call failed (see plate_fallback), so the plate is the original photo with the product region filled from its surroundings, blurred and brightened by deterministic code. The stored product layer was composited back untouched at its original position and scale."
+    };
+    let mut extra = json!({
+        "plate_mode": backdrop::DRAW_PLATE_SOURCE_EDIT,
+        "plate_kind": kind,
+        "subject": geometry.to_json(),
+    });
+    if let Some(f) = fallback {
+        extra["plate_fallback"] = f;
+    }
+    if geometry.fills_frame {
+        extra["subject_note"] = json!(staging::SURFACE_NOTE);
+    }
+    Ok(StagedPlate {
+        handle,
+        billing,
+        kind_override: Some((kind, backdrop_value)),
+        note: note.to_string(),
+        extra,
+    })
+}
+
 /// draw: returns (result, preview PNG bytes) — Python returns
-/// [result, Image]; the JSON-RPC layer renders both.
+/// [result, Image]; the JSON-RPC layer renders both. The plate mode
+/// comes from `AGENTHAND_DRAW_PLATE` (default `source_edit`).
 pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), String> {
+    tool_draw_with_plate(asset, scene_prompt, None)
+}
+
+/// draw with an explicit plate mode (`source_edit` | `generated`).
+pub fn tool_draw_with_plate(
+    asset: &str,
+    scene_prompt: &str,
+    plate: Option<&str>,
+) -> Result<(Value, Vec<u8>), String> {
     let store = store();
     composite::validate_foreground(&store, asset)?;
     let foreground_record = store.get_record(asset)?;
@@ -619,6 +818,21 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
         e
     };
 
+    let plate_mode = match backdrop::resolve_draw_plate(plate) {
+        Ok(mode) => mode,
+        Err(e) => return Ok((error("BAD_ARGUMENT", &e, Value::Null), Vec::new())),
+    };
+    // Never stage a plate with nothing on it: an empty (or fully
+    // soft) foreground is refused before any spend, in every mode.
+    let foreground = store.read_image(asset)?;
+    let geometry = staging::analyze_subject(&foreground);
+    if let Err(e) = staging::check_stageable(&geometry) {
+        return Ok((
+            error("EMPTY_FOREGROUND", &e, json!({"cost_counted_usd": 0.0})),
+            Vec::new(),
+        ));
+    }
+
     if config::use_placeholder_plate() {
         return draw_with_placeholder_plate(&store, asset, scene_prompt, &error);
     }
@@ -628,23 +842,49 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
     }
 
     let projected = meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
-    let (plate_handle, billing) = match generate_background_plate(
-        &store,
-        scene_prompt,
-        foreground_record.width,
-        foreground_record.height,
-    ) {
-        Ok(pair) => pair,
-        Err(e) => {
-            return Ok((
-                error(&e.code, &e.message, json!({"cost_counted_usd": projected})),
-                Vec::new(),
-            ));
+    let staged = if plate_mode == backdrop::DRAW_PLATE_GENERATED {
+        match generate_background_plate(
+            &store,
+            scene_prompt,
+            foreground_record.width,
+            foreground_record.height,
+        ) {
+            Ok((handle, billing)) => StagedPlate {
+                handle,
+                billing,
+                kind_override: None,
+                note: "Background plate generated by muse-image-1.0 and fitted to the product by deterministic code; the stored product layer was composited untouched and never sent to the image model.".to_string(),
+                extra: json!({"plate_mode": backdrop::DRAW_PLATE_GENERATED}),
+            },
+            Err(e) => {
+                return Ok((
+                    error(&e.code, &e.message, json!({"cost_counted_usd": projected})),
+                    Vec::new(),
+                ));
+            }
+        }
+    } else {
+        match stage_source_plate(&store, asset, &foreground, &geometry, scene_prompt) {
+            Ok(staged) => staged,
+            Err(e) => {
+                return Ok((
+                    error(&e.code, &e.message, json!({"cost_counted_usd": projected})),
+                    Vec::new(),
+                ));
+            }
         }
     };
+    drop(foreground);
+    let plate_handle = staged.handle.clone();
+    let billing = staged.billing;
 
-    let (handle, receipt) =
-        composite::draw_product(&store, asset, scene_prompt, Some(&plate_handle))?;
+    let (handle, receipt) = composite::draw_product_with_plate_kind(
+        &store,
+        asset,
+        scene_prompt,
+        Some(&plate_handle),
+        staged.kind_override,
+    )?;
     let mut full = persist_full_receipt(&store, &handle, &receipt, &billing, scene_prompt)?;
     if receipt["changed_opaque_pixels"].as_i64().unwrap_or(-1) != 0
         || receipt["color_profile_preserved"].as_bool() != Some(true)
@@ -689,8 +929,13 @@ pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), St
         "cost_usd": billing.actual_usd,
         "usage": usage_json(&billing.usage),
         "call_id": billing.call_id,
-        "note": "Background plate generated by muse-image-1.0 and fitted to the product by deterministic code; the stored product layer was composited untouched and never sent to the image model.",
+        "note": staged.note,
     });
+    if let (Some(base), Some(extra)) = (result.as_object_mut(), staged.extra.as_object()) {
+        for (k, v) in extra {
+            base.insert(k.clone(), v.clone());
+        }
+    }
     annotate_draw_result(&store, &handle, &mut full, &mut result);
     let preview = store.read_bytes(&handle)?;
     Ok((result, preview))
@@ -767,12 +1012,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "draw",
-            "description": "Stage the real product into a generated scene. Fidelity Lock applies. The background plate is generated by muse-image-1.0 and fitted to the product's dimensions; the stored product layer is composited onto it untouched and never sent to the image model. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
+            "description": "Stage the real product in a cleaned-up version of its own photo. Fidelity Lock applies. By default (plate source_edit) the original photo is sent to muse-image-1.0's edit mode with the product region greyed out, so the plate keeps the photo's camera angle, ground and light; the product stays at its original position and scale, its pixels are never sent to the image model, and a contact shadow and 1-2 px edge matte are drawn on the plate around it. If the edit call fails, a code-only plate (the masked photo, filled, blurred and brightened) stands in and the result says so. plate generated keeps the legacy text-only scene. Any subject works, surfaces included; a subject that fills the frame keeps its pixels and only its surroundings change. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "asset": {"type": "string", "description": "Asset handle (asset://<id>) of the cut-out product layer produced by cut_out."},
-                    "scene_prompt": {"type": "string", "description": "Description of the scene to generate around the product."}
+                    "scene_prompt": {"type": "string", "description": "Description of the scene to generate around the product (styling only in source_edit mode; the photo's geometry is kept)."},
+                    "plate": {"type": "string", "enum": ["source_edit", "generated"], "description": "How the plate is built: source_edit (default; the original photo with the product greyed out, edited in place) or generated (legacy text-only scene)."}
                 },
                 "required": ["asset", "scene_prompt"]
             }
@@ -842,7 +1088,8 @@ fn call_tool_inner(name: &str, args: &Value) -> Result<Value, String> {
                 .get("scene_prompt")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let (result, preview) = tool_draw(asset, scene)?;
+            let plate = args.get("plate").and_then(|v| v.as_str());
+            let (result, preview) = tool_draw_with_plate(asset, scene, plate)?;
             Ok(wrap(result, preview))
         }
         other => Err(format!("Unknown tool: {other}")),

@@ -188,64 +188,121 @@ fn extract_foreground_keeps_source_pixels_byte_exact() {
     assert_eq!(fg.pixel(7, 5), [0, 0, 0, 0]);
 }
 
-/// Regression: a record whose box is WIDER than its box-local raster.
-/// SAM returned exactly this shape for the border-touching fridge mask
-/// on IMG_1351 (real run, 2026-10-31): the bounds outrun the raster and
-/// the old place_in_frame indexed past the end of the raster and
-/// panicked (sam.rs index out of bounds), killing the server. The
-/// Python reference places the same record through PIL crop, which
-/// zero-pads the overhang: out-of-raster columns read as 0.
+/// SAM caps a raster's long side at 1024 px, so a box wider than its
+/// raster is the normal shape for any large subject (the IMG_1351
+/// fridge, the hero bike). The raster is scaled to its box, never
+/// pasted 1:1 at the box origin with zero padding (the old placement
+/// put a 75%-scale bike mask in the top-left of its box).
 #[test]
-fn box_wider_than_raster_places_with_zero_padding() {
-    // GOOD_TEXT's 4x6 all-on raster, but the box claims the full 8-wide
-    // frame. Placement must equal the good mask's frame exactly.
+fn box_wider_than_raster_is_scaled_to_the_box() {
+    // GOOD_TEXT's 4x6 all-on raster under a box claiming the full
+    // 8-wide frame: the whole box is on, exactly FULL_TEXT's frame.
     let text = "<0f>0<|box;x1=0;y1=0;x2=7;y2=5;w=8;h=6|><|mask;x=0;y=0;data=6,4,!!!!!'y8_cbF.|>";
     let masks = parse_sam_masks(text, 8, 6).unwrap();
     assert_eq!(masks.len(), 1);
-    assert_eq!(masks[0].mask_pixels, 24);
+    assert_eq!(masks[0].mask_pixels, 48);
     assert_eq!(
         sha256_hex(&masks[0].image),
-        "4ae5ce3aabc6e65d0530988450363a48d5f4bdd43dc00d2b4b96bac6792c032a"
+        "80a76a18acf8cb64fec3a659ffc4bab4a87cd9a6fde4dab2161a8751d136c9d2"
     );
 }
 
-/// Regression: a record whose box is TALLER than its raster (the other
-/// overhang direction of the same panic).
+/// The other direction: a box TALLER than its raster fills the box's
+/// full height, not just the raster's first rows.
 #[test]
-fn box_taller_than_raster_places_with_zero_padding() {
-    // GOOD_TEXT's 4x6 raster in a 4x8 box inside an 8x8 frame: the top
-    // six rows land, the two overhang rows read as 0.
+fn box_taller_than_raster_is_scaled_to_the_box() {
+    // GOOD_TEXT's 4x6 raster in a 4x8 box inside an 8x8 frame.
     let text = "<0f>0<|box;x1=0;y1=0;x2=3;y2=7;w=8;h=8|><|mask;x=0;y=0;data=6,4,!!!!!'y8_cbF.|>";
     let masks = parse_sam_masks(text, 8, 8).unwrap();
     assert_eq!(masks.len(), 1);
-    assert_eq!(masks[0].mask_pixels, 24);
+    assert_eq!(masks[0].mask_pixels, 32);
     let img = &masks[0].image;
     for y in 0..8usize {
         for x in 0..8usize {
-            let expected = if y < 6 && x < 4 { 255 } else { 0 };
+            let expected = if x < 4 { 255 } else { 0 };
             assert_eq!(img[y * 8 + x], expected, "pixel ({x},{y})");
         }
     }
 }
 
-/// Regression: the fridge shape itself — a full-frame, border-touching
-/// box carrying a much smaller raster. Placement must not panic; only
-/// the raster's own extent lands.
+/// The fridge shape itself: a full-frame, border-touching box carrying
+/// a much smaller raster. No panic, and the raster covers its box.
 #[test]
-fn full_frame_box_with_small_raster_does_not_panic() {
+fn full_frame_box_with_small_raster_covers_the_box() {
     // The all-on 2x2 raster from TWO_RECORDS_TEXT under a box covering
     // the whole 8x6 frame (touches every border).
     let text = "<0f>0<|box;x1=0;y1=0;x2=7;y2=5;w=8;h=6|><|mask;x=0;y=0;data=2,2,!!!!!&t.SKi|>";
     let masks = parse_sam_masks(text, 8, 6).unwrap();
     assert_eq!(masks.len(), 1);
-    assert_eq!(masks[0].mask_pixels, 4);
+    assert_eq!(masks[0].mask_pixels, 48);
+    assert!(masks[0].image.iter().all(|&v| v == 255));
+}
+
+/// The bike regression at small scale: a mark in the raster's
+/// bottom-right corner lands in the BOX's bottom-right corner after
+/// scaling (at 4/3 scale, as 1024x733 -> 1364x977), not at the
+/// raster's own offset from the box origin.
+#[test]
+fn scaled_raster_keeps_its_shape_inside_the_box() {
+    use agenthand::sam::encode_raster;
+    // 6x3 raster, right third on; box 8x4 (x 2..10, y 1..5) in 12x6.
+    let (rw, rh) = (6usize, 3usize);
+    let raster: Vec<u8> = (0..rw * rh).map(|i| u8::from(i % rw >= 4)).collect();
+    let payload = encode_raster(&raster, rw, rh).unwrap();
+    let text = format!(
+        "<0f>0<|box;x1=2;y1=1;x2=9;y2=4;w=12;h=6|><|mask;x=0;y=0;data={rh},{rw},{payload}|>"
+    );
+    let masks = parse_sam_masks(&text, 12, 6).unwrap();
+    assert_eq!(masks.len(), 1);
+    assert_eq!(masks[0].bounds, (2, 1, 10, 5));
     let img = &masks[0].image;
-    for y in 0..6usize {
-        for x in 0..8usize {
-            let expected = if y < 2 && x < 2 { 255 } else { 0 };
-            assert_eq!(img[y * 8 + x], expected, "pixel ({x},{y})");
-        }
+    let on: Vec<(usize, usize)> = (0..72)
+        .filter(|&i| img[i] == 255)
+        .map(|i| (i % 12, i / 12))
+        .collect();
+    assert!(!on.is_empty());
+    // Every on pixel sits in the box's right third, on every box row.
+    assert!(
+        on.iter()
+            .all(|&(x, y)| (7..10).contains(&x) && (1..5).contains(&y)),
+        "{on:?}"
+    );
+    for y in 1..5 {
+        assert_eq!(img[y * 12 + 9], 255, "box's last column, row {y}");
     }
+    // Nothing left of the box's right third (the unscaled paste put
+    // the mark at columns 6-7 and left row 4 empty).
+    assert!(on.iter().all(|&(x, _)| x >= 7));
+}
+
+#[test]
+fn fit_coverage_to_box_identity_threshold_and_guards() {
+    use agenthand::sam::{fit_coverage_to_box, MAX_MASK_RASTER_PIXELS};
+    // Same size: one threshold at 129 (lossless semantics), no scaling.
+    assert_eq!(
+        fit_coverage_to_box(&[0, 128, 129, 255], 2, 2, 2, 2).unwrap(),
+        vec![0, 0, 1, 1]
+    );
+    // Short raster reads as zero padding; long raster is truncated.
+    assert_eq!(fit_coverage_to_box(&[255], 2, 1, 2, 1).unwrap(), vec![1, 0]);
+    assert_eq!(
+        fit_coverage_to_box(&[255, 255, 255], 1, 1, 1, 1).unwrap(),
+        vec![1]
+    );
+    // Empty raster/box and boxes over the allocation ceiling refuse.
+    assert!(fit_coverage_to_box(&[], 0, 0, 2, 2).is_none());
+    assert!(fit_coverage_to_box(&[255], 1, 1, 0, 3).is_none());
+    let side = (MAX_MASK_RASTER_PIXELS as f64).sqrt() as usize + 1;
+    assert!(fit_coverage_to_box(&[255], 1, 1, side, side).is_none());
+    assert!(fit_coverage_to_box(&[255], 1, 1, usize::MAX, 2).is_none());
+}
+
+/// A box no honest frame can hold (area over the ceiling) skips the
+/// record instead of allocating it.
+#[test]
+fn oversized_box_skips_the_record() {
+    let text = "<0f>0<|box;x1=0;y1=0;x2=99999;y2=99999;w=100000;h=100000|><|mask;x=0;y=0;data=2,2,!!!!!&t.SKi|>";
+    assert!(parse_sam_masks(text, 8, 6).unwrap().is_empty());
 }
 
 #[test]

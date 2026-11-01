@@ -225,3 +225,53 @@ fn genuine_v1_shape_still_verifies() {
     );
     assert_eq!(report2["checks"]["mask_asset_integrity"], json!(true));
 }
+
+/// The source-derived plate kinds (`source_edit`, and `source_blur`
+/// when the code plate stood in) ride in the same schema-2 receipt:
+/// stamped, carrying plate_kind and the backdrop record, and the
+/// verifier grades them exactly like any other plate (it never
+/// recomputes plates; it pins their hashes and recounts the product).
+#[test]
+fn source_plate_kinds_stamp_schema_2_and_verify() {
+    use agenthand::assets::KIND_PLATE;
+    use agenthand::{backdrop, staging};
+    for kind in [
+        backdrop::PLATE_KIND_SOURCE_EDIT,
+        backdrop::PLATE_KIND_SOURCE_BLUR,
+    ] {
+        let (store, _dir, photo, fg) = seeded_store_alpha_mask();
+        let source = store.read_image(&photo).unwrap();
+        let foreground = store.read_image(&fg).unwrap();
+        let geometry = staging::analyze_subject(&foreground);
+        let plate = staging::finish_plate(
+            &staging::fallback_plate(&source, &foreground),
+            &foreground,
+            &geometry,
+        );
+        let plate_handle = store.put_image(&plate, KIND_PLATE, None).unwrap();
+        let backdrop_value = backdrop::source_plate_receipt_value(
+            kind,
+            geometry.to_json(),
+            json!({"size": "1536x1024", "dilate_px": 8}),
+            json!({"model": "muse-image-1.0"}),
+            geometry.shadow,
+            geometry.matte_px,
+        );
+        let (handle, receipt) = composite::draw_product_with_plate_kind(
+            &store,
+            &fg,
+            "a clean driveway",
+            Some(&plate_handle),
+            Some((kind, backdrop_value)),
+        )
+        .unwrap();
+        assert_eq!(receipt["receipt_schema"], json!(2));
+        assert_eq!(receipt["plate_kind"], json!(kind));
+        assert_eq!(receipt["backdrop"]["kind"], json!(kind));
+        assert_eq!(receipt["plate_source"], json!("asset"));
+        assert_eq!(receipt["changed_opaque_pixels"], json!(0));
+        assert_eq!(receipt["product_layer_scaled"], json!(false));
+        let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+        assert_eq!(report["ok"], json!(true), "{kind}: {}", report["problems"]);
+    }
+}

@@ -17,6 +17,12 @@
 //! Rendering is deterministic: the same frame size always yields
 //! the same pixels (the motif is supersampled 4x and box-averaged,
 //! the gradient is evaluated per pixel with a smoothstep falloff).
+//!
+//! draw's own plate choice lives here too (`resolve_draw_plate`):
+//! `source_edit` builds the plate from the original photo (see
+//! `staging`), receipted as plate kind `source_edit`, or `source_blur`
+//! when the edit call failed and the code-only plate stood in;
+//! `generated` keeps the legacy text-only plate (`model_generated`).
 
 use serde_json::{json, Value};
 
@@ -206,4 +212,57 @@ pub fn backdrop_receipt_value(stage_mode: &str) -> Value {
 /// True when the stage mode renders its plate in code.
 pub fn is_backdrop_mode(stage_mode: &str) -> bool {
     matches!(stage_mode, STAGE_MODE_WALLPAPER | STAGE_MODE_STUDIO_GRAY)
+}
+
+/// draw plate mode: build the plate from the original photo.
+pub const DRAW_PLATE_SOURCE_EDIT: &str = "source_edit";
+/// draw plate mode: the legacy text-only generated scene.
+pub const DRAW_PLATE_GENERATED: &str = "generated";
+/// Every draw plate mode, default first.
+pub const DRAW_PLATE_MODES: [&str; 2] = [DRAW_PLATE_SOURCE_EDIT, DRAW_PLATE_GENERATED];
+
+/// Receipt plate kind: Muse Image edit of the item-masked original.
+pub const PLATE_KIND_SOURCE_EDIT: &str = "source_edit";
+/// Receipt plate kind: the code-only plate (masked original, filled,
+/// blurred, lifted) used when the edit call failed.
+pub const PLATE_KIND_SOURCE_BLUR: &str = "source_blur";
+
+/// The plate mode for one draw call: the call's own `plate` argument,
+/// else `AGENTHAND_DRAW_PLATE`, else `source_edit`. Unknown values
+/// refuse (no silent fallback to a different staging method).
+pub fn resolve_draw_plate(requested: Option<&str>) -> Result<&'static str, String> {
+    let env = crate::config::get_draw_plate_mode();
+    let raw = match requested.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => value.to_string(),
+        None if !env.is_empty() => env,
+        None => return Ok(DRAW_PLATE_SOURCE_EDIT),
+    };
+    DRAW_PLATE_MODES
+        .iter()
+        .find(|m| **m == raw)
+        .copied()
+        .ok_or_else(|| {
+            format!("plate {raw:?} is not a draw plate mode (expected one of {DRAW_PLATE_MODES:?})")
+        })
+}
+
+/// The receipt `backdrop` value for a source-derived plate: what was
+/// sent, what came back (or why the code plate stood in), and what
+/// was drawn on the plate around the product.
+pub fn source_plate_receipt_value(
+    kind: &str,
+    subject: Value,
+    reference: Value,
+    edit: Value,
+    shadow: bool,
+    matte_px: u32,
+) -> Value {
+    json!({
+        "kind": kind,
+        "reference": reference,
+        "edit": edit,
+        "contact_shadow": shadow,
+        "edge_matte_px": matte_px,
+        "subject": subject,
+    })
 }

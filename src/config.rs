@@ -181,3 +181,12 @@ pub fn use_placeholder_plate() -> bool {
         "1" | "true" | "yes" | "on"
     )
 }
+
+/// `AGENTHAND_DRAW_PLATE`: how draw builds its plate when the call
+/// does not say (`source_edit`, the default: the original photo with
+/// the product greyed out, edited in place; `generated`: the legacy
+/// text-only scene). Empty means the default; validation happens in
+/// `backdrop::resolve_draw_plate`.
+pub fn get_draw_plate_mode() -> String {
+    env_trimmed("AGENTHAND_DRAW_PLATE")
+}

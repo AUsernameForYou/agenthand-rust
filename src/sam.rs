@@ -7,9 +7,12 @@
 //! comma-separated records
 //! `id<|box;x1=..;y1=..;x2=..;y2=..;w=<frameW>;h=<frameH>|><|mask;x=0;y=0;data=<H>,<W>,<payload>|>`.
 //! Box corners are inclusive on the wire, normalized to half-open
-//! bounds here. The mask raster is box-local. The payload's first
-//! character selects the encoding: `~` lossless (coverage raster,
-//! thresholded at >= 129), `!` one_bit. Payloads are base85 (custom
+//! bounds here. The mask raster is box-local and may be SMALLER than
+//! its box: SAM caps the raster's long side at 1024 px, so a box
+//! over 1024 px carries a downscaled raster. The raster is scaled to
+//! its box (`fit_coverage_to_box`) before placement. The payload's
+//! first character selects the encoding: `~` lossless (coverage
+//! raster, thresholded at >= 129), `!` one_bit. Payloads are base85 (custom
 //! alphabet) over an adaptive arithmetic/range code — all ported as
 //! exact integer arithmetic.
 //!
@@ -337,7 +340,9 @@ fn update_counts(counts: &mut [u16], offset: usize, bit: usize) {
     }
 }
 
-fn encode_raster(input: &[u8], width: usize, height: usize) -> Result<String, String> {
+/// Encode a 0/1 raster as a canonical one_bit payload (the official
+/// encoder's `_encode_raster`); public so tests can build records.
+pub fn encode_raster(input: &[u8], width: usize, height: usize) -> Result<String, String> {
     let mut encoder = RangeEncoder::new();
     let mut counts = vec![1u16; CONTEXT_COUNT * 2];
     let padded_width = width + 2 * PADDING;
@@ -646,9 +651,36 @@ pub struct SegmentationMask {
     pub height: i64,
 }
 
+/// Largest raster or box area the decoder will allocate. The raster
+/// is allocated at the API-declared dimensions; capping the area
+/// before either decoder allocates keeps an absurd header (100000x
+/// 100000, or dims whose product overflows usize) from aborting the
+/// process on allocation failure or wrapping into an undersized
+/// buffer — the same crash class as the place_in_frame fix. Honest
+/// rasters and boxes sit inside the SAM working frame (at most
+/// SAM_MAX_PIXELS), far under this ceiling, which sits above the
+/// largest ingestible photo frame (40 MP ingest cap).
+pub const MAX_MASK_RASTER_PIXELS: u64 = 1 << 26; // 67,108,864
+
+/// Coverage at or above this value is "on" (more than half covered).
+/// One threshold for both encodings: one_bit decodes to 0/255.
+pub const MASK_ON_COVERAGE: u8 = 129;
+
 /// Strictly decode one mask payload to a 0/1 raster (row-major,
 /// width x height). Port of `decode_mask_to_raster`.
 pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String> {
+    Ok(decode_mask_to_coverage(mask)?
+        .iter()
+        .map(|&v| u8::from(v >= MASK_ON_COVERAGE))
+        .collect())
+}
+
+/// Strictly decode one mask payload to a coverage raster (0..=255,
+/// row-major, width x height): the lossless coverage as sent, or the
+/// one_bit raster as 0/255. Thresholding is left to the caller so a
+/// raster that must be scaled to its box is thresholded once, after
+/// scaling (`fit_coverage_to_box`).
+pub fn decode_mask_to_coverage(mask: &SegmentationMask) -> Result<Vec<u8>, String> {
     // N28: geometry failures carry the full declared geometry —
     // a bad SAM mask cannot be regenerated from the photo, so the
     // error text is the only durable copy of what the model sent.
@@ -658,16 +690,6 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
             mask.width, mask.height
         ));
     }
-    // The raster is allocated at the API-declared dimensions; cap
-    // the area before either decoder allocates. An absurd header
-    // (100000x100000, or dims whose product overflows usize)
-    // otherwise aborts the process on allocation failure or wraps
-    // into an undersized buffer and panics on index — the same
-    // crash class as the place_in_frame fix. Honest rasters are
-    // box-local inside the SAM working frame (at most
-    // SAM_MAX_PIXELS), far under this ceiling, which sits above
-    // the largest ingestible photo frame (40 MP ingest cap).
-    const MAX_MASK_RASTER_PIXELS: u64 = 1 << 26; // 67,108,864
     let area = (mask.width as u64)
         .checked_mul(mask.height as u64)
         .unwrap_or(u64::MAX);
@@ -684,11 +706,7 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
             if !mask.payload.starts_with('~') {
                 return Err("lossless mask payloads must start with ~.".to_string());
             }
-            let coverage = decode_lossless_raster(&mask.payload, width, height)?;
-            Ok(coverage
-                .iter()
-                .map(|&v| if v >= 129 { 1 } else { 0 })
-                .collect())
+            decode_lossless_raster(&mask.payload, width, height)
         }
         MaskEncoding::OneBit => {
             if !mask.payload.starts_with('!') {
@@ -700,9 +718,71 @@ pub fn decode_mask_to_raster(mask: &SegmentationMask) -> Result<Vec<u8>, String>
                     "Mask payload is not canonical or has invalid finalization.".to_string()
                 );
             }
-            Ok(raster)
+            Ok(raster
+                .iter()
+                .map(|&v| if v != 0 { 255 } else { 0 })
+                .collect())
         }
     }
+}
+
+/// Scale a box-local coverage raster to its box, then threshold it
+/// once at `MASK_ON_COVERAGE`; returns the 0/1 raster at box size
+/// (port target for the Python `_fit_raster_to_box`).
+///
+/// SAM caps the raster's long side at 1024 px. Before this existed
+/// the raster was pasted 1:1 at the box origin and zero-padded, so a
+/// 1364x977 bike box carrying a 1024x733 raster put a 75%-scale mask
+/// in the box's top-left corner (IoU 0.16 with the bike). The scale
+/// is Pillow's BILINEAR (`resample::resize_gray`, byte-exact), the
+/// same filter `map_mask_to_frame` uses between the SAM frame and the
+/// photo. Same-size rasters are thresholded unchanged, so every
+/// record whose raster already matched its box decodes exactly as
+/// before.
+///
+/// A raster shorter than width x height reads as zero padding, a
+/// longer one is truncated (the `place_in_frame` repair policy).
+/// None when the box (or raster) area is zero or the box area is
+/// over `MAX_MASK_RASTER_PIXELS`: no honest SAM frame holds such a
+/// box, and scaling to it would allocate without bound.
+pub fn fit_coverage_to_box(
+    coverage: &[u8],
+    width: usize,
+    height: usize,
+    box_width: usize,
+    box_height: usize,
+) -> Option<Vec<u8>> {
+    let area = width.checked_mul(height)?;
+    let box_area = box_width.checked_mul(box_height)?;
+    if area == 0 || box_area == 0 || box_area as u64 > MAX_MASK_RASTER_PIXELS {
+        return None;
+    }
+    let mut pixels = coverage.to_vec();
+    pixels.resize(area, 0);
+    if (width, height) != (box_width, box_height) {
+        if area as u64 > MAX_MASK_RASTER_PIXELS {
+            return None;
+        }
+        let raster = crate::image::GrayImage {
+            width: width as u32,
+            height: height as u32,
+            pixels,
+            icc_profile: None,
+        };
+        pixels = crate::resample::resize_gray(
+            &raster,
+            box_width as u32,
+            box_height as u32,
+            crate::resample::ResampleFilter::Bilinear,
+        )
+        .pixels;
+    }
+    Some(
+        pixels
+            .iter()
+            .map(|&v| u8::from(v >= MASK_ON_COVERAGE))
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -714,7 +794,9 @@ pub struct DecodedMask {
     pub object_id: String,
     /// Half-open bounds inside the frame: (left, top, right, bottom).
     pub bounds: (i64, i64, i64, i64),
-    /// Mask pixels inside the record's own raster.
+    /// Mask pixels in the record's raster after it was scaled to its
+    /// box (`fit_coverage_to_box`); equal to the raster's own count
+    /// whenever the raster already matched its box.
     pub mask_pixels: u64,
     /// Full-frame binary mask as an L raster (0/255), row-major.
     pub image: Vec<u8>,
@@ -978,9 +1060,14 @@ pub fn model_to_frame(
 /// Place a box-local 0/1 raster into a full-frame L image (0/255),
 /// clipped against the frame edges (port of `_place_in_frame`).
 ///
+/// The parse path hands this a raster already scaled to its box
+/// (`fit_coverage_to_box`), so placement is 1:1. The zero-padding
+/// below remains the totality guard for direct callers.
+///
 /// The record's bounds can outrun the raster: SAM returned a
 /// border-touching fridge mask on IMG_1351 whose box was larger than
-/// its box-local raster, in the wild. The Python reference places the
+/// its box-local raster, in the wild (the 1024-px raster cap; the
+/// cause of the misplaced masks fixed by `fit_coverage_to_box`). The Python reference places the
 /// raster through PIL crop, which zero-pads any overhang, so source
 /// coordinates outside the raster read as 0 here too. Indexing the
 /// raster unchecked panicked the server (index out of bounds at the
@@ -1212,13 +1299,25 @@ fn accept_records(
             position = end;
             continue;
         }
-        match decode_mask_to_raster(&mask) {
-            Ok(raster) => {
+        match decode_mask_to_coverage(&mask) {
+            Ok(coverage) => {
+                // Scale the raster to its box, threshold once; a box
+                // no honest frame can hold skips this mask.
+                let Some(raster) = fit_coverage_to_box(
+                    &coverage,
+                    mask.width as usize,
+                    mask.height as usize,
+                    frame_box.width(),
+                    frame_box.height(),
+                ) else {
+                    position = end;
+                    continue;
+                };
                 let mask_pixels: u64 = raster.iter().map(|&v| v as u64).sum();
                 let image = place_in_frame(
                     &raster,
-                    mask.width as usize,
-                    mask.height as usize,
+                    frame_box.width(),
+                    frame_box.height(),
                     &frame_box,
                     frame_width,
                     frame_height,

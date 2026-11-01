@@ -60,6 +60,7 @@ pub mod sam;
 pub mod segmentation;
 pub mod server;
 pub mod sqlledger;
+pub mod staging;
 
 /// Python's `round(x, 6)`: round-half-even at the 6th decimal.
 pub fn round6(x: f64) -> f64 {
