@@ -1092,6 +1092,8 @@ pub fn request_plate_image(
 
 const PLATE_EDIT_OBJECT: &str = "Edit @Image1. It is a real photo in which one region has been filled flat grey. Fill the grey region with the continuous background that would be behind it: the same ground, floor, wall and surfaces, continuing their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in the grey region. No people, animals, text, logos or watermark.";
 
+const PLATE_EDIT_DEFAULT_STYLE: &str = "a clean, tidy, bright version of the same place: surfaces fresh and uncluttered, no moss or debris, soft even daylight, same camera height and same ground plane, listing photo quality.";
+
 const PLATE_EDIT_SURFACE: &str = "Edit @Image1. It is a real photo in which the main surface has been filled flat grey. Continue the surroundings: keep everything outside the grey region where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the grey region with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
 
 /// The geometry-aware edit prompt (identical to the Mac probe's).
@@ -1104,11 +1106,22 @@ pub fn plate_edit_prompt(scene_prompt: &str, fills_frame: bool) -> String {
     } else {
         PLATE_EDIT_OBJECT
     };
+    // Default styling when the caller gives none: a tidy, listing-ready
+    // version of the same place, so a staged shot visibly improves on the
+    // snapshot while the geometry stays the photo's. Surfaces keep the
+    // faithful continuation (there is little around them to tidy).
     let scene = scene_prompt.trim();
-    if scene.is_empty() {
+    let styling = if !scene.is_empty() {
+        scene
+    } else if fills_frame {
+        ""
+    } else {
+        PLATE_EDIT_DEFAULT_STYLE
+    };
+    if styling.is_empty() {
         base.to_string()
     } else {
-        format!("{base} Styling only (keep the geometry): {scene}")
+        format!("{base} Styling only (keep the geometry): {styling}")
     }
 }
 
