@@ -106,7 +106,7 @@ impl Default for ScalingLists {
         // neutral placeholder so "no explicit list" is representable.
         let mut coef: [[Vec<i32>; 6]; 4] = Default::default();
         for size_id in 0..4 {
-            let n = 1usize << (4 + size_id);
+            let n = 1usize << (4 + (size_id << 1));
             let count = n.min(64);
             for m in 0..6 {
                 coef[size_id][m] = vec![16; count];
@@ -124,8 +124,18 @@ fn parse_scaling_list_data(br: &mut BitReader) -> Res<ScalingLists> {
     for size_id in 0..4usize {
         let matrices = scaling_list_matrix_count(size_id);
         for matrix_id in 0..matrices {
+            // §7.3.4: scaling_list_pred_mode_flag 0 = copy a
+            // previous matrix (a ue delta follows); 1 = explicit
+            // coefficients. These branches and the coefficient
+            // count below were both inverted/short until
+            // 2026-10-31: harmless while every corpus SPS used the
+            // default lists (present flag 0), the garment batch
+            // IMG_1433-1436 was the first with explicit lists and
+            // desynced the SPS parse into the slice header (the
+            // refusal the film run hit). The bit-consumption test
+            // in this file pins both rules.
             let pred_mode = br.u1();
-            if pred_mode == 1 {
+            if pred_mode == 0 {
                 // Copy from matrix (matrix_id - delta - 1); a
                 // reference below zero means the spec's default
                 // matrix, which is already in place. Delta is
@@ -144,7 +154,9 @@ fn parse_scaling_list_data(br: &mut BitReader) -> Res<ScalingLists> {
                     }
                 }
             } else {
-                let coef_num = (1usize << (4 + size_id)).min(64);
+                // §7.3.4: coefNum = Min(64, 1 << (4 + (sizeId << 1)))
+                // — 16/64/64/64 across the sizes, not 16/32/64/64.
+                let coef_num = (1usize << (4 + (size_id << 1))).min(64);
                 let mut next_coef: i32 = 8;
                 if size_id > 1 {
                     // saturating: exact for every in-spec DC
@@ -1191,5 +1203,114 @@ mod sps_log2_range_tests {
         // the checker's own arithmetic.
         assert!(check_sps_log2_ranges(0, 1, u32::MAX - 1, 0, 3).is_err());
         assert!(check_sps_log2_ranges(0, 1, 2, 0, u32::MAX - 1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod scaling_list_consumption_tests {
+    use super::{parse_scaling_list_data, BitReader};
+
+    /// Minimal MSB-first bit writer for building scaling_list_data
+    /// streams whose exact bit cost is known by construction.
+    struct BitW {
+        bytes: Vec<u8>,
+        cur: u8,
+        used: u32,
+    }
+
+    impl BitW {
+        fn new() -> Self {
+            BitW { bytes: Vec::new(), cur: 0, used: 0 }
+        }
+        fn u1(&mut self, bit: u32) {
+            self.cur = (self.cur << 1) | (bit as u8 & 1);
+            self.used += 1;
+            if self.used == 8 {
+                self.bytes.push(self.cur);
+                self.cur = 0;
+                self.used = 0;
+            }
+        }
+        /// ue(0) and se(0) are both the single bit "1".
+        fn zero_golomb(&mut self) {
+            self.u1(1);
+        }
+        /// se(+1): codeNum 1, ue "010".
+        fn se_plus_one(&mut self) {
+            self.u1(0);
+            self.u1(1);
+            self.u1(0);
+        }
+        fn finish(mut self) -> Vec<u8> {
+            if self.used > 0 {
+                self.cur <<= 8 - self.used;
+                self.bytes.push(self.cur);
+            }
+            self.bytes
+        }
+    }
+
+    /// The two §7.3.4 rules the garment batch (IMG_1433-1436) exposed:
+    /// pred_mode_flag 0 = copy (ue delta), 1 = explicit coefficients;
+    /// coefNum = Min(64, 1 << (4 + (sizeId << 1))). The stream below
+    /// mixes both modes across all four sizes; the parser must land
+    /// on the exact constructed bit count and values. Under either
+    /// old deviation (inverted branches, or a 32-coefficient size-1
+    /// matrix) the parse desyncs and both assertions break.
+    #[test]
+    fn explicit_and_copy_matrices_consume_exact_bits() {
+        let mut w = BitW::new();
+        // size 0 (6 matrices of 16): m0 explicit, first delta +1,
+        // rest 0; m1..m5 copies of the previous with delta 0.
+        w.u1(1);
+        w.se_plus_one();
+        for _ in 0..15 {
+            w.zero_golomb();
+        }
+        for _ in 0..5 {
+            w.u1(0);
+            w.zero_golomb();
+        }
+        // size 1 (6 matrices of 64 by the spec count): m0 explicit
+        // all-zero deltas; m1..m5 copies.
+        w.u1(1);
+        for _ in 0..64 {
+            w.zero_golomb();
+        }
+        for _ in 0..5 {
+            w.u1(0);
+            w.zero_golomb();
+        }
+        // size 2 (6 matrices of 64 + DC): m0 explicit, DC delta 0,
+        // coefficients all zero deltas; m1..m5 copies.
+        w.u1(1);
+        w.zero_golomb(); // DC coef minus8 = 0
+        for _ in 0..64 {
+            w.zero_golomb();
+        }
+        for _ in 0..5 {
+            w.u1(0);
+            w.zero_golomb();
+        }
+        // size 3 (2 matrices): both copies (delta 0).
+        for _ in 0..2 {
+            w.u1(0);
+            w.zero_golomb();
+        }
+        // Bit budget: size0 19 + 5*2, size1 65 + 5*2, size2 66 + 5*2,
+        // size3 2*2.
+        let expected_bits = 19 + 10 + 65 + 10 + 66 + 10 + 4;
+        let bytes = w.finish();
+        let mut br = BitReader::new(&bytes);
+        let lists = parse_scaling_list_data(&mut br).expect("parse");
+        assert_eq!(br.bits_read(), expected_bits);
+        // Values: explicit matrices carry the deltas; copies repeat
+        // their reference; the size-1 matrix really has 64 entries.
+        assert!(lists.coef[0][0].iter().all(|&c| c == 9));
+        assert_eq!(lists.coef[0][1], lists.coef[0][0]);
+        assert_eq!(lists.coef[1][0].len(), 64);
+        assert!(lists.coef[1][0].iter().all(|&c| c == 8));
+        assert_eq!(lists.dc[0][0], 8);
+        assert_eq!(lists.coef[2][1], lists.coef[2][0]);
     }
 }

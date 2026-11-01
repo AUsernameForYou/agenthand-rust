@@ -110,3 +110,29 @@ fn brand_only_garbage_is_an_error() {
     let r = std::panic::catch_unwind(|| decode_image(&v));
     assert!(r.is_ok() && r.unwrap().is_err());
 }
+
+/// Explicit-scaling-list regression (2026-10-31, film run P18):
+/// the garment batch IMG_1433-1436 carries sps_scaling_list_data
+/// (present flag 1) where every earlier corpus SPS used the default
+/// lists. Two §7.3.4 deviations in parse_scaling_list_data —
+/// pred_mode branches inverted, coefficient count 1 << (4 + sizeId)
+/// instead of 1 << (4 + (sizeId << 1)) — desynced the SPS parse and
+/// surfaced three layers later as "slice header parse failed". The
+/// batch now decodes through the integrated path at full size; the
+/// bit-level rules are pinned by the unit test in heic::params.
+#[test]
+fn explicit_scaling_list_batch_decodes() {
+    for name in ["IMG_1433", "IMG_1434", "IMG_1435", "IMG_1436"] {
+        let Some(data) = corpus_file(&format!("real/{name}.HEIC")) else {
+            return;
+        };
+        let img = decode_image(&data)
+            .unwrap_or_else(|e| panic!("{name} must decode after the scaling-list fix: {e}"))
+            .into_rgba();
+        assert_eq!(
+            (img.width, img.height),
+            (4284, 5712),
+            "{name}: full grid at display orientation"
+        );
+    }
+}
