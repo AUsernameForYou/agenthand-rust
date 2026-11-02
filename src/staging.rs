@@ -188,6 +188,191 @@ pub fn analyze_subject(foreground: &RgbaImage) -> SubjectGeometry {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shot-angle estimate (angle lock). Mask geometry alone is a weak cue for
+// camera pitch, so the thresholds are conservative: a specific angle is
+// stated only when every cue agrees, and `EyeLevel` is the unstated
+// default. Calibrated against the repo's real photos: car and jacket (shot
+// from standing height looking down) land in `SteepDown`; the bike (mild
+// downward, ground line near the bottom) stays at the unstated default.
+// ---------------------------------------------------------------------------
+
+/// SteepDown: the ground-contact line (bbox bottom) sits at least this
+/// fraction of the frame above the bottom edge ("ground line high": a
+/// clear band of ground in front of the subject).
+pub const ANGLE_STEEP_MIN_GROUND_BELOW: f64 = 0.15;
+/// SteepDown: the subject's top edge reaches at least this high (y/h).
+/// At eye level a ground object no taller than the camera sits wholly
+/// below the horizon (the frame midline); reaching into the upper third
+/// while resting on visible ground needs the camera tilted down.
+pub const ANGLE_STEEP_MAX_TOP: f64 = 0.33;
+/// SteepDown: footprint wide (bbox width / height).
+pub const ANGLE_STEEP_MIN_ASPECT: f64 = 1.25;
+/// SteepDown: a substantial subject (bbox height / frame height).
+pub const ANGLE_STEEP_MIN_HEIGHT: f64 = 0.25;
+/// LowUp: the ground-contact line sits in the bottom 12% of the frame.
+pub const ANGLE_LOW_MIN_CONTACT: f64 = 0.88;
+/// LowUp: the bbox centre sits above the frame midline (y/h).
+pub const ANGLE_LOW_MAX_CENTRE: f64 = 0.46;
+/// LowUp: towering (bbox width / height).
+pub const ANGLE_LOW_MAX_ASPECT: f64 = 0.85;
+
+/// The three shot-angle buckets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotAngle {
+    /// Shot from standing height looking down at the surface.
+    SteepDown,
+    /// Eye level; also the default when the geometry is inconclusive.
+    EyeLevel,
+    /// Shot from a low angle looking slightly up.
+    LowUp,
+}
+
+impl ShotAngle {
+    pub fn bucket(self) -> &'static str {
+        match self {
+            ShotAngle::SteepDown => "steep_down",
+            ShotAngle::EyeLevel => "eye_level",
+            ShotAngle::LowUp => "low_up",
+        }
+    }
+}
+
+/// The normalised mask geometry the estimate reads (y grows downward).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AngleSignals {
+    /// bbox top edge / frame height.
+    pub top_y: f64,
+    /// bbox centre / frame height (0.5 is the midline).
+    pub centre_y: f64,
+    /// Ground-contact line (bbox bottom, where the contact shadow sits)
+    /// / frame height.
+    pub contact_y: f64,
+    /// Frame below the contact line (1 - contact_y).
+    pub ground_below: f64,
+    /// bbox width / bbox height, in pixels.
+    pub aspect: f64,
+    /// bbox height / frame height.
+    pub height_frac: f64,
+    /// Opaque product pixels / frame pixels.
+    pub coverage: f64,
+}
+
+/// The estimate and why. `stated` is true only when the geometry
+/// supports a specific angle (SteepDown or LowUp); the EyeLevel
+/// default is never stated in a source_edit prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AngleEstimate {
+    pub angle: ShotAngle,
+    pub stated: bool,
+    pub signals: Option<AngleSignals>,
+    pub reason: &'static str,
+}
+
+impl AngleEstimate {
+    pub fn signals_json(&self) -> Value {
+        match self.signals {
+            None => Value::Null,
+            Some(s) => json!({
+                "top_y": crate::round6(s.top_y),
+                "centre_y": crate::round6(s.centre_y),
+                "contact_y": crate::round6(s.contact_y),
+                "ground_below": crate::round6(s.ground_below),
+                "aspect": crate::round6(s.aspect),
+                "height_frac": crate::round6(s.height_frac),
+                "coverage": crate::round6(s.coverage),
+            }),
+        }
+    }
+}
+
+/// Estimate the shot angle from the subject geometry (pure; no pixels).
+pub fn estimate_shot_angle(g: &SubjectGeometry) -> AngleEstimate {
+    estimate_shot_angle_from(g.width, g.height, g.bbox, g.coverage, g.fills_frame, &g.touches)
+}
+
+/// The estimator over primitives (bbox half-open, in frame pixels).
+/// Rules, all cues required:
+/// - SteepDown: contact line at least 15% above the bottom edge, top
+///   edge in the upper third, bbox at least 1.25x wider than tall and
+///   at least 25% of the frame tall.
+/// - LowUp: contact line in the bottom 12%, bbox centre above 0.46,
+///   bbox at most 0.85x as wide as tall.
+/// - Otherwise EyeLevel, unstated. Also unstated whenever there is no
+///   bbox, the subject fills the frame (a surface), or the subject is
+///   cut by the bottom edge (the ground-contact line is not visible).
+pub fn estimate_shot_angle_from(
+    width: u32,
+    height: u32,
+    bbox: Option<(u32, u32, u32, u32)>,
+    coverage: f64,
+    fills_frame: bool,
+    touches: &[&str],
+) -> AngleEstimate {
+    let default = |signals: Option<AngleSignals>, reason: &'static str| AngleEstimate {
+        angle: ShotAngle::EyeLevel,
+        stated: false,
+        signals,
+        reason,
+    };
+    let Some((x0, y0, x1, y1)) = bbox else {
+        return default(None, "no product bbox; angle not estimated");
+    };
+    if width == 0 || height == 0 || x1 <= x0 || y1 <= y0 {
+        return default(None, "degenerate bbox; angle not estimated");
+    }
+    let h = height as f64;
+    let signals = AngleSignals {
+        top_y: y0 as f64 / h,
+        centre_y: (y0 as f64 + y1 as f64) / 2.0 / h,
+        contact_y: y1 as f64 / h,
+        ground_below: (h - y1 as f64) / h,
+        aspect: (x1 - x0) as f64 / (y1 - y0) as f64,
+        height_frac: (y1 - y0) as f64 / h,
+        coverage,
+    };
+    if fills_frame {
+        return default(
+            Some(signals),
+            "subject fills the frame (a surface); no angle claimed beyond the base clause",
+        );
+    }
+    if touches.contains(&"bottom") {
+        return default(
+            Some(signals),
+            "subject is cut by the bottom edge, so the ground-contact line is not visible; no angle claimed beyond the base clause",
+        );
+    }
+    let s = signals;
+    if s.ground_below >= ANGLE_STEEP_MIN_GROUND_BELOW
+        && s.top_y <= ANGLE_STEEP_MAX_TOP
+        && s.aspect >= ANGLE_STEEP_MIN_ASPECT
+        && s.height_frac >= ANGLE_STEEP_MIN_HEIGHT
+    {
+        return AngleEstimate {
+            angle: ShotAngle::SteepDown,
+            stated: true,
+            signals: Some(s),
+            reason: "wide subject resting on a clear band of ground and reaching into the upper third: camera tilted down",
+        };
+    }
+    if s.contact_y >= ANGLE_LOW_MIN_CONTACT
+        && s.centre_y <= ANGLE_LOW_MAX_CENTRE
+        && s.aspect <= ANGLE_LOW_MAX_ASPECT
+    {
+        return AngleEstimate {
+            angle: ShotAngle::LowUp,
+            stated: true,
+            signals: Some(s),
+            reason: "tall subject rising above the midline from a thin strip of ground at the bottom: camera low, looking up",
+        };
+    }
+    default(
+        Some(s),
+        "geometry inconclusive; eye level assumed, no angle claimed beyond the base clause",
+    )
+}
+
 /// Refuse to stage a foreground with no product pixels: a plate with
 /// nothing on it is not staging, and a receipt over 0 pixels vouches
 /// for nothing. Runs before any spend.

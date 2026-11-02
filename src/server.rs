@@ -1,7 +1,7 @@
 //! The MCP server: the three model tools (identify / cut_out / draw)
-//! with the same result shapes as the Python `server.py`, plus the
-//! code-only `price` tool (comps pricing, no model call), over a
-//! hand-rolled JSON-RPC stdio loop.
+//! with the same result shapes as the Python `server.py`, over a
+//! hand-rolled JSON-RPC stdio loop. Comps pricing rides on identify's
+//! ok result as a `pricing` block; there is no separate price tool.
 //!
 //! Why not the rmcp crate: the port's first job is byte-level parity
 //! of the fidelity core, and the tool surface is three calls plus one
@@ -178,29 +178,6 @@ pub fn tool_identify(image: &str) -> Result<Value, String> {
     // untouched (longer identify wording caused empty 200 bodies).
     comps::attach_identify_pricing(&mut out, &comps::load_configured_book());
     Ok(out)
-}
-
-/// The `price` tool handler: the same pricing block identify
-/// attaches, for an item named directly. Code only, no model call.
-pub fn tool_price(item_name: &str) -> Value {
-    let name = item_name.trim();
-    if name.is_empty() {
-        return json!({
-            "status": "error",
-            "tool": "price",
-            "item_name": item_name,
-            "pricing": null,
-            "error": {"code": "BAD_ARGUMENT", "message": "item_name is required"},
-        });
-    }
-    let book = comps::load_configured_book();
-    json!({
-        "status": "ok",
-        "tool": "price",
-        "item_name": name,
-        "pricing": comps::pricing_for_item_name(&book, name, None),
-        "cost_usd": 0.0,
-    })
 }
 
 /// The `cut_out` tool handler: ingest, segment the concept, shape the
@@ -647,6 +624,7 @@ fn stage_source_plate(
     foreground_handle: &str,
     foreground: &crate::image::RgbaImage,
     geometry: &SubjectGeometry,
+    angle: &staging::AngleEstimate,
     scene_prompt: &str,
 ) -> Result<StagedPlate, meta::ImageError> {
     let staging_err = |message: String| meta::ImageError {
@@ -671,7 +649,10 @@ fn stage_source_plate(
         .unwrap_or((1024, 1024));
     let (reference, hole_pixels) = staging::masked_reference(&source, foreground, ref_w, ref_h);
     let reference_png = crate::image::encode_png_rgba(&reference);
-    let prompt = meta::plate_edit_prompt(scene_prompt, geometry.fills_frame);
+    // Angle lock: every source_edit prompt ends with the base clause,
+    // plus the shot-angle phrase when the geometry states one.
+    let angle_lock = meta::angle_lock_clause(Some(angle));
+    let prompt = meta::plate_edit_prompt_locked(scene_prompt, geometry.fills_frame, Some(angle));
     let cfg = meta::PlateEditConfig::from_env();
 
     let key = meta::require_meta_api_key().map_err(|e| meta::ImageError {
@@ -797,6 +778,7 @@ fn stage_source_plate(
         "plate_mode": backdrop::DRAW_PLATE_SOURCE_EDIT,
         "plate_kind": kind,
         "subject": geometry.to_json(),
+        "angle_lock": angle_lock_json(angle, &angle_lock),
     });
     if let Some(f) = fallback {
         extra["plate_fallback"] = f;
@@ -810,6 +792,19 @@ fn stage_source_plate(
         kind_override: Some((kind, backdrop_value)),
         note: note.to_string(),
         extra,
+    })
+}
+
+/// The draw result's `angle_lock` record: the estimated bucket, the
+/// exact clause appended to the plate prompt, whether a specific angle
+/// was stated, and the geometry it was read from.
+fn angle_lock_json(angle: &staging::AngleEstimate, clause: &str) -> Value {
+    json!({
+        "bucket": angle.angle.bucket(),
+        "clause": clause,
+        "stated": angle.stated,
+        "reason": angle.reason,
+        "signals": angle.signals_json(),
     })
 }
 
@@ -857,6 +852,7 @@ pub fn tool_draw_with_plate(
     // soft) foreground is refused before any spend, in every mode.
     let foreground = store.read_image(asset)?;
     let geometry = staging::analyze_subject(&foreground);
+    let angle = staging::estimate_shot_angle(&geometry);
     if let Err(e) = staging::check_stageable(&geometry) {
         return Ok((
             error("EMPTY_FOREGROUND", &e, json!({"cost_counted_usd": 0.0})),
@@ -874,9 +870,14 @@ pub fn tool_draw_with_plate(
 
     let projected = meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
     let staged = if plate_mode == backdrop::DRAW_PLATE_GENERATED {
+        // No reference photo here, so the angle lock rides as steering
+        // words from the estimated angle (eye level when unsure). The
+        // receipt keeps the caller's scene text.
+        let steer = meta::generated_angle_steer(&angle);
+        let plate_scene = meta::generated_plate_scene(scene_prompt, &angle);
         match generate_background_plate(
             &store,
-            scene_prompt,
+            &plate_scene,
             foreground_record.width,
             foreground_record.height,
         ) {
@@ -885,7 +886,10 @@ pub fn tool_draw_with_plate(
                 billing,
                 kind_override: None,
                 note: "Background plate generated by muse-image-1.0 and fitted to the product by deterministic code; the stored product layer was composited untouched and never sent to the image model.".to_string(),
-                extra: json!({"plate_mode": backdrop::DRAW_PLATE_GENERATED}),
+                extra: json!({
+                    "plate_mode": backdrop::DRAW_PLATE_GENERATED,
+                    "angle_lock": angle_lock_json(&angle, &steer),
+                }),
             },
             Err(e) => {
                 return Ok((
@@ -895,7 +899,7 @@ pub fn tool_draw_with_plate(
             }
         }
     } else {
-        match stage_source_plate(&store, asset, &foreground, &geometry, scene_prompt) {
+        match stage_source_plate(&store, asset, &foreground, &geometry, &angle, scene_prompt) {
             Ok(staged) => staged,
             Err(e) => {
                 return Ok((
@@ -1053,17 +1057,6 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["asset", "scene_prompt"]
             }
-        },
-        {
-            "name": "price",
-            "description": "Price an item from local marketplace comps, code only (no model call, no cost). Matches the item name to a comps category and returns a pricing block: range [min, max] of possible asking prices, recommended price (the comps median), percentile_band [p25, p75], confidence (high / medium / low), comps_count, searched_at, area, basis, advisory: true and a footnote. identify results carry the same block as `pricing`. No matching category, or no comps file, returns pricing {\"status\": \"no_comps\"}.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "item_name": {"type": "string", "description": "What the item is, e.g. the concept or listing title identify returned (\"kids BMX bike\", \"gas grill\")."}
-                },
-                "required": ["item_name"]
-            }
         }
     ])
 }
@@ -1133,10 +1126,6 @@ fn call_tool_inner(name: &str, args: &Value) -> Result<Value, String> {
             let plate = args.get("plate").and_then(|v| v.as_str());
             let (result, preview) = tool_draw_with_plate(asset, scene, plate)?;
             Ok(wrap(result, preview))
-        }
-        "price" => {
-            let item_name = args.get("item_name").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(wrap(tool_price(item_name), Vec::new()))
         }
         other => Err(format!("Unknown tool: {other}")),
     }
@@ -1264,6 +1253,35 @@ mod tests {
         assert_eq!(grids.len(), 1, "exactly one QR in the sidecar");
         let (_meta, content) = grids[0].decode().expect("QR decodes");
         assert_eq!(content, url);
+    }
+
+    /// The draw result's angle-lock record: bucket, the exact clause,
+    /// whether an angle was stated, the reason and the geometry.
+    #[test]
+    fn angle_lock_record_names_bucket_and_clause() {
+        let angle = staging::estimate_shot_angle_from(
+            1920,
+            1080,
+            Some((271, 0, 1419, 824)),
+            0.31,
+            false,
+            &["top"],
+        );
+        let clause = meta::angle_lock_clause(Some(&angle));
+        let record = angle_lock_json(&angle, &clause);
+        assert_eq!(record["bucket"], "steep_down");
+        assert_eq!(record["stated"], true);
+        assert_eq!(
+            record["clause"],
+            "Keep the exact same camera angle and perspective as the original photo, same horizon position, same framing. The original photo was shot from standing height looking down at the surface at a steep angle."
+        );
+        assert!(record["signals"]["contact_y"].as_f64().unwrap() > 0.76);
+        let none = staging::estimate_shot_angle_from(10, 10, None, 0.0, false, &[]);
+        let record = angle_lock_json(&none, &meta::angle_lock_clause(Some(&none)));
+        assert_eq!(record["bucket"], "eye_level");
+        assert_eq!(record["stated"], false);
+        assert_eq!(record["clause"], meta::ANGLE_LOCK_CLAUSE);
+        assert!(record["signals"].is_null());
     }
 
     /// The verify hash is taken over the receipt BEFORE the two

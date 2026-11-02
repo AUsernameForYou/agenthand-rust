@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use agenthand::comps::{
     attach_identify_pricing, load_book, parse_book, pricing_for_identify, pricing_for_item_name,
-    CompsBook, MIN_MATCH_SCORE, PRICING_BASIS, PRICING_FOOTNOTE,
+    CompsBook, Scope, MIN_MATCH_SCORE, PRICING_BASIS, PRICING_FOOTNOTE, PRICING_FOOTNOTE_WIDE,
+    WIDE_SCOPE_NOTE,
 };
 use agenthand::config::comps_file_from;
 use serde_json::{json, Value};
@@ -77,6 +78,8 @@ fn loader_reads_the_real_comps_file() {
     assert!(book.skipped.is_empty(), "skipped: {:?}", book.skipped);
     let counts: Vec<u64> = book.categories.iter().map(|c| c.comps_count).collect();
     assert_eq!(counts, vec![9, 7, 18, 12, 22, 8, 13]);
+    // The real file has local comps for every category.
+    assert!(book.categories.iter().all(|c| c.scope == Scope::Local));
 }
 
 #[test]
@@ -281,11 +284,14 @@ fn priced_block_shape_and_values() {
             "percentile_band",
             "range",
             "recommended",
+            "scope",
             "searched_at",
             "status"
         ]
     );
     assert_eq!(block["status"], "priced");
+    assert_eq!(block["scope"], "local");
+    assert!(block.get("note").is_none(), "a local block carries no note");
     assert_eq!(block["category"], "kids_bmx_bike");
     assert_eq!(block["range"], json!([30, 125]));
     assert_eq!(block["recommended"], json!(50));
@@ -379,4 +385,194 @@ fn listing_title_helps_a_vague_item_name() {
     // A title cannot rescue an item whose own name gates it out.
     let block = pricing_for_item_name(&book(), "helmet", Some("Kids BMX Bike Helmet"));
     assert_eq!(block, json!({"status": "no_comps"}));
+}
+
+// ------------------------------------------------- local / wide tiers
+
+fn real_doc() -> Value {
+    serde_json::from_str(&std::fs::read_to_string(fixture()).unwrap()).unwrap()
+}
+
+/// A wider-area tier in the documented shape.
+fn wide_tier(prices: &[f64], recommended: f64) -> Value {
+    let comps: Vec<Value> = prices
+        .iter()
+        .enumerate()
+        .map(|(i, p)| json!({"title": format!("Gas grill {i}"), "price": p, "location": "Salem, OR"}))
+        .collect();
+    let lo = prices.iter().cloned().fold(f64::INFINITY, f64::min);
+    let hi = prices.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    json!({
+        "comps": comps,
+        "stats": {"count": prices.len(), "min": lo, "p25": lo, "median": recommended, "p75": hi, "max": hi},
+        "recommended": recommended,
+        "range": [lo, hi],
+        "percentile_band": [lo, hi],
+        "confidence": "low",
+        "area": "Portland-Salem metro, 100 mi radius",
+        "searched_at": "2026-11-01T18:00-08:00",
+    })
+}
+
+/// The real file with gas_grill's LOCAL comps emptied (the data
+/// lane's "searched locally, found nothing" shape).
+fn doc_without_local_grill() -> Value {
+    let mut doc = real_doc();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let grill = cats.iter_mut().find(|c| c["key"] == "gas_grill").unwrap();
+    grill["comps"] = json!([]);
+    grill["stats"] = json!({"count": 0});
+    grill["recommended"] = Value::Null;
+    grill["suggested"] = Value::Null;
+    grill["range"] = Value::Null;
+    grill["percentile_band"] = Value::Null;
+    grill["confidence"] = Value::Null;
+    doc
+}
+
+#[test]
+fn local_comps_present_price_with_scope_local() {
+    // A wide tier is present too: local still wins.
+    let mut doc = real_doc();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let grill = cats.iter_mut().find(|c| c["key"] == "gas_grill").unwrap();
+    grill["wide"] = wide_tier(&[100.0, 150.0, 200.0], 150.0);
+    doc["categories_wide"] = json!([
+        {"key": "gas_grill", "item": "Gas grill", "comps": [{"title": "Grill", "price": 999}]}
+    ]);
+    let book = parse_book(&doc).expect("loads");
+    let block = pricing_for_item_name(&Ok(book), "gas grill", None);
+    assert_eq!(block["status"], "priced");
+    assert_eq!(block["scope"], "local");
+    assert!(block.get("note").is_none());
+    assert_eq!(block["recommended"], json!(72.5));
+    assert_eq!(block["comps_count"], 12);
+    assert_eq!(block["footnote"], PRICING_FOOTNOTE);
+    assert_eq!(block["area"], "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius");
+}
+
+#[test]
+fn local_missing_wide_nested_prices_with_scope_wide_and_the_note() {
+    let mut doc = doc_without_local_grill();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let grill = cats.iter_mut().find(|c| c["key"] == "gas_grill").unwrap();
+    grill["wide"] = wide_tier(&[60.0, 90.0, 120.0, 175.0], 105.0);
+    let book = parse_book(&doc).expect("loads");
+    assert!(book.skipped.is_empty(), "{:?}", book.skipped);
+    assert_eq!(book.category("gas_grill").unwrap().scope, Scope::Wide);
+    let block = pricing_for_item_name(&Ok(book.clone()), "propane gas grill", None);
+    assert_eq!(block["status"], "priced", "{block}");
+    assert_eq!(block["scope"], "wide");
+    assert_eq!(block["note"], WIDE_SCOPE_NOTE);
+    assert_eq!(block["note"], "No local items found; priced from wider-area listings.");
+    assert_eq!(block["category"], "gas_grill");
+    assert_eq!(block["recommended"], json!(105.0));
+    assert_eq!(block["range"], json!([60.0, 175.0]));
+    assert_eq!(block["comps_count"], 4);
+    assert_eq!(block["confidence"], "low");
+    assert_eq!(block["area"], "Portland-Salem metro, 100 mi radius");
+    assert_eq!(block["searched_at"], "2026-11-01T18:00-08:00");
+    assert_eq!(block["footnote"], PRICING_FOOTNOTE_WIDE);
+    assert!(!PRICING_FOOTNOTE_WIDE.contains("local"));
+    assert_eq!(block["advisory"], true);
+    // Other categories are untouched and still local.
+    let bike = pricing_for_item_name(&Ok(book.clone()), "kids BMX bike", None);
+    assert_eq!(bike["scope"], "local");
+    // identify results get the same wide block.
+    let mut result = identify_result("gas grill", &["propane grill", "barbecue grill"], "Weber Gas Grill");
+    attach_identify_pricing(&mut result, &Ok(book));
+    assert_eq!(result["pricing"]["scope"], "wide");
+    assert_eq!(result["pricing"]["note"], WIDE_SCOPE_NOTE);
+}
+
+#[test]
+fn local_missing_categories_wide_list_prices_with_scope_wide() {
+    let mut doc = doc_without_local_grill();
+    let mut entry = wide_tier(&[80.0, 110.0, 140.0], 110.0);
+    entry["key"] = json!("gas_grill");
+    // A wide-only category with no local entry at all.
+    let mut tent = wide_tier(&[40.0, 70.0], 55.0);
+    tent["key"] = json!("camping_tent");
+    tent["item"] = json!("Camping tent");
+    tent["queries"] = json!(["camping tent", "4 person tent"]);
+    tent["comps"] = json!([
+        {"title": "Coleman 4 person tent", "price": 40},
+        {"title": "REI camping tent", "price": 70}
+    ]);
+    doc["categories_wide"] = json!([entry, tent]);
+    let book = parse_book(&doc).expect("loads");
+    let block = pricing_for_item_name(&Ok(book.clone()), "gas grill", None);
+    assert_eq!(block["scope"], "wide", "{block}");
+    assert_eq!(block["note"], WIDE_SCOPE_NOTE);
+    assert_eq!(block["recommended"], json!(110.0));
+    assert_eq!(block["comps_count"], 3);
+    let tent_block = pricing_for_item_name(&Ok(book), "camping tent", None);
+    assert_eq!(tent_block["category"], "camping_tent", "{tent_block}");
+    assert_eq!(tent_block["scope"], "wide");
+    assert_eq!(tent_block["note"], WIDE_SCOPE_NOTE);
+    assert_eq!(tent_block["item"], "Camping tent");
+}
+
+#[test]
+fn nested_wide_wins_over_a_categories_wide_entry() {
+    let mut doc = doc_without_local_grill();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let grill = cats.iter_mut().find(|c| c["key"] == "gas_grill").unwrap();
+    grill["wide"] = wide_tier(&[60.0, 90.0], 75.0);
+    let mut other = wide_tier(&[500.0, 600.0], 550.0);
+    other["key"] = json!("gas_grill");
+    doc["categories_wide"] = json!([other]);
+    let block = pricing_for_item_name(&Ok(parse_book(&doc).unwrap()), "gas grill", None);
+    assert_eq!(block["scope"], "wide");
+    assert_eq!(block["recommended"], json!(75.0));
+}
+
+#[test]
+fn neither_tier_is_no_comps() {
+    // Local emptied, no wide tier anywhere: no_comps for that item,
+    // and the rest of the book still prices.
+    let book = parse_book(&doc_without_local_grill()).expect("loads");
+    assert!(book.category("gas_grill").is_none());
+    assert_eq!(book.skipped.len(), 1, "{:?}", book.skipped);
+    assert!(book.skipped[0].contains("no local comps"), "{:?}", book.skipped);
+    let block = pricing_for_item_name(&Ok(book.clone()), "gas grill", None);
+    assert_eq!(block, json!({"status": "no_comps"}));
+    let mut result = identify_result("gas grill", &["propane grill"], "Gas Grill");
+    attach_identify_pricing(&mut result, &Ok(book.clone()));
+    assert_eq!(result["pricing"], json!({"status": "no_comps"}));
+    assert_eq!(
+        pricing_for_item_name(&Ok(book), "kids BMX bike", None)["scope"],
+        "local"
+    );
+    // A wide tier with no comps of its own is no tier either.
+    let mut doc = doc_without_local_grill();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let grill = cats.iter_mut().find(|c| c["key"] == "gas_grill").unwrap();
+    grill["wide"] = json!({"comps": [], "stats": {"count": 0}, "area": "wider"});
+    let book = parse_book(&doc).unwrap();
+    assert_eq!(
+        pricing_for_item_name(&Ok(book), "gas grill", None),
+        json!({"status": "no_comps"})
+    );
+}
+
+#[test]
+fn wide_only_files_load_and_bad_wide_lists_are_notes() {
+    let mut entry = wide_tier(&[80.0, 110.0, 140.0], 110.0);
+    entry["key"] = json!("gas_grill");
+    entry["item"] = json!("Gas grill");
+    let book = parse_book(&json!({"categories_wide": [entry]})).expect("wide-only loads");
+    let block = pricing_for_item_name(&Ok(book), "gas grill", None);
+    assert_eq!(block["scope"], "wide");
+    for (tag, text) in [
+        ("widenotlist", "{\"categories\": [], \"categories_wide\": {\"a\": 1}}"),
+        ("nothing", "{\"generated\": \"2026-11-01\", \"categories_wide\": null}"),
+    ] {
+        let book = load_book(&temp_file(tag, text));
+        let note = book.as_ref().expect_err(tag);
+        assert!(!note.contains('\n'), "{tag}: {note}");
+        let block = pricing_for_item_name(&book, "gas grill", None);
+        assert_eq!(block["status"], "no_comps", "{tag}");
+        assert!(block["note"].is_string(), "{tag}");
+    }
 }

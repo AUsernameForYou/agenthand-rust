@@ -1092,36 +1092,121 @@ pub fn request_plate_image(
 
 const PLATE_EDIT_OBJECT: &str = "Edit @Image1. It is a real photo in which one region has been filled flat grey. Fill the grey region with the continuous background that would be behind it: the same ground, floor, wall and surfaces, continuing their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in the grey region. No people, animals, text, logos or watermark.";
 
-const PLATE_EDIT_DEFAULT_STYLE: &str = "a clean, tidy, bright version of the same place: surfaces fresh and uncluttered, no moss or debris, soft even daylight, same camera height and same ground plane, listing photo quality.";
-
 const PLATE_EDIT_SURFACE: &str = "Edit @Image1. It is a real photo in which the main surface has been filled flat grey. Continue the surroundings: keep everything outside the grey region where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the grey region with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
 
-/// The geometry-aware edit prompt (identical to the Mac probe's).
-/// `fills_frame` switches to the "continue the surroundings" wording
-/// for surfaces and subjects cut by the frame. The caller's scene
-/// text rides as styling only: the geometry is the photo's.
+/// Tidy default styling: the styling text an object plate gets when
+/// the caller sends no scene text, so a bare draw still comes back as
+/// a clean, bright listing photo of the same place. Surface plates
+/// (fills_frame) keep the plain "continue the surroundings" wording.
+pub const PLATE_EDIT_DEFAULT_STYLE: &str = "a clean, tidy, bright version of the same place: surfaces fresh and uncluttered, no moss or debris, soft even daylight, same camera height and same ground plane, listing photo quality";
+
+/// Angle lock (owner's ruling, 2026-11-01): appended to EVERY
+/// source_edit plate prompt, with or without caller scene text, so a
+/// caller never has to ask for the angle to match.
+pub const ANGLE_LOCK_CLAUSE: &str = "Keep the exact same camera angle and perspective as the original photo, same horizon position, same framing.";
+/// Shot-angle phrases, one per `staging::ShotAngle` bucket.
+pub const ANGLE_PHRASE_STEEP_DOWN: &str =
+    "shot from standing height looking down at the surface at a steep angle";
+pub const ANGLE_PHRASE_EYE_LEVEL: &str = "eye-level shot";
+pub const ANGLE_PHRASE_LOW_UP: &str = "shot from a low angle looking slightly up";
+
+pub fn angle_phrase(angle: crate::staging::ShotAngle) -> &'static str {
+    use crate::staging::ShotAngle;
+    match angle {
+        ShotAngle::SteepDown => ANGLE_PHRASE_STEEP_DOWN,
+        ShotAngle::EyeLevel => ANGLE_PHRASE_EYE_LEVEL,
+        ShotAngle::LowUp => ANGLE_PHRASE_LOW_UP,
+    }
+}
+
+/// The angle-lock text a source_edit prompt ends with: the base clause,
+/// plus "The original photo was <phrase>." only when the geometry
+/// states an angle. The unstated eye-level default adds nothing: an
+/// "eye-level" claim on a downward photo the estimator missed would
+/// pull the edit away from the photo it must match.
+pub fn angle_lock_clause(estimate: Option<&crate::staging::AngleEstimate>) -> String {
+    match estimate {
+        Some(e) if e.stated => format!(
+            "{ANGLE_LOCK_CLAUSE} The original photo was {}.",
+            angle_phrase(e.angle)
+        ),
+        _ => ANGLE_LOCK_CLAUSE.to_string(),
+    }
+}
+
+/// Legacy `generated` mode (no reference photo): the angle lock becomes
+/// steering words from the estimated angle, the eye-level default
+/// included, since a text-only plate must be told some angle. Weaker by
+/// nature: the model never sees the photo.
+pub fn generated_angle_steer(estimate: &crate::staging::AngleEstimate) -> String {
+    format!(
+        "Camera angle and perspective: {}, with the horizon and ground plane placed to match a product photographed that way.",
+        angle_phrase(estimate.angle)
+    )
+}
+
+/// The scene text for a legacy generated plate: the caller's scene,
+/// then the angle steering words.
+pub fn generated_plate_scene(
+    scene_prompt: &str,
+    estimate: &crate::staging::AngleEstimate,
+) -> String {
+    let scene = scene_prompt.trim();
+    let steer = generated_angle_steer(estimate);
+    if scene.is_empty() {
+        steer
+    } else {
+        format!("{}{} {steer}", scene, sentence_end(scene))
+    }
+}
+
+/// "." when `text` does not already end a sentence, so an appended
+/// clause never runs on from caller text.
+fn sentence_end(text: &str) -> &'static str {
+    if text.ends_with(['.', '!', '?']) {
+        ""
+    } else {
+        "."
+    }
+}
+
+/// The geometry-aware edit prompt (the Mac probe's wording plus the
+/// angle lock). `fills_frame` switches to the "continue the
+/// surroundings" wording for surfaces and subjects cut by the frame.
+/// The caller's scene text rides as styling only: the geometry is the
+/// photo's. The base angle-lock clause is always last, after any scene
+/// text, so a scene change cannot pull the camera.
 pub fn plate_edit_prompt(scene_prompt: &str, fills_frame: bool) -> String {
+    plate_edit_prompt_locked(scene_prompt, fills_frame, None)
+}
+
+/// `plate_edit_prompt` with the geometry's angle estimate: adds the
+/// specific shot-angle phrase when the estimate is stated.
+pub fn plate_edit_prompt_locked(
+    scene_prompt: &str,
+    fills_frame: bool,
+    estimate: Option<&crate::staging::AngleEstimate>,
+) -> String {
     let base = if fills_frame {
         PLATE_EDIT_SURFACE
     } else {
         PLATE_EDIT_OBJECT
     };
-    // Default styling when the caller gives none: a tidy, listing-ready
-    // version of the same place, so a staged shot visibly improves on the
-    // snapshot while the geometry stays the photo's. Surfaces keep the
-    // faithful continuation (there is little around them to tidy).
+    let lock = angle_lock_clause(estimate);
     let scene = scene_prompt.trim();
-    let styling = if !scene.is_empty() {
-        scene
-    } else if fills_frame {
-        ""
-    } else {
+    // No scene text on an object plate: the tidy default styling.
+    let styling = if scene.is_empty() && !fills_frame {
         PLATE_EDIT_DEFAULT_STYLE
+    } else {
+        scene
     };
     if styling.is_empty() {
-        base.to_string()
+        format!("{base} {lock}")
     } else {
-        format!("{base} Styling only (keep the geometry): {styling}")
+        format!(
+            "{base} Styling only (keep the geometry): {styling}{} {lock}",
+            sentence_end(styling)
+        )
     }
 }
 
@@ -1291,4 +1376,32 @@ pub fn request_plate_edit(
             .unwrap_or(0);
     }
     Ok((png_bytes, usage))
+}
+
+#[cfg(test)]
+mod plate_default_style_tests {
+    use super::*;
+
+    #[test]
+    fn bare_object_plate_gets_the_tidy_default_styling_then_the_lock() {
+        let p = plate_edit_prompt_locked("", false, None);
+        assert_eq!(
+            p,
+            format!(
+                "{PLATE_EDIT_OBJECT} Styling only (keep the geometry): {PLATE_EDIT_DEFAULT_STYLE}. {ANGLE_LOCK_CLAUSE}"
+            )
+        );
+        assert_eq!(plate_edit_prompt("  ", false), p);
+    }
+
+    #[test]
+    fn surface_plates_and_caller_scenes_do_not_get_the_default() {
+        assert_eq!(
+            plate_edit_prompt_locked("", true, None),
+            format!("{PLATE_EDIT_SURFACE} {ANGLE_LOCK_CLAUSE}")
+        );
+        let scene = plate_edit_prompt_locked("on a beach", false, None);
+        assert!(!scene.contains(PLATE_EDIT_DEFAULT_STYLE));
+        assert!(scene.ends_with(ANGLE_LOCK_CLAUSE));
+    }
 }

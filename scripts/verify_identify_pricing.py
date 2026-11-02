@@ -4,9 +4,11 @@ pricing change, and print the pricing block it now carries.
 
 Spawns the agenthand binary over MCP stdio, calls identify on one photo
 --runs times, and fails if any call errors, retries (attempts > 1 means
-the API sent a body that would not parse, the empty-200 symptom), or
-returns an empty description / concept / title. Then calls the
-code-only price tool on the returned concept.
+the API sent a body that would not parse, the empty-200 symptom),
+returns an empty description / concept / title, or comes back without
+a `pricing` block. Prints each pricing block with its scope (local, or
+wide with its note). There is no separate price tool: pricing rides
+on identify's result only.
 
 Each run is one real identify call billed to META_API_KEY (about one
 cent). Standard library only.
@@ -83,7 +85,6 @@ def main():
     image = data_uri(os.path.expanduser(args.photo))
 
     failures = 0
-    concept = None
     for run in range(1, args.runs + 1):
         resp = server.call("tools/call", {"name": "identify", "arguments": {"image": image}})
         if "error" in resp:
@@ -93,8 +94,10 @@ def main():
         result = resp["result"]["structuredContent"]
         empty = [k for k in ("description", "concept", "suggested_title")
                  if not (isinstance(result.get(k), str) and result[k].strip())]
-        ok = result.get("status") == "ok" and result.get("attempts") == 1 and not empty
         pricing = result.get("pricing")
+        has_pricing = isinstance(pricing, dict) and isinstance(pricing.get("status"), str)
+        ok = (result.get("status") == "ok" and result.get("attempts") == 1
+              and not empty and has_pricing)
         print("run %d: status=%s attempts=%s concept=%r title=%r" % (
             run, result.get("status"), result.get("attempts"),
             result.get("concept"), result.get("suggested_title")))
@@ -102,20 +105,29 @@ def main():
             print("        error: %s" % json.dumps(result.get("error")))
         if empty:
             print("        EMPTY fields: %s" % ", ".join(empty))
+        if result.get("status") == "ok" and not has_pricing:
+            print("        MISSING pricing block")
+        if has_pricing and pricing.get("status") == "priced":
+            print("        pricing: scope=%s category=%s recommended=%s range=%s confidence=%s%s" % (
+                pricing.get("scope"), pricing.get("category"), pricing.get("recommended"),
+                pricing.get("range"), pricing.get("confidence"),
+                (" note=%r" % pricing["note"]) if pricing.get("note") else ""))
         print("        pricing: %s" % json.dumps(pricing))
         if not ok:
             failures += 1
-        concept = result.get("concept") or concept
 
-    if concept:
-        resp = server.call("tools/call", {"name": "price", "arguments": {"item_name": concept}})
-        print("price(%r): %s" % (concept, json.dumps(resp.get("result", {}).get("structuredContent", resp))))
+    tools = server.call("tools/list", {}).get("result", {}).get("tools", [])
+    names = [t.get("name") for t in tools]
+    print("tools/list: %s" % names)
+    if names != ["identify", "cut_out", "draw"]:
+        print("        expected exactly identify, cut_out, draw")
+        failures += 1
     server.close()
 
     if failures:
-        print("FAIL: %d of %d identify runs were not clean (error, retry, or empty field)" % (failures, args.runs))
+        print("FAIL: %d check(s) failed (identify error, retry, empty field, missing pricing, or tools/list)" % failures)
         sys.exit(1)
-    print("PASS: %d of %d identify runs returned full bodies on the first attempt" % (args.runs, args.runs))
+    print("PASS: %d of %d identify runs returned full bodies on the first attempt, each with a pricing block" % (args.runs, args.runs))
 
 
 if __name__ == "__main__":

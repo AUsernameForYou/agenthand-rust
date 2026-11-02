@@ -3368,6 +3368,11 @@ fn stage_from_primary(
         "backdrop": receipt_src.get("backdrop").cloned().unwrap_or(Value::Null),
         "cost_usd": draw_result.get("cost_usd").cloned().unwrap_or(Value::Null),
     });
+    // Angle lock: the estimated shot angle and the clause the plate
+    // prompt carried (model-plate draws only; never part of a receipt).
+    if let Some(lock) = draw_result.get("angle_lock").filter(|v| !v.is_null()) {
+        record["angle_lock"] = lock.clone();
+    }
     let output_handle = record["output_asset"].as_str().unwrap_or("").to_string();
     record["receipt_file"] = match ctx.store.receipt_path(&output_handle) {
         Ok(path) if path.exists() => json!(path.to_string_lossy()),
@@ -4907,12 +4912,15 @@ fn run_room_body(
     // Comps pricing (category comps file): each record's listing
     // also carries listing.pricing (range + recommended), matched
     // code-side from the item name and the identify-written listing
-    // title. A --comps document in the category format is used
-    // directly; otherwise the configured comps file is read.
+    // title. A --comps document in the category format (a local
+    // `categories` list and/or a wider-area `categories_wide` list)
+    // is used directly; otherwise the configured comps file is read.
+    // Local comps price first; a category with none falls back to its
+    // wide tier and its block says so (scope "wide" plus a note).
     let comps_book = match opts
         .comps
         .as_ref()
-        .filter(|doc| doc.get("categories").is_some())
+        .filter(|doc| doc.get("categories").is_some() || doc.get("categories_wide").is_some())
     {
         Some(doc) => comps::parse_book(doc),
         None => comps::load_configured_book(),

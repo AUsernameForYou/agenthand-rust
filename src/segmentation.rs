@@ -9,6 +9,9 @@
 //!   the speck floor (several lawns, fence runs, patio pieces).
 //! - `run_attempts` tries the concept phrase, retries ONCE with the
 //!   first alternate, and traces every attempt.
+//! - `EdgeField` / `decontaminate_edge_band` un-blend the original
+//!   background out of a cut-out's soft edge band (docs/EDGE-FIX.md);
+//!   product pixels (alpha 255) are never written.
 
 use crate::image::{GrayImage, RgbaImage};
 use crate::meta;
@@ -426,6 +429,312 @@ pub fn extract_foreground(source: &RgbaImage, mask: &GrayImage) -> RgbaImage {
         pixels: out,
         icc_profile: source.icc_profile.clone(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Edge band decontamination (docs/EDGE-FIX.md). A cut-out's soft edge
+// pixels (0 < alpha < 255) are blends of the product and the ORIGINAL
+// background; over a darker scene that sliver of original light reads
+// as a bright rim. The band is un-blended against the local original
+// background (sampled from the source just outside the footprint) so it
+// carries product colour only. Product pixels (alpha 255) are never
+// read for writing and never written: the receipt's pixel set is the
+// same set, byte for byte.
+// ---------------------------------------------------------------------------
+
+/// Distances in an `EdgeField` saturate here (chessboard px).
+pub const EDGE_DIST_CAP: u8 = 32;
+/// Margin around the footprint bbox that the edge field covers.
+pub const EDGE_FIELD_MARGIN: usize = 16;
+/// Original-background sample ring: source pixels outside the
+/// footprint at this chessboard distance range (ring 1 is skipped: in
+/// the photo it is itself part of the soft edge).
+pub const BACKGROUND_RING: (u8, u8) = (2, 4);
+/// Product-colour sample depth inside the product set (1 = boundary).
+/// The boundary rings carry the original background's blend (and
+/// SAM's staircase misfit), so the estimate prefers pixels 3-5 deep.
+pub const PRODUCT_DEPTH: (u8, u8) = (3, 5);
+/// Window radius for the local colour estimates (px), and the wider
+/// fallback when the near window holds no sample.
+pub const EDGE_SAMPLE_RADIUS: usize = 6;
+pub const EDGE_SAMPLE_RADIUS_WIDE: usize = 12;
+
+/// Distance maps of a foreground's alpha, over the footprint bbox grown
+/// by `EDGE_FIELD_MARGIN` (window coordinates; `x0`/`y0` place the
+/// window in the frame). Footprint = alpha > 0, product set = alpha 255.
+pub struct EdgeField {
+    pub x0: usize,
+    pub y0: usize,
+    pub w: usize,
+    pub h: usize,
+    pub frame_w: usize,
+    pub frame_h: usize,
+    /// Foreground alpha in the window.
+    pub alpha: Vec<u8>,
+    /// Chessboard distance to the footprint (0 on it).
+    pub out_fp: Vec<u8>,
+    /// Chessboard distance to the product set (0 on it).
+    pub out_o: Vec<u8>,
+    /// Depth inside the product set (1 = boundary pixel; 0 outside).
+    /// Beyond the window counts as outside.
+    pub in_o: Vec<u8>,
+}
+
+/// Exact chessboard distance (8-connected, unit steps) to the nearest
+/// `target` pixel, two-pass chamfer, saturating at `EDGE_DIST_CAP`.
+/// With `border_is_target`, the area beyond the window is target.
+fn chessboard_distance(target: &[bool], w: usize, h: usize, border_is_target: bool) -> Vec<u8> {
+    let cap = EDGE_DIST_CAP;
+    let mut d: Vec<u8> = target.iter().map(|&t| if t { 0 } else { cap }).collect();
+    if border_is_target {
+        for y in 0..h {
+            for x in 0..w {
+                if (x == 0 || y == 0 || x == w - 1 || y == h - 1) && d[y * w + x] > 1 {
+                    d[y * w + x] = 1;
+                }
+            }
+        }
+    }
+    let step = |v: u8| v.saturating_add(1).min(cap);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if d[i] == 0 {
+                continue;
+            }
+            let mut m = d[i];
+            if x > 0 {
+                m = m.min(step(d[i - 1]));
+            }
+            if y > 0 {
+                m = m.min(step(d[i - w]));
+                if x > 0 {
+                    m = m.min(step(d[i - w - 1]));
+                }
+                if x + 1 < w {
+                    m = m.min(step(d[i - w + 1]));
+                }
+            }
+            d[i] = m;
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let i = y * w + x;
+            if d[i] == 0 {
+                continue;
+            }
+            let mut m = d[i];
+            if x + 1 < w {
+                m = m.min(step(d[i + 1]));
+            }
+            if y + 1 < h {
+                m = m.min(step(d[i + w]));
+                if x + 1 < w {
+                    m = m.min(step(d[i + w + 1]));
+                }
+                if x > 0 {
+                    m = m.min(step(d[i + w - 1]));
+                }
+            }
+            d[i] = m;
+        }
+    }
+    d
+}
+
+impl EdgeField {
+    /// None when the foreground has no visible pixel.
+    pub fn new(foreground: &RgbaImage) -> Option<Self> {
+        let (fw, fh) = (foreground.width as usize, foreground.height as usize);
+        let (mut bx0, mut by0, mut bx1, mut by1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+        for y in 0..fh {
+            for x in 0..fw {
+                if foreground.pixels[(y * fw + x) * 4 + 3] > 0 {
+                    bx0 = bx0.min(x);
+                    by0 = by0.min(y);
+                    bx1 = bx1.max(x + 1);
+                    by1 = by1.max(y + 1);
+                }
+            }
+        }
+        if bx0 == usize::MAX {
+            return None;
+        }
+        let m = EDGE_FIELD_MARGIN;
+        let (x0, y0) = (bx0.saturating_sub(m), by0.saturating_sub(m));
+        let (x1, y1) = ((bx1 + m).min(fw), (by1 + m).min(fh));
+        let (w, h) = (x1 - x0, y1 - y0);
+        let mut alpha = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                alpha[y * w + x] = foreground.pixels[((y0 + y) * fw + x0 + x) * 4 + 3];
+            }
+        }
+        let fp: Vec<bool> = alpha.iter().map(|&a| a > 0).collect();
+        let o: Vec<bool> = alpha.iter().map(|&a| a == 255).collect();
+        let not_o: Vec<bool> = o.iter().map(|&v| !v).collect();
+        let out_fp = chessboard_distance(&fp, w, h, false);
+        let out_o = chessboard_distance(&o, w, h, false);
+        let in_o = chessboard_distance(&not_o, w, h, true);
+        Some(EdgeField {
+            x0,
+            y0,
+            w,
+            h,
+            frame_w: fw,
+            frame_h: fh,
+            alpha,
+            out_fp,
+            out_o,
+            in_o,
+        })
+    }
+
+    /// Frame RGBA byte offset of window pixel (x, y).
+    #[inline]
+    pub fn frame_offset(&self, x: usize, y: usize) -> usize {
+        ((self.y0 + y) * self.frame_w + self.x0 + x) * 4
+    }
+
+    /// Rounded mean RGB of `img` over the window pixels within
+    /// Chebyshev radius `r` of (cx, cy) that satisfy `keep(window
+    /// index)`; None when there are none. Integer math:
+    /// `(sum + n/2) / n`.
+    pub fn local_mean(
+        &self,
+        img: &RgbaImage,
+        cx: usize,
+        cy: usize,
+        r: usize,
+        keep: impl Fn(usize) -> bool,
+    ) -> Option<[u8; 3]> {
+        let (mut sum, mut n) = ([0u64; 3], 0u64);
+        for y in cy.saturating_sub(r)..(cy + r + 1).min(self.h) {
+            for x in cx.saturating_sub(r)..(cx + r + 1).min(self.w) {
+                let i = y * self.w + x;
+                if keep(i) {
+                    let j = self.frame_offset(x, y);
+                    for c in 0..3 {
+                        sum[c] += img.pixels[j + c] as u64;
+                    }
+                    n += 1;
+                }
+            }
+        }
+        (n > 0).then(|| {
+            [
+                ((sum[0] + n / 2) / n) as u8,
+                ((sum[1] + n / 2) / n) as u8,
+                ((sum[2] + n / 2) / n) as u8,
+            ]
+        })
+    }
+
+    /// Local product colour near (cx, cy) from the product layer: the
+    /// mean of product pixels `PRODUCT_DEPTH` deep, falling back to 2+
+    /// deep, then any product pixel (thin parts have no depth), all in
+    /// the `EDGE_SAMPLE_RADIUS` window.
+    pub fn product_colour(&self, foreground: &RgbaImage, cx: usize, cy: usize) -> Option<[u8; 3]> {
+        let r = EDGE_SAMPLE_RADIUS;
+        let (lo, hi) = PRODUCT_DEPTH;
+        self.local_mean(foreground, cx, cy, r, |i| {
+            self.in_o[i] >= lo && self.in_o[i] <= hi
+        })
+        .or_else(|| self.local_mean(foreground, cx, cy, r, |i| self.in_o[i] >= 2))
+        .or_else(|| self.local_mean(foreground, cx, cy, r, |i| self.in_o[i] >= 1))
+    }
+
+    /// Local ORIGINAL background colour near (cx, cy): the mean of the
+    /// source photo over the `BACKGROUND_RING` outside the footprint,
+    /// near window first, then the wide one.
+    pub fn background_colour(&self, source: &RgbaImage, cx: usize, cy: usize) -> Option<[u8; 3]> {
+        let (lo, hi) = BACKGROUND_RING;
+        let ring = |i: usize| self.out_fp[i] >= lo && self.out_fp[i] <= hi;
+        self.local_mean(source, cx, cy, EDGE_SAMPLE_RADIUS, ring)
+            .or_else(|| self.local_mean(source, cx, cy, EDGE_SAMPLE_RADIUS_WIDE, ring))
+    }
+}
+
+/// Un-blend one soft edge pixel: `observed = a*F + (1-a)*B`, so
+/// `F = (observed*255 - (255-a)*B) / a`, clamped. Low-coverage pixels
+/// amplify noise by 255/a, so the result leans on the local product
+/// colour there: weight `min(255, 2a)` on the un-blend, the rest on
+/// `product` (when known). Integer math throughout.
+pub fn unblend_edge_pixel(
+    observed: [u8; 3],
+    alpha: u8,
+    background: [u8; 3],
+    product: Option<[u8; 3]>,
+) -> [u8; 3] {
+    if alpha == 0 {
+        return product.unwrap_or(observed);
+    }
+    let a = alpha as i64;
+    let w = (2 * a).min(255);
+    let mut out = [0u8; 3];
+    for c in 0..3 {
+        let num = observed[c] as i64 * 255 - (255 - a) * background[c] as i64;
+        let f = ((num + a / 2).div_euclid(a)).clamp(0, 255);
+        out[c] = match product {
+            Some(p) => ((f * w + p[c] as i64 * (255 - w) + 127) / 255) as u8,
+            None => f as u8,
+        };
+    }
+    out
+}
+
+/// The product layer with its soft edge band decontaminated: every
+/// pixel with 0 < alpha < 255 keeps its alpha and gets the un-blended
+/// colour (`unblend_edge_pixel` against the local original background
+/// from `source`); product pixels (alpha 255) and transparent pixels
+/// are copied unchanged. Returns (layer, edge band pixels,
+/// decontaminated pixels). A band pixel with no background sample in
+/// reach is left as it was. `source` must share the frame.
+pub fn decontaminate_edge_band(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    field: Option<&EdgeField>,
+) -> (RgbaImage, u64, u64) {
+    assert_eq!(
+        (source.width, source.height),
+        (foreground.width, foreground.height)
+    );
+    let mut out = foreground.clone();
+    let owned;
+    let field = match field {
+        Some(f) => f,
+        None => match EdgeField::new(foreground) {
+            Some(f) => {
+                owned = f;
+                &owned
+            }
+            None => return (out, 0, 0),
+        },
+    };
+    let (mut band, mut fixed) = (0u64, 0u64);
+    for y in 0..field.h {
+        for x in 0..field.w {
+            let a = field.alpha[y * field.w + x];
+            if a == 0 || a == 255 {
+                continue;
+            }
+            band += 1;
+            let Some(bg) = field.background_colour(source, x, y) else {
+                continue;
+            };
+            let product = field.product_colour(foreground, x, y);
+            let j = field.frame_offset(x, y);
+            let observed = [
+                foreground.pixels[j],
+                foreground.pixels[j + 1],
+                foreground.pixels[j + 2],
+            ];
+            out.pixels[j..j + 3].copy_from_slice(&unblend_edge_pixel(observed, a, bg, product));
+            fixed += 1;
+        }
+    }
+    (out, band, fixed)
 }
 
 /// A SAM record joins the union only when it alone would clear the

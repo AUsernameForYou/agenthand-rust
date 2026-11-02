@@ -291,6 +291,420 @@ pub fn apply_edge_matte(plate: &RgbaImage, foreground: &RgbaImage, matte_px: u32
     out
 }
 
+// ---------------------------------------------------------------------------
+// Edge fix (docs/EDGE-FIX.md): kill the cut-out rim on source-derived
+// plates. Three steps, none of which writes a product pixel (alpha 255):
+// 1. decontaminate the layer's soft edge band against the ORIGINAL
+//    background (`segmentation::decontaminate_edge_band`);
+// 2. rebuild the plate's 2-3 px band hugging the product from the plate
+//    just beyond it (wiping any plate-side rim, including the old
+//    contaminated matte ring) and darken it softly with the contact
+//    shadow's colour (a contact band);
+// 3. feather the boundary by one outward ring of local product colour
+//    at <= 50% (about 1 px), never softer than the source photo's own
+//    edge, measured from the source.
+// The receipt's pixel set and count are unchanged; the receipt carries
+// an `edge_fix` record with every parameter and count.
+// ---------------------------------------------------------------------------
+
+use crate::segmentation::{decontaminate_edge_band, EdgeField};
+
+/// Kill switch: `AGENTHAND_EDGE_FIX=off` (or 0 / false / no) restores
+/// the previous composite exactly.
+pub const EDGE_FIX_ENV: &str = "AGENTHAND_EDGE_FIX";
+/// The `edge_fix` receipt record's version.
+pub const EDGE_FIX_VERSION: i64 = 1;
+/// Feather: one outward ring, at most this opacity (128 ~ 50%): the
+/// composite boundary ramp spans at most 2 px, i.e. about 1 px of
+/// feather beyond the hard cut.
+pub const FEATHER_MAX_ALPHA: u8 = 128;
+/// Source edge-width samples: a boundary profile needs at least this
+/// luma step across it to count.
+pub const EDGE_WIDTH_MIN_CONTRAST: u32 = 32;
+/// Fewer qualifying samples than this and the source edge is treated
+/// as hard (no feather): the cap never assumes softness it cannot see.
+pub const EDGE_WIDTH_MIN_SAMPLES: usize = 64;
+/// Upper clamp of one sample's ramp width (x256 fixed point, 5 px).
+pub const EDGE_WIDTH_MAX_FX: u32 = 5 * 256;
+/// A source ramp up to 1.125 px counts as pixel-hard (no feather): one
+/// luma level of noise on a 32-level step reads as ~1.03 px.
+pub const EDGE_WIDTH_HARD_FX: u32 = 288;
+/// Contact band: the contact shadow's colour, alpha per ring (ring 1
+/// hugs the product). Thin subjects get the 2-ring band.
+pub const CONTACT_BAND_RGB: [u8; 3] = [58, 50, 40];
+pub const CONTACT_BAND_ALPHA: [u8; 3] = [30, 18, 8];
+pub const CONTACT_BAND_ALPHA_THIN: [u8; 2] = [18, 8];
+/// Plate rim rebuild: share (of 256) of the clean plate colour (mean of
+/// the plate `band+1 ..= band+3` px out) that replaces each band ring.
+pub const RIM_REBUILD: [u32; 3] = [256, 256, 160];
+pub const RIM_REBUILD_THIN: [u32; 2] = [256, 160];
+
+/// Whether the edge fix runs at all (the kill switch).
+pub fn edge_fix_enabled() -> bool {
+    !matches!(
+        std::env::var(EDGE_FIX_ENV)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "off" | "false" | "no"
+    )
+}
+
+/// The plate kinds the edge fix applies to: the source-derived plates
+/// (the product sits back in its own photo's geometry). Legacy,
+/// placeholder and code-rendered draws keep their exact composite.
+pub fn edge_fix_applies_to(plate_kind: Option<&str>) -> bool {
+    matches!(
+        plate_kind,
+        Some(k) if k == crate::backdrop::PLATE_KIND_SOURCE_EDIT
+            || k == crate::backdrop::PLATE_KIND_SOURCE_BLUR
+    )
+}
+
+/// One pixel of `alpha_composite` (src over dst), the same integer math.
+pub fn composite_pixel(d: [u8; 4], s: [u8; 4]) -> [u8; 4] {
+    if s[3] == 0 {
+        return d;
+    }
+    let sa = s[3] as u32;
+    let blend = d[3] as u32 * (255 - sa);
+    let outa255 = sa * 255 + blend;
+    let coef1 = sa * 255 * 255 * (1 << 7) / outa255;
+    let coef2 = 255 * (1 << 7) - coef1;
+    let mut out = [0u8; 4];
+    for c in 0..3 {
+        let tmp = s[c] as u32 * coef1 + d[c] as u32 * coef2;
+        out[c] = (shift_for_div_255(tmp + (0x80 << 7)) >> 7) as u8;
+    }
+    out[3] = shift_for_div_255(outa255 + 0x80) as u8;
+    out
+}
+
+/// Pillow's 'L' luma.
+#[inline]
+fn luma(px: &[u8]) -> u32 {
+    (px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000) >> 16
+}
+
+/// The source photo's own edge softness across the product boundary,
+/// as a linear-ramp width (x256 fixed point; 256 = a pixel-hard step),
+/// and the number of profiles it was read from. Each product boundary
+/// pixel with a non-product 4-neighbour gives one luma profile along
+/// that direction, 2 px inside to 3 px outside; a profile counts when
+/// its end-to-end step C is at least `EDGE_WIDTH_MIN_CONTRAST` and it
+/// is not texture (range <= 1.5 C). Width = C / steepest single step;
+/// the median over all profiles is returned. Under
+/// `EDGE_WIDTH_MIN_SAMPLES` profiles, 256 (hard) is returned.
+pub fn estimate_source_edge_width(source: &RgbaImage, field: &EdgeField) -> (u32, usize) {
+    let (fw, fh) = (field.frame_w as i64, field.frame_h as i64);
+    let mut widths: Vec<u32> = Vec::new();
+    for y in 0..field.h {
+        for x in 0..field.w {
+            if field.alpha[y * field.w + x] != 255 {
+                continue;
+            }
+            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                let neighbour_product = nx >= 0
+                    && ny >= 0
+                    && (nx as usize) < field.w
+                    && (ny as usize) < field.h
+                    && field.alpha[ny as usize * field.w + nx as usize] == 255;
+                if neighbour_product {
+                    continue;
+                }
+                let (gx, gy) = ((field.x0 + x) as i64, (field.y0 + y) as i64);
+                let mut l = [0u32; 6];
+                let mut inside = true;
+                for (k, slot) in l.iter_mut().enumerate() {
+                    let off = k as i64 - 2;
+                    let (sx, sy) = (gx + off * dx, gy + off * dy);
+                    if sx < 0 || sy < 0 || sx >= fw || sy >= fh {
+                        inside = false;
+                        break;
+                    }
+                    *slot = luma(&source.pixels[((sy * fw + sx) * 4) as usize..]);
+                }
+                if !inside {
+                    continue;
+                }
+                let c = l[0].abs_diff(l[5]);
+                if c < EDGE_WIDTH_MIN_CONTRAST {
+                    continue;
+                }
+                let (lo, hi) = (*l.iter().min().unwrap(), *l.iter().max().unwrap());
+                if 2 * (hi - lo) > 3 * c {
+                    continue;
+                }
+                let g = l.windows(2).map(|p| p[0].abs_diff(p[1])).max().unwrap_or(0);
+                if g == 0 {
+                    continue;
+                }
+                widths.push((c * 256 / g).clamp(256, EDGE_WIDTH_MAX_FX));
+            }
+        }
+    }
+    let n = widths.len();
+    if n < EDGE_WIDTH_MIN_SAMPLES {
+        return (256, n);
+    }
+    widths.sort_unstable();
+    (widths[n / 2], n)
+}
+
+/// Feather ring opacity for a source ramp width (x256): the composite
+/// profile product | ring a | plate has ramp width 1 / (1 - a) for
+/// a <= 0.5, so a = 1 - 1/w matches the source exactly and never
+/// exceeds it; capped at `FEATHER_MAX_ALPHA` (about 1 px). A
+/// pixel-hard source edge (<= `EDGE_WIDTH_HARD_FX`) gets no feather.
+pub fn feather_alpha_for_width(width_fx: u32) -> u8 {
+    if width_fx <= EDGE_WIDTH_HARD_FX {
+        return 0;
+    }
+    let inv = (255 * 256 + width_fx / 2) / width_fx;
+    (255u32.saturating_sub(inv)).min(FEATHER_MAX_ALPHA as u32) as u8
+}
+
+/// What the edge fix did; `to_json` is the receipt's `edge_fix` record.
+#[derive(Debug, Clone, Default)]
+pub struct EdgeFixReport {
+    pub applied: bool,
+    pub reason: Option<String>,
+    pub thin_structure: bool,
+    pub source_edge_width_fx: u32,
+    pub source_edge_samples: usize,
+    pub feather_alpha: u8,
+    pub feather_pixels: u64,
+    pub edge_band_pixels: u64,
+    pub decontaminated_pixels: u64,
+    pub contact_band_width_px: u32,
+    pub contact_band_pixels: u64,
+    pub rim_rebuilt_pixels: u64,
+}
+
+impl EdgeFixReport {
+    fn skipped(reason: &str) -> Self {
+        EdgeFixReport {
+            applied: false,
+            reason: Some(reason.to_string()),
+            ..Default::default()
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        if !self.applied {
+            return json!({
+                "version": EDGE_FIX_VERSION,
+                "applied": false,
+                "reason": self.reason,
+            });
+        }
+        let band = self.contact_band_width_px as u8;
+        let (alphas, rebuild): (Vec<u8>, Vec<u32>) = if self.thin_structure {
+            (CONTACT_BAND_ALPHA_THIN.to_vec(), RIM_REBUILD_THIN.to_vec())
+        } else {
+            (CONTACT_BAND_ALPHA.to_vec(), RIM_REBUILD.to_vec())
+        };
+        json!({
+            "version": EDGE_FIX_VERSION,
+            "applied": true,
+            "stage": "composite",
+            "product_pixels_written": 0,
+            "edge_band": {
+                "pixels": self.edge_band_pixels,
+                "decontaminated": self.decontaminated_pixels,
+                "method": "un-blend against the local original background: F = (observed - (1-a) B) / a, B = mean source colour 2-4 px outside the footprint, leaning on the local product colour as a -> 0",
+                "background_ring_px": [crate::segmentation::BACKGROUND_RING.0, crate::segmentation::BACKGROUND_RING.1],
+            },
+            "feather": {
+                "rings": 1,
+                "alpha": self.feather_alpha,
+                "max_alpha": FEATHER_MAX_ALPHA,
+                "pixels": self.feather_pixels,
+                "colour": "local product colour (product pixels 3-5 px deep), never the original background",
+            },
+            "source_edge": {
+                "ramp_width_px": crate::round6(self.source_edge_width_fx as f64 / 256.0),
+                "samples": self.source_edge_samples,
+                "min_contrast": EDGE_WIDTH_MIN_CONTRAST,
+                "rule": "feather alpha = min(max_alpha, 1 - 1/ramp_width): never softer than the source edge",
+            },
+            "contact_band": {
+                "width_px": self.contact_band_width_px,
+                "rgb": CONTACT_BAND_RGB,
+                "alpha": alphas,
+                "rim_rebuild_share_256": rebuild,
+                "rebuilt_from_ring_px": [band + 1, band + 3],
+                "pixels": self.contact_band_pixels,
+                "rim_rebuilt_pixels": self.rim_rebuilt_pixels,
+            },
+            "thin_structure": self.thin_structure,
+        })
+    }
+}
+
+/// The edge fix's outputs: the dressed plate (contact band, rim rebuild
+/// and feather ring; plate-side pixels only) and the product layer with
+/// its soft edge band decontaminated (product pixels copied unchanged).
+pub struct EdgeFixOutput {
+    pub plate: RgbaImage,
+    pub foreground: RgbaImage,
+    pub report: EdgeFixReport,
+}
+
+/// Run the edge fix. `source` is the original photo the layer was cut
+/// from, `plate` is already at the layer's frame. `thin` (the
+/// subject's thin-structure flag) narrows the contact band to 2 px.
+pub fn apply_edge_fix(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    plate: &RgbaImage,
+    thin: bool,
+) -> EdgeFixOutput {
+    let unchanged = |reason: &str| EdgeFixOutput {
+        plate: plate.clone(),
+        foreground: foreground.clone(),
+        report: EdgeFixReport::skipped(reason),
+    };
+    if (source.width, source.height) != (foreground.width, foreground.height)
+        || (plate.width, plate.height) != (foreground.width, foreground.height)
+    {
+        return unchanged("source, plate and product layer frames differ");
+    }
+    let Some(field) = EdgeField::new(foreground) else {
+        return unchanged("the product layer has no visible pixel");
+    };
+    let (dressed_fg, edge_band_pixels, decontaminated_pixels) =
+        decontaminate_edge_band(source, foreground, Some(&field));
+    let (width_fx, samples) = estimate_source_edge_width(source, &field);
+    let feather = feather_alpha_for_width(width_fx);
+
+    let (alphas, rebuild): (&[u8], &[u32]) = if thin {
+        (&CONTACT_BAND_ALPHA_THIN, &RIM_REBUILD_THIN)
+    } else {
+        (&CONTACT_BAND_ALPHA, &RIM_REBUILD)
+    };
+    let band = alphas.len() as u8;
+    let mut out = plate.clone();
+    let (mut band_px, mut rebuilt) = (0u64, 0u64);
+    let (clean_lo, clean_hi) = (band + 1, band + 3);
+    for y in 0..field.h {
+        for x in 0..field.w {
+            let i = y * field.w + x;
+            let d = field.out_o[i];
+            if d == 0 || d > band {
+                continue;
+            }
+            band_px += 1;
+            let j = field.frame_offset(x, y);
+            let mut px = [
+                plate.pixels[j],
+                plate.pixels[j + 1],
+                plate.pixels[j + 2],
+                plate.pixels[j + 3],
+            ];
+            // Rim rebuild: read from the untouched plate, so the result
+            // does not depend on visiting order.
+            if let Some(clean) = field.local_mean(plate, x, y, clean_hi as usize, |k| {
+                field.out_o[k] >= clean_lo && field.out_o[k] <= clean_hi
+            }) {
+                let s = rebuild[(d - 1) as usize];
+                for c in 0..3 {
+                    px[c] = ((px[c] as u32 * (256 - s) + clean[c] as u32 * s + 128) >> 8) as u8;
+                }
+                rebuilt += 1;
+            }
+            // Contact band: the contact shadow's colour over the ring,
+            // per channel never brighter than the plate (on a plate
+            // darker than the shadow colour it is a no-op, not a glow).
+            let [r, g, b] = CONTACT_BAND_RGB;
+            let shaded = composite_pixel(px, [r, g, b, alphas[(d - 1) as usize]]);
+            for c in 0..3 {
+                px[c] = px[c].min(shaded[c]);
+            }
+            out.pixels[j..j + 4].copy_from_slice(&px);
+        }
+    }
+
+    let mut feather_px = 0u64;
+    if feather > 0 {
+        for y in 0..field.h {
+            for x in 0..field.w {
+                let i = y * field.w + x;
+                if field.alpha[i] != 0 || field.out_o[i] != 1 {
+                    continue;
+                }
+                // Coverage-weighted: a straight edge (3 product px in
+                // the 3x3) gets the full ring alpha, a staircase corner
+                // touched only diagonally a third, which rounds SAM's
+                // steps instead of outlining them.
+                let mut k = 0u32;
+                for yy in y.saturating_sub(1)..(y + 2).min(field.h) {
+                    for xx in x.saturating_sub(1)..(x + 2).min(field.w) {
+                        k += u32::from(field.alpha[yy * field.w + xx] == 255);
+                    }
+                }
+                let a = ((feather as u32 * k.min(3) + 1) / 3) as u8;
+                if a == 0 {
+                    continue;
+                }
+                let Some(colour) = field.product_colour(foreground, x, y) else {
+                    continue;
+                };
+                let j = field.frame_offset(x, y);
+                let d = [
+                    out.pixels[j],
+                    out.pixels[j + 1],
+                    out.pixels[j + 2],
+                    out.pixels[j + 3],
+                ];
+                let px = composite_pixel(d, [colour[0], colour[1], colour[2], a]);
+                out.pixels[j..j + 4].copy_from_slice(&px);
+                feather_px += 1;
+            }
+        }
+    }
+
+    EdgeFixOutput {
+        plate: out,
+        foreground: dressed_fg,
+        report: EdgeFixReport {
+            applied: true,
+            reason: None,
+            thin_structure: thin,
+            source_edge_width_fx: width_fx,
+            source_edge_samples: samples,
+            feather_alpha: feather,
+            feather_pixels: feather_px,
+            edge_band_pixels,
+            decontaminated_pixels,
+            contact_band_width_px: band as u32,
+            contact_band_pixels: band_px,
+            rim_rebuilt_pixels: rebuilt,
+        },
+    }
+}
+
+/// `composite_images` with the edge fix: the plate is fitted first
+/// (exactly as `composite_images` does), dressed, and the decontaminated
+/// layer composited over it. Counts are measured against the STORED
+/// layer, so the receipt's product set and count are the same as
+/// without the fix.
+pub fn composite_images_with_edge_fix(
+    foreground: &RgbaImage,
+    plate: &RgbaImage,
+    source: &RgbaImage,
+    thin: bool,
+) -> (RgbaImage, Measure, Vec<String>, EdgeFixReport) {
+    let (fitted, transformations) = fit_plate(plate, foreground.width, foreground.height);
+    let fix = apply_edge_fix(source, foreground, &fitted, thin);
+    let mut out = alpha_composite(&fix.plate, &fix.foreground);
+    out.icc_profile = foreground.icc_profile.clone();
+    let counts = measure(foreground, &out);
+    (out, counts, transformations, fix.report)
+}
+
 /// Resize/crop the PLATE to the product's dimensions. Never the reverse.
 fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<String>) {
     if plate.width == width && plate.height == height {
@@ -624,7 +1038,33 @@ pub fn draw_product_with_plate_kind(
         }
     };
 
-    let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
+    // Edge fix (docs/EDGE-FIX.md) for source-derived plates only; every
+    // other draw keeps its exact composite. The source photo comes from
+    // the layer's own lineage; the thin-structure flag from the staged
+    // subject record when the caller passed one.
+    let plate_kind = plate_kind_override.as_ref().map(|(kind, _)| *kind);
+    let (composite, transformations, edge_fix) = if edge_fix_applies_to(plate_kind) {
+        if edge_fix_enabled() {
+            let source_image =
+                store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
+            let thin = plate_kind_override
+                .as_ref()
+                .and_then(|(_, b)| b.pointer("/subject/thin_structure"))
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| crate::staging::analyze_subject(&foreground).thin);
+            let (composite, _in_memory_counts, transformations, report) =
+                composite_images_with_edge_fix(&foreground, &plate, &source_image, thin);
+            (composite, transformations, Some(report.to_json()))
+        } else {
+            let (composite, _in_memory_counts, transformations) =
+                composite_images(&foreground, &plate);
+            let off = EdgeFixReport::skipped(&format!("disabled by {EDGE_FIX_ENV}"));
+            (composite, transformations, Some(off.to_json()))
+        }
+    } else {
+        let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
+        (composite, transformations, None)
+    };
     let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
     let composite_record = store.get_record(&composite_handle)?;
 
@@ -690,6 +1130,12 @@ pub fn draw_product_with_plate_kind(
         },
         "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match."
     });
+    if let Some(edge_fix) = edge_fix {
+        // Additive record (never graded): what the edge fix drew around
+        // the product. The counts above are over the stored layer's
+        // pixel set, unchanged by it.
+        receipt["edge_fix"] = edge_fix;
+    }
     if let Some(provenance) = &mask_provenance {
         // Mask provenance (decisions 68/69): the receipt states the
         // frame the mask was cut from, the frame SAM actually saw,

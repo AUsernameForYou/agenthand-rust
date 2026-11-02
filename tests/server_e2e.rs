@@ -117,7 +117,8 @@ fn stdio_server_end_to_end_offline() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["identify", "cut_out", "draw", "price"]);
+    // Exactly the three tools: pricing rides on identify, no price tool.
+    assert_eq!(names, vec!["identify", "cut_out", "draw"]);
     // identify's MCP definition is untouched by the pricing work.
     let identify_def = &tools["result"]["tools"][0];
     assert_eq!(
@@ -141,19 +142,6 @@ fn stdio_server_end_to_end_offline() {
     assert_eq!(result["error"]["code"], "NOT_CONFIGURED");
     // An error result is not priced (and keeps its shape).
     assert!(result.get("pricing").is_none());
-
-    // price with no comps file in the data dir: no_comps plus a
-    // one-line note, never an error.
-    let resp = server.call(
-        "tools/call",
-        json!({"name": "price", "arguments": {"item_name": "gas grill"}}),
-    );
-    assert!(resp.get("error").is_none(), "price never errors: {resp}");
-    let result = tool_result(&resp);
-    assert_eq!(result["status"], "ok");
-    assert_eq!(result["pricing"]["status"], "no_comps");
-    let note = result["pricing"]["note"].as_str().expect("note");
-    assert!(note.contains("pricing-comps.json") && !note.contains('\n'), "{note}");
 
     // cut_out without a key and without a concept: the internal plan
     // fails the same way, surfaced as NO_CONCEPT.
@@ -240,9 +228,12 @@ fn stdio_server_end_to_end_offline() {
 }
 
 #[test]
-fn stdio_price_tool_with_the_real_comps_file() {
+fn stdio_price_tool_is_removed() {
+    // Owner's ruling: no price tool. With the real comps file
+    // configured, tools/list is still exactly identify, cut_out, draw,
+    // and a call to "price" is an unknown tool.
     let data_dir =
-        std::env::temp_dir().join(format!("agenthand-e2e-price-{}", std::process::id()));
+        std::env::temp_dir().join(format!("agenthand-e2e-noprice-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     std::fs::create_dir_all(&data_dir).unwrap();
     let comps = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -252,41 +243,25 @@ fn stdio_price_tool_with_the_real_comps_file() {
         "initialize",
         json!({"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
     );
+    let tools = server.call("tools/list", json!({}));
+    let defs = tools["result"]["tools"].as_array().unwrap();
+    let names: Vec<&str> = defs.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["identify", "cut_out", "draw"]);
+    assert!(
+        defs.iter().all(|t| !t.to_string().contains("item_name")),
+        "no price tool schema left in tools/list"
+    );
 
     let resp = server.call(
         "tools/call",
         json!({"name": "price", "arguments": {"item_name": "Haro Shredder kids BMX bike"}}),
     );
-    let result = tool_result(&resp);
-    assert_eq!(result["status"], "ok");
-    assert_eq!(result["tool"], "price");
-    assert_eq!(result["cost_usd"], 0.0);
-    let pricing = &result["pricing"];
-    assert_eq!(pricing["status"], "priced");
-    assert_eq!(pricing["category"], "kids_bmx_bike");
-    assert_eq!(pricing["range"], json!([30, 125]));
-    assert_eq!(pricing["recommended"], json!(50));
-    assert_eq!(pricing["percentile_band"], json!([44, 80]));
-    assert_eq!(pricing["confidence"], "medium");
-    assert_eq!(pricing["comps_count"], 9);
-    assert_eq!(pricing["basis"], "asking prices, Facebook Marketplace comps");
-    assert_eq!(pricing["advisory"], true);
-    assert!(pricing["footnote"].as_str().unwrap().contains("Advisory only"));
-    // The text block carries the same JSON as structuredContent.
-    let text = resp["result"]["content"][0]["text"].as_str().unwrap();
-    assert_eq!(serde_json::from_str::<Value>(text).unwrap(), result);
+    assert!(resp.get("result").is_none(), "{resp}");
+    assert_eq!(resp["error"]["message"], "Unknown tool: price");
 
-    let resp = server.call(
-        "tools/call",
-        json!({"name": "price", "arguments": {"item_name": "rubber duck"}}),
-    );
-    assert_eq!(tool_result(&resp)["pricing"], json!({"status": "no_comps"}));
-
-    // A missing argument is a structured tool error, not a crash.
-    let resp = server.call("tools/call", json!({"name": "price", "arguments": {}}));
-    let result = tool_result(&resp);
-    assert_eq!(result["status"], "error");
-    assert_eq!(result["error"]["code"], "BAD_ARGUMENT");
+    // The server keeps serving after the unknown call.
+    let resp = server.call("ping", json!({}));
+    assert_eq!(resp["result"], json!({}));
 
     let _ = std::fs::remove_dir_all(&data_dir);
 }

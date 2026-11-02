@@ -744,6 +744,8 @@ fn staged_record_listing_carries_range_and_recommended() {
     // ... and now carries the comps pricing block.
     let pricing = &item["listing"]["pricing"];
     assert_eq!(pricing["status"], "priced", "{pricing}");
+    assert_eq!(pricing["scope"], "local");
+    assert!(pricing.get("note").is_none());
     assert_eq!(pricing["category"], "kids_bmx_bike");
     assert_eq!(pricing["range"], json!([30, 125]));
     assert_eq!(pricing["recommended"], json!(50));
@@ -769,4 +771,62 @@ fn unmatched_listing_gets_no_comps() {
     let item = &manifest["items"][0];
     assert_eq!(item["status"], "staged");
     assert_eq!(item["listing"]["pricing"], json!({"status": "no_comps"}));
+}
+
+#[test]
+fn staged_record_without_local_comps_prices_from_the_wide_tier() {
+    let _guard = env_lock();
+    let root = temp_root("compswide");
+    let photos = vec![photo(&root, "bike.png", [40, 80, 200, 255])];
+    let chain = Chain::new(&root, plan("kids bmx bike"), None, &["kids bmx bike"]);
+    let mut opts = chain.base_opts(&root);
+    opts.item_names = vec!["kids bmx bike".to_string()];
+    // The real file with the bike's local comps emptied and a nested
+    // wider-area tier in the documented shape.
+    let mut doc = category_comps_doc();
+    let cats = doc["categories"].as_array_mut().unwrap();
+    let bike = cats
+        .iter_mut()
+        .find(|c| c["key"] == "kids_bmx_bike")
+        .unwrap();
+    bike["comps"] = json!([]);
+    bike["stats"] = json!({"count": 0});
+    for k in [
+        "recommended",
+        "suggested",
+        "range",
+        "percentile_band",
+        "confidence",
+    ] {
+        bike[k] = Value::Null;
+    }
+    bike["wide"] = json!({
+        "comps": [
+            {"title": "Kids BMX bike 20 inch", "price": 60},
+            {"title": "Haro kids bike", "price": 90},
+            {"title": "GT BMX bike", "price": 150}
+        ],
+        "stats": {"count": 3, "min": 60, "p25": 75, "median": 90, "p75": 120, "max": 150},
+        "recommended": 90,
+        "range": [60, 150],
+        "percentile_band": [75, 120],
+        "confidence": "low",
+        "area": "Portland metro, 100 mi radius",
+        "searched_at": "2026-11-01T18:00-08:00"
+    });
+    opts.comps = Some(doc);
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged", "{item}");
+    let pricing = &item["listing"]["pricing"];
+    assert_eq!(pricing["status"], "priced", "{pricing}");
+    assert_eq!(pricing["scope"], "wide");
+    assert_eq!(
+        pricing["note"],
+        "No local items found; priced from wider-area listings."
+    );
+    assert_eq!(pricing["category"], "kids_bmx_bike");
+    assert_eq!(pricing["recommended"], json!(90));
+    assert_eq!(pricing["range"], json!([60, 150]));
+    assert_eq!(pricing["area"], "Portland metro, 100 mi radius");
 }

@@ -17,6 +17,15 @@
 //! numbers are passed through as written; this module only picks the
 //! category.
 //!
+//! Two tiers (owner's ruling, 2026-11-01): the `categories` list is
+//! the LOCAL tier and always wins. A category with no local comps
+//! (count 0, or no usable local prices) falls back to its wider-area
+//! tier: a nested `wide` object of the same shape, else the entry
+//! with the same key in a top-level `categories_wide` list. A block
+//! priced that way carries `scope: "wide"` and the plain note
+//! `WIDE_SCOPE_NOTE`; a local block carries `scope: "local"`. With
+//! neither tier the item is `no_comps`, as before.
+//!
 //! Matching: every text is normalised to tokens (lowercase, split on
 //! non-alphanumerics and letter/digit boundaries, a light plural
 //! strip, a few synonyms, stopwords and film production tags such as
@@ -40,8 +49,33 @@ use serde_json::{json, Value};
 /// What the prices are, stamped on every priced block.
 pub const PRICING_BASIS: &str = "asking prices, Facebook Marketplace comps";
 
-/// The advisory sentence carried on every priced block.
+/// The advisory sentence carried on every locally priced block.
 pub const PRICING_FOOTNOTE: &str = "Prices are asking prices from local Facebook Marketplace comps, not sold prices. Advisory only: the recommended price is a suggestion, and the seller sets the price.";
+
+/// The advisory sentence on a block priced from the wider-area tier
+/// (the local footnote would wrongly say "local").
+pub const PRICING_FOOTNOTE_WIDE: &str = "Prices are asking prices from wider-area Facebook Marketplace comps, not sold prices. Advisory only: the recommended price is a suggestion, and the seller sets the price.";
+
+/// The note on every block priced from the wider-area tier.
+pub const WIDE_SCOPE_NOTE: &str = "No local items found; priced from wider-area listings.";
+
+/// Which comps tier priced a block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The `categories` list (the local search area).
+    Local,
+    /// A category's `wide` object or its `categories_wide` entry.
+    Wide,
+}
+
+impl Scope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scope::Local => "local",
+            Scope::Wide => "wide",
+        }
+    }
+}
 
 /// Minimum match score for a category to price an item.
 pub const MIN_MATCH_SCORE: f64 = 0.6;
@@ -168,6 +202,8 @@ pub struct Category {
     pub key: String,
     pub item: String,
     pub comps_count: u64,
+    /// The tier whose numbers price this category.
+    pub scope: Scope,
     vocab: BTreeMap<String, f64>,
     priced: Value,
 }
@@ -236,25 +272,59 @@ pub fn confidence_rule(n: u64, p25: f64, p75: f64, median: f64) -> &'static str 
     }
 }
 
-fn parse_category(cat: &Value, generated: &Value) -> Result<Category, String> {
-    let key = cat
+fn entry_key(entry: &Value) -> Option<String> {
+    entry
         .get("key")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|k| !k.is_empty())
-        .ok_or("category without a key")?
-        .to_string();
-    let item = cat
-        .get("item")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .map(str::to_string)
+}
+
+fn str_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse one tier (the local category entry itself, or its wider-area
+/// object) into a priced category. `item` and `queries` are the
+/// matching text; the numbers all come from `cat`. A tier with no
+/// comps (count 0) is an error: "no local comps" is what sends a
+/// category to its wide tier.
+fn parse_tier(
+    key: &str,
+    item: &str,
+    queries: &[String],
+    cat: &Value,
+    generated: &Value,
+    scope: Scope,
+) -> Result<Category, String> {
+    let key = key.to_string();
+    let item = item.to_string();
+    let label = scope.as_str();
+    if !cat.is_object() {
+        return Err(format!("{key}: {label} tier is not an object"));
+    }
     let stats = cat.get("stats").cloned().unwrap_or(Value::Null);
     let comps: Vec<Value> = cat
         .get("comps")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let comps_count = stats
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or(comps.len() as u64);
+    if comps_count == 0 {
+        return Err(format!("{key}: no {label} comps"));
+    }
 
     let (range_lo_v, range_hi_v, range_lo, range_hi) = match pair(cat.get("range")) {
         Some(p) => p,
@@ -281,10 +351,6 @@ fn parse_category(cat: &Value, generated: &Value) -> Result<Category, String> {
             _ => Value::Null,
         },
     };
-    let comps_count = stats
-        .get("count")
-        .and_then(Value::as_u64)
-        .unwrap_or(comps.len() as u64);
     let confidence = match cat.get("confidence").and_then(Value::as_str) {
         Some(c @ ("high" | "medium" | "low")) => c.to_string(),
         _ => match (num(stats.get("p25")), num(stats.get("p75"))) {
@@ -304,11 +370,9 @@ fn parse_category(cat: &Value, generated: &Value) -> Result<Category, String> {
     // Vocabulary: item text and queries strong; comp titles by share.
     let mut vocab: BTreeMap<String, f64> = BTreeMap::new();
     let mut strong_text = item.clone();
-    if let Some(queries) = cat.get("queries").and_then(Value::as_array) {
-        for q in queries.iter().filter_map(Value::as_str) {
-            strong_text.push(' ');
-            strong_text.push_str(q);
-        }
+    for q in queries {
+        strong_text.push(' ');
+        strong_text.push_str(q);
     }
     let titles: Vec<&str> = comps
         .iter()
@@ -331,8 +395,9 @@ fn parse_category(cat: &Value, generated: &Value) -> Result<Category, String> {
         return Err(format!("{key}: no item text or comp titles to match against"));
     }
 
-    let priced = json!({
+    let mut priced = json!({
         "status": "priced",
+        "scope": scope.as_str(),
         "category": key,
         "item": item,
         "range": [range_lo_v, range_hi_v],
@@ -344,28 +409,123 @@ fn parse_category(cat: &Value, generated: &Value) -> Result<Category, String> {
         "area": area,
         "basis": PRICING_BASIS,
         "advisory": true,
-        "footnote": PRICING_FOOTNOTE,
+        "footnote": match scope {
+            Scope::Local => PRICING_FOOTNOTE,
+            Scope::Wide => PRICING_FOOTNOTE_WIDE,
+        },
     });
+    if scope == Scope::Wide {
+        priced["note"] = json!(WIDE_SCOPE_NOTE);
+    }
     Ok(Category {
         key,
         item,
         comps_count,
+        scope,
         vocab,
         priced,
     })
 }
 
-/// Parse a comps document already in memory.
+/// A local `categories` entry: its own numbers when it has local
+/// comps, else its wider-area tier (`wide_entry`: the nested `wide`
+/// object, or the `categories_wide` entry with the same key).
+fn parse_category(
+    cat: &Value,
+    wide_entry: Option<&Value>,
+    generated: &Value,
+) -> Result<Category, String> {
+    let key = entry_key(cat).ok_or("category without a key")?;
+    let item = cat.get("item").and_then(Value::as_str).unwrap_or("");
+    let queries = str_list(cat.get("queries"));
+    let local_err = match parse_tier(&key, item, &queries, cat, generated, Scope::Local) {
+        Ok(c) => return Ok(c),
+        Err(e) => e,
+    };
+    let Some(wide) = wide_entry else {
+        return Err(local_err);
+    };
+    // The wide tier matches on the local item text and queries plus
+    // any of its own (its item text, when given, names the block).
+    let wide_item = wide
+        .get("item")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(item);
+    let mut wide_queries = queries.clone();
+    for q in str_list(wide.get("queries")) {
+        if !wide_queries.contains(&q) {
+            wide_queries.push(q);
+        }
+    }
+    if wide_item != item && !item.trim().is_empty() {
+        wide_queries.push(item.to_string());
+    }
+    parse_tier(&key, wide_item, &wide_queries, wide, generated, Scope::Wide)
+        .map_err(|e| format!("{local_err}; {e}"))
+}
+
+/// An optional top-level list: absent or null is empty; anything
+/// other than a list is an error.
+fn optional_list<'a>(doc: &'a Value, field: &str) -> Result<Option<&'a Vec<Value>>, String> {
+    match doc.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(a)) => Ok(Some(a)),
+        Some(_) => Err(format!("comps file \"{field}\" is not a list")),
+    }
+}
+
+/// Parse a comps document already in memory: the local `categories`
+/// list, plus the optional wider-area tier (nested `wide` objects
+/// and/or a top-level `categories_wide` list keyed the same way).
 pub fn parse_book(doc: &Value) -> Result<CompsBook, String> {
-    let cats = doc
-        .get("categories")
-        .and_then(Value::as_array)
-        .ok_or("comps file has no \"categories\" list")?;
+    let local = optional_list(doc, "categories")?;
+    let wide_list = optional_list(doc, "categories_wide")?;
+    if local.is_none() && wide_list.is_none() {
+        return Err("comps file has no \"categories\" list".to_string());
+    }
     let generated = doc.get("generated").cloned().unwrap_or(Value::Null);
     let mut categories = Vec::new();
     let mut skipped = Vec::new();
-    for cat in cats {
-        match parse_category(cat, &generated) {
+
+    // categories_wide by key, first entry per key.
+    let mut wide_by_key: BTreeMap<String, &Value> = BTreeMap::new();
+    let mut wide_order: Vec<String> = Vec::new();
+    for entry in wide_list.into_iter().flatten() {
+        match entry_key(entry) {
+            Some(k) if wide_by_key.contains_key(&k) => {
+                skipped.push(format!("{k}: duplicate categories_wide entry ignored"));
+            }
+            Some(k) => {
+                wide_by_key.insert(k.clone(), entry);
+                wide_order.push(k);
+            }
+            None => skipped.push("categories_wide entry without a key".to_string()),
+        }
+    }
+
+    let mut local_keys: BTreeSet<String> = BTreeSet::new();
+    for cat in local.into_iter().flatten() {
+        let key = entry_key(cat);
+        if let Some(k) = &key {
+            local_keys.insert(k.clone());
+        }
+        // The nested `wide` object wins over a categories_wide entry.
+        let wide_entry = cat
+            .get("wide")
+            .filter(|w| !w.is_null())
+            .or_else(|| key.as_ref().and_then(|k| wide_by_key.get(k).copied()));
+        match parse_category(cat, wide_entry, &generated) {
+            Ok(c) => categories.push(c),
+            Err(e) => skipped.push(e),
+        }
+    }
+    // Keys only in categories_wide: no local entry, so no local comps.
+    for key in wide_order.iter().filter(|k| !local_keys.contains(*k)) {
+        let entry = wide_by_key[key];
+        let item = entry.get("item").and_then(Value::as_str).unwrap_or("");
+        let queries = str_list(entry.get("queries"));
+        match parse_tier(key, item, &queries, entry, &generated, Scope::Wide) {
             Ok(c) => categories.push(c),
             Err(e) => skipped.push(e),
         }

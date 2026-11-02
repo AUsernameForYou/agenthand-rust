@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased: angle lock
+
+- **The angle is never asked for.** Every `source_edit` draw ends its
+  plate prompt with "Keep the exact same camera angle and perspective
+  as the original photo, same horizon position, same framing.", with or
+  without caller scene text, object or surface wording. It goes after
+  the scene text, so a scene change cannot pull the camera.
+- **Stated angle when the geometry supports one.**
+  `staging::estimate_shot_angle` reads the product bbox (top edge,
+  centre, ground-contact line, aspect, frame fill). It states
+  `steep_down` ("shot from standing height looking down at the surface
+  at a steep angle") or `low_up` ("shot from a low angle looking
+  slightly up") only when every cue agrees. Otherwise it returns
+  `eye_level`, unstated, and adds nothing beyond the base clause. The
+  draw result and room-run item record carry `angle_lock {bucket,
+  clause, stated, reason, signals}`.
+- **Legacy `generated` mode** appends steering words from the estimate,
+  with eye level named when unsure.
+- **Tidy default styling** (matches the Mac tree): an object plate with
+  no caller scene text gets `meta::PLATE_EDIT_DEFAULT_STYLE` ("a clean,
+  tidy, bright version of the same place: ...") as its styling line;
+  surface plates keep the plain wording. The angle-lock clause still
+  comes last.
+- Identify prompt and schema, product pixels, compositing and receipts
+  are unchanged. Tests: `tests/angle_lock.rs`.
+
 ## Unreleased: pricing
 
 - **Range plus recommended price.** New `src/comps.rs` loads a
@@ -15,7 +41,16 @@
 - **Where it shows.** Ok identify results gain `pricing` (computed
   after identify returns; the identify prompt, model schema and MCP
   definition are byte-identical). Room-run item records gain
-  `listing.pricing`. New code-only `price` tool (`item_name`).
+  `listing.pricing`. No separate tool: the interim `price` tool was
+  removed (owner's ruling), so tools/list is exactly identify,
+  cut_out, draw.
+- **Local first, then wider area.** Every priced block carries
+  `scope`. Local comps (`categories`) always win; a category with no
+  local comps uses its wider-area tier (a nested `wide` object, or the
+  same key in a top-level `categories_wide` list) and the block says
+  `scope: "wide"` with the note "No local items found; priced from
+  wider-area listings." (and a footnote that does not say "local").
+  Neither tier: `{"status": "no_comps"}` as before.
 - Real comps file shipped as `tests/fixtures/pricing-comps.json`;
   tests in `tests/comps_pricing.rs`, `tests/server_e2e.rs`,
   `tests/workflow_completion.rs`.
