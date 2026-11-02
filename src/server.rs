@@ -619,8 +619,9 @@ struct StagedPlate {
 }
 
 /// Build the plate from the ORIGINAL photo (plate mode `source_edit`):
-/// grey out the product region, send that reference to the muse-image
-/// edit endpoint, resize the edit back onto the photo's frame, then
+/// remove the product region (filled from the photo around it), send
+/// that reference to the muse-image edit endpoint, resize the edit
+/// back onto the photo's frame, then
 /// draw the contact shadow and edge matte around the product. When
 /// the edit call itself fails, the code-only plate stands in
 /// (`source_blur`) and the failure is reported; a refusal before the
@@ -654,12 +655,17 @@ fn stage_source_plate(
         .split_once('x')
         .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
         .unwrap_or((1024, 1024));
-    let (reference, hole_pixels) = staging::masked_reference(&source, foreground, ref_w, ref_h);
-    let reference_png = crate::image::encode_png_rgba(&reference);
+    // Reference fill (docs/REFERENCE-FILL.md): inpainted from the
+    // non-product pixels by default; AGENTHAND_REFERENCE_FILL=grey
+    // restores the legacy grey hole and its prompt wording.
+    let fill = staging::ReferenceFill::from_env();
+    let edit_ref = staging::edit_reference(&source, foreground, ref_w, ref_h, fill);
+    let reference_png = crate::image::encode_png_rgba(&edit_ref.image);
     // Angle lock: every source_edit prompt ends with the base clause,
     // plus the shot-angle phrase when the geometry states one.
     let angle_lock = meta::angle_lock_clause(Some(angle));
-    let prompt = meta::plate_edit_prompt_locked(scene_prompt, geometry.fills_frame, Some(angle));
+    let prompt =
+        meta::plate_edit_prompt_for_fill(scene_prompt, geometry.fills_frame, Some(angle), fill);
     let cfg = meta::PlateEditConfig::from_env();
 
     let key = meta::require_meta_api_key().map_err(|e| meta::ImageError {
@@ -771,23 +777,30 @@ fn stage_source_plate(
     let handle = store
         .put_image(&finished, KIND_PLATE, Some(&source_record.asset_id))
         .map_err(staging_err)?;
+    let mut reference_record = json!({
+        "sha256": crate::image::sha256_hex(&reference_png),
+        "size": size,
+        "dilate_px": staging::REFERENCE_DILATE_PX,
+        "hole_pixels": edit_ref.hole_pixels,
+        "product_region": edit_ref.product_region_note(),
+    });
+    // Additive: fill, fill_iterations, fill_texture; fill_rgb stays
+    // (null for the inpaint).
+    if let Some(fields) = edit_ref.fill_record().as_object() {
+        for (k, v) in fields {
+            reference_record[k.as_str()] = v.clone();
+        }
+    }
     let backdrop_value = backdrop::source_plate_receipt_value(
         kind,
         geometry.to_json(),
-        json!({
-            "sha256": crate::image::sha256_hex(&reference_png),
-            "size": size,
-            "fill_rgb": staging::REFERENCE_GREY,
-            "dilate_px": staging::REFERENCE_DILATE_PX,
-            "hole_pixels": hole_pixels,
-            "product_region": "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
-        }),
+        reference_record,
         edit,
         geometry.shadow,
         geometry.matte_px,
     );
     let note = if fallback.is_none() {
-        "Background plate built from the original photo: the product region was greyed out before upload (its pixels never reached the image model), muse-image-1.0 filled and tidied the surroundings in the photo's own perspective and light, and the stored product layer was composited back untouched at its original position and scale."
+        "Background plate built from the original photo: the product region was removed before upload (filled from the photo around it; its pixels never reached the image model), muse-image-1.0 filled and tidied the surroundings in the photo's own perspective and light, and the stored product layer was composited back untouched at its original position and scale."
     } else {
         "The muse-image edit call failed (see plate_fallback), so the plate is the original photo with the product region filled from its surroundings, blurred and brightened by deterministic code. The stored product layer was composited back untouched at its original position and scale."
     };
@@ -1205,13 +1218,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "draw",
-            "description": "Stage the real product in a cleaned-up version of its own photo. Fidelity Lock applies. By default (plate source_edit) the original photo is sent to muse-image-1.0's edit mode with the product region greyed out, so the plate keeps the photo's camera angle, ground and light; the product stays at its original position and scale, its pixels are never sent to the image model, and a contact shadow and 1-2 px edge matte are drawn on the plate around it. If the edit call fails, a code-only plate (the masked photo, filled, blurred and brightened) stands in and the result says so. plate generated keeps the legacy text-only scene. Any subject works, surfaces included; a subject that fills the frame keeps its pixels and only its surroundings change. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
+            "description": "Stage the real product in a cleaned-up version of its own photo. Fidelity Lock applies. By default (plate source_edit) the original photo is sent to muse-image-1.0's edit mode with the product region removed and filled from its surroundings, so the plate keeps the photo's camera angle, ground and light; the product stays at its original position and scale, its pixels are never sent to the image model, and a contact shadow and 1-2 px edge matte are drawn on the plate around it. If the edit call fails, a code-only plate (the masked photo, filled, blurred and brightened) stands in and the result says so. plate generated keeps the legacy text-only scene. Any subject works, surfaces included; a subject that fills the frame keeps its pixels and only its surroundings change. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "asset": {"type": "string", "description": "Asset handle (asset://<id>) of the cut-out product layer produced by cut_out."},
                     "scene_prompt": {"type": "string", "description": "Description of the scene to generate around the product (styling only in source_edit mode; the photo's geometry is kept)."},
-                    "plate": {"type": "string", "enum": ["source_edit", "generated"], "description": "How the plate is built: source_edit (default; the original photo with the product greyed out, edited in place) or generated (legacy text-only scene)."}
+                    "plate": {"type": "string", "enum": ["source_edit", "generated"], "description": "How the plate is built: source_edit (default; the original photo with the product removed, edited in place) or generated (legacy text-only scene)."}
                 },
                 "required": ["asset", "scene_prompt"]
             }

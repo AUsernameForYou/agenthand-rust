@@ -119,7 +119,8 @@ fn edge_touching_masks_skip_the_shadow_only_at_the_bottom() {
     let g = stage_and_check(&src, &object);
     assert!(!g.fills_frame && g.shadow && g.touches.is_empty());
     assert_eq!(g.matte_px, staging::MATTE_PX);
-    assert!(plate_edit_prompt("", false).contains("Fill the grey region"));
+    assert!(plate_edit_prompt("", false)
+        .contains("Fill the area where the object stood with the continuous surrounding surface."));
 }
 
 #[test]

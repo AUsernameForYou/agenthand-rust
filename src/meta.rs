@@ -1144,12 +1144,23 @@ pub fn request_plate_image(
 
 // ---------------------------------------------------------------------------
 // Muse Image edit plates (images/edits): the plate is the ORIGINAL photo
-// with the product region greyed out, edited in its own perspective.
+// with the product region removed (filled from its surroundings; grey
+// under AGENTHAND_REFERENCE_FILL=grey), edited in its own perspective.
 // ---------------------------------------------------------------------------
 
-const PLATE_EDIT_OBJECT: &str = "Edit @Image1. It is a real photo in which one region has been filled flat grey. Fill the grey region with the continuous background that would be behind it: the same ground, floor, wall and surfaces, continuing their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in the grey region. No people, animals, text, logos or watermark.";
+/// Legacy grey-fill wording (`AGENTHAND_REFERENCE_FILL=grey` only), verbatim.
+const PLATE_EDIT_OBJECT_GREY: &str = "Edit @Image1. It is a real photo in which one region has been filled flat grey. Fill the grey region with the continuous background that would be behind it: the same ground, floor, wall and surfaces, continuing their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in the grey region. No people, animals, text, logos or watermark.";
 
-const PLATE_EDIT_SURFACE: &str = "Edit @Image1. It is a real photo in which the main surface has been filled flat grey. Continue the surroundings: keep everything outside the grey region where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the grey region with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
+/// Legacy grey-fill wording (`AGENTHAND_REFERENCE_FILL=grey` only), verbatim.
+const PLATE_EDIT_SURFACE_GREY: &str = "Edit @Image1. It is a real photo in which the main surface has been filled flat grey. Continue the surroundings: keep everything outside the grey region where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the grey region with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
+
+/// Object wording for the default inpainted reference (no grey region
+/// exists to name; docs/REFERENCE-FILL.md). Same length class as the
+/// grey wording: the grey-specific sentences are replaced, not added to.
+pub const PLATE_EDIT_OBJECT: &str = "Edit @Image1. It is a real photo from which one object has been removed. Fill the area where the object stood with the continuous surrounding surface. Continue the same ground, floor, wall and surfaces with their lines, textures and lighting. Keep the camera angle, framing, ground plane, horizon line and light direction exactly as in @Image1; do not move, zoom, rotate or re-frame anything. Make the scene clean, uncluttered and listing-ready: tidy, evenly lit, nothing new added. Do not place any object in that area. No people, animals, text, logos or watermark.";
+
+/// Surface wording for the default inpainted reference.
+pub const PLATE_EDIT_SURFACE: &str = "Edit @Image1. It is a real photo from which the main surface has been removed and blended over from its borders. Continue the surroundings: keep everything else where it is, in the same camera angle, framing, ground plane, horizon line and light direction, and make it clean, uncluttered and listing-ready. Fill the blended area with a plain, even continuation of what borders it. Do not move, zoom, rotate or re-frame anything. No people, animals, text, logos or watermark.";
 
 /// Tidy default styling: the styling text an object plate gets when
 /// the caller sends no scene text, so a bare draw still comes back as
@@ -1163,8 +1174,10 @@ pub const PLATE_EDIT_DEFAULT_STYLE: &str = "a clean, tidy, bright version of the
 pub const ANGLE_LOCK_CLAUSE: &str = "Keep the exact same camera angle and perspective as the original photo, same horizon position, same framing.";
 /// Shadow ruling (owner, 2026-11-01): appended right after the angle
 /// lock on every source_edit plate prompt. Best effort only; the
-/// composite's shadow carry-over is the guarantee.
-pub const SHADOW_CLAUSE: &str = "Keep the object's cast shadow on the ground as in the original photo, same direction, length and softness.";
+/// composite's shadow carry-over is the guarantee. Worded so it cannot
+/// point the model at the product hole (the grey-reference run painted
+/// the hole as a bike-shaped shadow; docs/REFERENCE-FILL.md).
+pub const SHADOW_CLAUSE: &str = "The object itself is not in this photo. Keep the existing cast shadow on the ground and wall exactly as it already appears, same direction, length and softness; do not add any new shadow or silhouette.";
 /// Shot-angle phrases, one per `staging::ShotAngle` bucket.
 pub const ANGLE_PHRASE_STEEP_DOWN: &str =
     "shot from standing height looking down at the surface at a steep angle";
@@ -1242,16 +1255,37 @@ pub fn plate_edit_prompt(scene_prompt: &str, fills_frame: bool) -> String {
 }
 
 /// `plate_edit_prompt` with the geometry's angle estimate: adds the
-/// specific shot-angle phrase when the estimate is stated.
+/// specific shot-angle phrase when the estimate is stated. Wording for
+/// the default inpainted reference.
 pub fn plate_edit_prompt_locked(
     scene_prompt: &str,
     fills_frame: bool,
     estimate: Option<&crate::staging::AngleEstimate>,
 ) -> String {
-    let base = if fills_frame {
-        PLATE_EDIT_SURFACE
-    } else {
-        PLATE_EDIT_OBJECT
+    plate_edit_prompt_for_fill(
+        scene_prompt,
+        fills_frame,
+        estimate,
+        crate::staging::ReferenceFill::InpaintDiffusion,
+    )
+}
+
+/// `plate_edit_prompt_locked` for the reference fill actually sent:
+/// the legacy grey wording (verbatim) only under
+/// `AGENTHAND_REFERENCE_FILL=grey`, so a comparison run reproduces the
+/// old request exactly.
+pub fn plate_edit_prompt_for_fill(
+    scene_prompt: &str,
+    fills_frame: bool,
+    estimate: Option<&crate::staging::AngleEstimate>,
+    fill: crate::staging::ReferenceFill,
+) -> String {
+    let grey = fill == crate::staging::ReferenceFill::Grey;
+    let base = match (fills_frame, grey) {
+        (true, false) => PLATE_EDIT_SURFACE,
+        (false, false) => PLATE_EDIT_OBJECT,
+        (true, true) => PLATE_EDIT_SURFACE_GREY,
+        (false, true) => PLATE_EDIT_OBJECT_GREY,
     };
     // Shadow ruling (docs/SHADOW-CARRY.md): the cast-shadow clause rides
     // right after the angle lock (best effort; the composite's shadow
@@ -1373,7 +1407,7 @@ pub fn multipart_body(
 
 /// One real muse-image edit call over the item-masked reference;
 /// (plate image bytes as RGBA PNG, usage). The reference must already
-/// have the product region greyed out (`staging::masked_reference`).
+/// have the product region removed (`staging::edit_reference`).
 pub fn request_plate_edit(
     client: &MetaClient,
     key: &str,
@@ -1671,5 +1705,35 @@ mod plate_default_style_tests {
         let scene = plate_edit_prompt_locked("on a beach", false, None);
         assert!(!scene.contains(PLATE_EDIT_DEFAULT_STYLE));
         assert!(scene.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")));
+    }
+
+    #[test]
+    fn grey_fill_keeps_the_legacy_wording_and_the_inpaint_never_names_grey() {
+        use crate::staging::ReferenceFill;
+        for fills_frame in [false, true] {
+            let inpaint =
+                plate_edit_prompt_for_fill("", fills_frame, None, ReferenceFill::InpaintDiffusion);
+            assert_eq!(inpaint, plate_edit_prompt_locked("", fills_frame, None));
+            assert!(!inpaint.to_lowercase().contains("grey"), "{inpaint}");
+            let grey = plate_edit_prompt_for_fill("", fills_frame, None, ReferenceFill::Grey);
+            let legacy = if fills_frame {
+                PLATE_EDIT_SURFACE_GREY
+            } else {
+                PLATE_EDIT_OBJECT_GREY
+            };
+            assert!(grey.starts_with(legacy), "{grey}");
+            assert!(grey.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")));
+        }
+        assert_eq!(
+            PLATE_EDIT_OBJECT
+                .matches(
+                    "Fill the area where the object stood with the continuous surrounding surface."
+                )
+                .count(),
+            1
+        );
+        // The clause never points at a region or a silhouette to paint.
+        assert!(SHADOW_CLAUSE.starts_with("The object itself is not in this photo."));
+        assert!(!SHADOW_CLAUSE.contains("object's cast shadow"));
     }
 }

@@ -38,6 +38,28 @@
   pixels and receipt counts/claim are unchanged. docs/LIGHT-AND-THIN.md
   has thresholds and limits; tests in `tests/thin_light.rs`.
 
+## Unreleased: reference fill (no silhouette in the edit reference)
+
+- **The edit reference no longer carries a grey product silhouette.**
+  - On the IMG_1443 hero run, Muse read the flat-grey bike-shaped hole as a dark bike-shaped shadow and painted it. That left a dark halo in the dilation ring, put a footprint where the cast shadow should be, and let the silhouette dominate restyle prompts.
+  - `staging::edit_reference` now fills the dilated footprint (still 8 px) ONLY from pixels outside it. The fill is a coarse-to-fine harmonic fill (over-relaxed Gauss-Seidel per pyramid level) plus the surround's fine grain, mirrored per row and clamped to +-10.
+  - Pixels outside the hole are byte-identical to before. docs/REFERENCE-FILL.md has the details.
+- **Known limit.** The fill is smooth, not synthesized. A soft, blurred ghost of the bike remains: dark in the wheel discs, where the real cast shadow wraps them. Whether Muse leaves it alone is for the Mac probe to show.
+- **Prompt.** `meta::SHADOW_CLAUSE` is now "The object itself is not in this photo. Keep the existing cast shadow on the ground and wall exactly as it already appears, same direction, length and softness; do not add any new shadow or silhouette."
+  - The object and surface base wordings no longer claim a grey region. The object wording now contains "Fill the area where the object stood with the continuous surrounding surface.", replacing the grey sentences rather than adding to them.
+  - The legacy grey wording is kept verbatim for the grey fill (`meta::plate_edit_prompt_for_fill`). Identify is untouched.
+- **Record (additive).** `backdrop.reference` gains `fill` (`inpaint_diffusion` | `grey`), `fill_iterations` and `fill_texture`. `fill_rgb` stays as a key and is `null` for the inpaint. `hole_pixels` is as before. The `product_region` sentence matches the fill.
+- **Env.** `AGENTHAND_REFERENCE_FILL=grey` restores the grey reference and its wording byte for byte. The rebuilt IMG_1443 reference hashes to the live receipt's `b9c58efc...`.
+- **Tests.**
+  - New `tests/reference_fill.rs`:
+    - no product-pixel leakage: magenta vs green product pixels give bit-identical references, and only the hole changes;
+    - the fill is smooth and continuous at the boundary (mean |d| ~0.4-0.5 levels vs the 3 bound) and converges to the true background;
+    - the whole-frame edge case;
+    - grey env restore;
+    - an `#[ignore]` real IMG_1443 check.
+  - The prompt-prefix assertions in `tests/angle_lock.rs` and `tests/staging.rs` follow the new wording. A `meta.rs` unit test covers the fill-aware prompt.
+- **Fixture.** `examples/reference_fill.rs` writes the full-size and edit-size references and a grey | inpaint compare.
+
 ## Unreleased: shadow carry-over
 
 - **The product's own cast shadow comes back** (Daniel's shadow ruling,

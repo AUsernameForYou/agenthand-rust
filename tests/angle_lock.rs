@@ -217,7 +217,7 @@ fn every_object_prompt_carries_the_clause_with_and_without_scene_text() {
     // No scene text: the probe's object wording, then the clause.
     let bare = plate_edit_prompt("", false);
     assert!(bare.starts_with(
-        "Edit @Image1. It is a real photo in which one region has been filled flat grey."
+        "Edit @Image1. It is a real photo from which one object has been removed. Fill the area where the object stood with the continuous surrounding surface."
     ));
     assert!(bare.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")), "{bare}");
     assert_eq!(bare.matches(ANGLE_LOCK_CLAUSE).count(), 1);

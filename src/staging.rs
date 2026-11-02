@@ -4,10 +4,15 @@
 //! The plate is built from the ORIGINAL photo, so its camera angle,
 //! ground plane and light already match the product, which never
 //! moves or scales:
-//! - `masked_reference`: the photo at the edit size with every visible
-//!   product pixel (alpha > 0) plus an 8 px ring filled flat grey. This
-//!   is the only image the edit model receives; product pixels are
-//!   never sent.
+//! - `edit_reference`: the photo at the edit size with every visible
+//!   product pixel (alpha > 0) plus an 8 px ring removed and filled
+//!   from the pixels OUTSIDE that footprint (`inpaint_diffusion`: a
+//!   coarse-to-fine harmonic fill plus a faint copy of the surround's
+//!   fine texture), so the model sees no object-shaped silhouette.
+//!   This is the only image the edit model receives; product pixels
+//!   are never sent. `AGENTHAND_REFERENCE_FILL=grey` restores the
+//!   legacy flat-grey hole (`masked_reference`) for comparison.
+//!   docs/REFERENCE-FILL.md has the why.
 //! - `fallback_plate`: the code-only plate when the edit call fails:
 //!   the same masked photo, hole filled from its surroundings
 //!   (push-pull), blurred and lifted toward white.
@@ -43,9 +48,32 @@ pub const THIN_FRACTION: f64 = 0.01;
 /// Edge-matte width, and the cap for thin subjects.
 pub const MATTE_PX: u32 = 2;
 pub const MATTE_PX_THIN: u32 = 1;
-/// Grey fill of the masked reference and its dilation (reference px).
+/// Grey fill of the legacy masked reference (`AGENTHAND_REFERENCE_FILL=grey`)
+/// and the product footprint's dilation (reference px, both fills).
 pub const REFERENCE_GREY: [u8; 3] = [128, 128, 128];
 pub const REFERENCE_DILATE_PX: usize = 8;
+/// Reference fill switch: `grey` (or `gray`) restores the flat-grey
+/// hole for comparison; unset or anything else is `inpaint_diffusion`.
+pub const REFERENCE_FILL_ENV: &str = "AGENTHAND_REFERENCE_FILL";
+/// Inpaint pyramid: halve (known-weighted 2x2 means) until the long
+/// side is at most this, solve there, then refine level by level back
+/// up to the reference size.
+pub const INPAINT_COARSE_LONG_SIDE: usize = 8;
+/// Gauss-Seidel (over-relaxed) sweeps per level: at most this many,
+/// stopping early once no hole value moves more than the tolerance
+/// (0-255 units) in a sweep.
+pub const INPAINT_MAX_SWEEPS: usize = 200;
+pub const INPAINT_TOLERANCE: f32 = 0.02;
+pub const INPAINT_SOR: f32 = 1.5;
+/// Texture: the surround's fine grain (pixel minus its known-only box
+/// mean of this radius), clamped to +-`CLAMP` (0-255 units) so edges
+/// are not echoed, mirrored into each hole row from both run ends and
+/// added at `GAIN`. Tuned on IMG_1443: a wider radius or clamp mirrors
+/// fence edges and spokes into the hole as fan-shaped echoes, which is
+/// a silhouette of its own (docs/REFERENCE-FILL.md).
+pub const INPAINT_TEXTURE_RADIUS: usize = 2;
+pub const INPAINT_TEXTURE_CLAMP: f32 = 10.0;
+pub const INPAINT_TEXTURE_GAIN: f32 = 1.0;
 /// Fallback plate: working long side, blur radius (work px, three box
 /// passes) and lift toward white.
 pub const FALLBACK_WORK_LONG_SIDE: u32 = 640;
@@ -400,8 +428,11 @@ fn footprint(foreground: &RgbaImage, out_w: u32, out_h: u32, dilate: usize) -> V
     dilate_square(&hole, out_w as usize, out_h as usize, dilate)
 }
 
-/// The edit reference: the source at (out_w, out_h) with the product
-/// footprint plus `REFERENCE_DILATE_PX` filled `REFERENCE_GREY`.
+/// The legacy edit reference (`AGENTHAND_REFERENCE_FILL=grey`): the
+/// source at (out_w, out_h) with the product footprint plus
+/// `REFERENCE_DILATE_PX` filled `REFERENCE_GREY`. The edit model reads
+/// that object-shaped grey silhouette as a shadow and paints it
+/// (docs/REFERENCE-FILL.md), so it is kept for comparison only.
 /// Returns (reference, hole pixel count).
 pub fn masked_reference(
     source: &RgbaImage,
@@ -421,6 +452,408 @@ pub fn masked_reference(
         px[3] = 255;
     }
     (reference, hole_px)
+}
+
+/// How the product hole in the edit reference is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceFill {
+    /// Default: harmonic fill from the non-product pixels plus a faint
+    /// copy of their fine texture. No silhouette.
+    InpaintDiffusion,
+    /// Legacy flat `REFERENCE_GREY` (comparison only).
+    Grey,
+}
+
+impl ReferenceFill {
+    /// `grey` / `gray` (any case) selects the legacy fill; anything
+    /// else, or nothing, is the inpaint.
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(|v| v.trim().to_ascii_lowercase()) {
+            Some(v) if v == "grey" || v == "gray" => ReferenceFill::Grey,
+            _ => ReferenceFill::InpaintDiffusion,
+        }
+    }
+
+    /// From `AGENTHAND_REFERENCE_FILL`.
+    pub fn from_env() -> Self {
+        Self::parse(std::env::var(REFERENCE_FILL_ENV).ok().as_deref())
+    }
+
+    /// The receipt's `fill` value.
+    pub fn name(self) -> &'static str {
+        match self {
+            ReferenceFill::InpaintDiffusion => "inpaint_diffusion",
+            ReferenceFill::Grey => "grey",
+        }
+    }
+}
+
+/// The image sent to the edit model and what the receipt says about it.
+#[derive(Debug, Clone)]
+pub struct EditReference {
+    pub image: RgbaImage,
+    /// Reference pixels in the dilated product footprint.
+    pub hole_pixels: u64,
+    pub fill: ReferenceFill,
+    /// Total Gauss-Seidel sweeps over all pyramid levels (0 for grey,
+    /// or when nothing outside the footprint was left to fill from).
+    pub fill_iterations: u64,
+}
+
+impl EditReference {
+    /// The fill fields of the receipt's `backdrop.reference` block
+    /// (additive: `fill_rgb` stays, `null` for the inpaint).
+    pub fn fill_record(&self) -> Value {
+        match self.fill {
+            ReferenceFill::Grey => json!({
+                "fill": self.fill.name(),
+                "fill_rgb": REFERENCE_GREY,
+                "fill_iterations": 0,
+                "fill_texture": Value::Null,
+            }),
+            ReferenceFill::InpaintDiffusion => json!({
+                "fill": self.fill.name(),
+                "fill_rgb": Value::Null,
+                "fill_iterations": self.fill_iterations,
+                "fill_texture": {
+                    "kind": "row_mirror_residual",
+                    "radius_px": INPAINT_TEXTURE_RADIUS,
+                    "clamp": INPAINT_TEXTURE_CLAMP,
+                    "gain": INPAINT_TEXTURE_GAIN,
+                },
+            }),
+        }
+    }
+
+    /// The receipt's `product_region` sentence for this fill.
+    pub fn product_region_note(&self) -> &'static str {
+        match self.fill {
+            ReferenceFill::Grey => "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
+            ReferenceFill::InpaintDiffusion => "every visible product pixel's footprint plus the dilation was filled from the photo pixels outside it before upload; no product pixel was sent",
+        }
+    }
+}
+
+/// The edit reference for `fill`: the source at (out_w, out_h) with
+/// the product footprint plus `REFERENCE_DILATE_PX` replaced. The
+/// inpaint reads ONLY reference pixels outside that footprint (the
+/// Lanczos resize support, 3 output px when downscaling, sits inside
+/// the 8 px dilation), so no product pixel reaches the image.
+pub fn edit_reference(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    out_w: u32,
+    out_h: u32,
+    fill: ReferenceFill,
+) -> EditReference {
+    if fill == ReferenceFill::Grey {
+        let (image, hole_pixels) = masked_reference(source, foreground, out_w, out_h);
+        return EditReference {
+            image,
+            hole_pixels,
+            fill,
+            fill_iterations: 0,
+        };
+    }
+    let mut reference = resize_rgba(source, out_w, out_h, ResampleFilter::Lanczos);
+    reference.icc_profile = None;
+    let hole = footprint(foreground, out_w, out_h, REFERENCE_DILATE_PX);
+    let (w, h) = (out_w as usize, out_h as usize);
+    let known: Vec<bool> = hole.iter().map(|&v| v == 0).collect();
+    let hole_pixels = known.iter().filter(|&&k| !k).count() as u64;
+    let mut fill_iterations = 0u64;
+    if hole_pixels > 0 {
+        let mut rgb: Vec<[f32; 3]> = reference
+            .pixels
+            .chunks_exact(4)
+            .zip(&known)
+            .map(|(p, &k)| {
+                // Hole values are never read: zero them so the fill
+                // provably starts from nothing inside the footprint.
+                if k {
+                    [p[0] as f32, p[1] as f32, p[2] as f32]
+                } else {
+                    [0.0; 3]
+                }
+            })
+            .collect();
+        if known.iter().any(|&k| k) {
+            let texture = mirrored_texture(&rgb, &known, w, h);
+            fill_iterations = diffuse_fill(&mut rgb, &known, w, h);
+            for (i, t) in texture.iter().enumerate() {
+                if !known[i] {
+                    (0..3).for_each(|c| rgb[i][c] += t[c]);
+                }
+            }
+        } else {
+            // The footprint covers the whole frame: nothing outside to
+            // fill from, so the hole is the neutral grey.
+            rgb.iter_mut()
+                .for_each(|p| *p = REFERENCE_GREY.map(|v| v as f32));
+        }
+        for (i, px) in reference.pixels.chunks_exact_mut(4).enumerate() {
+            if !known[i] {
+                for c in 0..3 {
+                    px[c] = rgb[i][c].round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+    reference
+        .pixels
+        .chunks_exact_mut(4)
+        .for_each(|p| p[3] = 255);
+    EditReference {
+        image: reference,
+        hole_pixels,
+        fill,
+        fill_iterations,
+    }
+}
+
+/// One pyramid level of the inpaint.
+struct FillLevel {
+    rgb: Vec<[f32; 3]>,
+    known: Vec<bool>,
+    w: usize,
+    h: usize,
+}
+
+/// Harmonic (Laplace) fill of the unknown pixels from the known ones,
+/// coarse to fine: known-weighted 2x2 means build the pyramid; the
+/// coarsest level starts from the known mean; each finer level starts
+/// its unknowns from the bilinear upsample of the level below; every
+/// level runs over-relaxed Gauss-Seidel (4-neighbour mean, known
+/// pixels fixed, image borders reflecting). Reads nothing but known
+/// pixels. Returns the total sweeps.
+fn diffuse_fill(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64 {
+    let mut levels = vec![FillLevel {
+        rgb: rgb.to_vec(),
+        known: known.to_vec(),
+        w,
+        h,
+    }];
+    loop {
+        let fine = levels.last().expect("non-empty");
+        if fine.w.max(fine.h) <= INPAINT_COARSE_LONG_SIDE || fine.known.iter().all(|&k| k) {
+            break;
+        }
+        let (cw, ch) = ((fine.w + 1) / 2, (fine.h + 1) / 2);
+        let mut coarse = FillLevel {
+            rgb: vec![[0.0; 3]; cw * ch],
+            known: vec![false; cw * ch],
+            w: cw,
+            h: ch,
+        };
+        for cy in 0..ch {
+            for cx in 0..cw {
+                let (mut sum, mut n) = ([0f32; 3], 0f32);
+                for y in 2 * cy..(2 * cy + 2).min(fine.h) {
+                    for x in 2 * cx..(2 * cx + 2).min(fine.w) {
+                        if fine.known[y * fine.w + x] {
+                            (0..3).for_each(|c| sum[c] += fine.rgb[y * fine.w + x][c]);
+                            n += 1.0;
+                        }
+                    }
+                }
+                if n > 0.0 {
+                    coarse.rgb[cy * cw + cx] = sum.map(|s| s / n);
+                    coarse.known[cy * cw + cx] = true;
+                }
+            }
+        }
+        levels.push(coarse);
+    }
+    let mut total = 0u64;
+    let mut below: Option<FillLevel> = None;
+    while let Some(mut level) = levels.pop() {
+        match &below {
+            None => {
+                let (mut sum, mut n) = ([0f64; 3], 0f64);
+                for (p, &k) in level.rgb.iter().zip(&level.known) {
+                    if k {
+                        (0..3).for_each(|c| sum[c] += p[c] as f64);
+                        n += 1.0;
+                    }
+                }
+                let mean = if n > 0.0 {
+                    sum.map(|s| (s / n) as f32)
+                } else {
+                    REFERENCE_GREY.map(|v| v as f32)
+                };
+                for (p, &k) in level.rgb.iter_mut().zip(&level.known) {
+                    if !k {
+                        *p = mean;
+                    }
+                }
+            }
+            Some(c) => {
+                for y in 0..level.h {
+                    for x in 0..level.w {
+                        let i = y * level.w + x;
+                        if !level.known[i] {
+                            level.rgb[i] = bilinear(
+                                &c.rgb,
+                                c.w,
+                                c.h,
+                                (x as f32 + 0.5) / 2.0 - 0.5,
+                                (y as f32 + 0.5) / 2.0 - 0.5,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        total += gauss_seidel(&mut level.rgb, &level.known, level.w, level.h);
+        below = Some(level);
+    }
+    rgb.copy_from_slice(&below.expect("level 0 solved").rgb);
+    total
+}
+
+/// Bilinear sample with clamped edges.
+fn bilinear(rgb: &[[f32; 3]], w: usize, h: usize, fx: f32, fy: f32) -> [f32; 3] {
+    let fx = fx.clamp(0.0, (w - 1) as f32);
+    let fy = fy.clamp(0.0, (h - 1) as f32);
+    let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(w - 1), (y0 + 1).min(h - 1));
+    let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+    let mut out = [0f32; 3];
+    for (c, o) in out.iter_mut().enumerate() {
+        let top = rgb[y0 * w + x0][c] * (1.0 - tx) + rgb[y0 * w + x1][c] * tx;
+        let bottom = rgb[y1 * w + x0][c] * (1.0 - tx) + rgb[y1 * w + x1][c] * tx;
+        *o = top * (1.0 - ty) + bottom * ty;
+    }
+    out
+}
+
+/// Over-relaxed Gauss-Seidel on the unknown pixels (row-major order):
+/// each moves toward the mean of its in-image 4-neighbours. Stops at
+/// `INPAINT_MAX_SWEEPS` or when the largest move in a sweep is under
+/// `INPAINT_TOLERANCE`. Returns the sweeps run.
+fn gauss_seidel(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64 {
+    let unknown: Vec<usize> = (0..w * h).filter(|&i| !known[i]).collect();
+    if unknown.is_empty() || w * h < 2 {
+        return 0;
+    }
+    let mut sweeps = 0u64;
+    while (sweeps as usize) < INPAINT_MAX_SWEEPS {
+        sweeps += 1;
+        let mut max_move = 0f32;
+        for &i in &unknown {
+            let (x, y) = (i % w, i / w);
+            let (mut acc, mut n) = ([0f32; 3], 0f32);
+            let mut add = |j: usize| {
+                (0..3).for_each(|c| acc[c] += rgb[j][c]);
+                n += 1.0;
+            };
+            if x > 0 {
+                add(i - 1);
+            }
+            if x + 1 < w {
+                add(i + 1);
+            }
+            if y > 0 {
+                add(i - w);
+            }
+            if y + 1 < h {
+                add(i + w);
+            }
+            for c in 0..3 {
+                let step = INPAINT_SOR * (acc[c] / n - rgb[i][c]);
+                rgb[i][c] += step;
+                max_move = max_move.max(step.abs());
+            }
+        }
+        if max_move < INPAINT_TOLERANCE {
+            break;
+        }
+    }
+    sweeps
+}
+
+/// The texture added over the harmonic fill: the known pixels'
+/// residual against their known-only box mean (radius
+/// `INPAINT_TEXTURE_RADIUS`), clamped to +-`INPAINT_TEXTURE_CLAMP`;
+/// each unknown pixel of a row's hole run [a, b) takes the residual
+/// mirrored across both run ends (x -> 2a-1-x and 2b-1-x, used only
+/// where that pixel is known), cross-faded by distance to each end
+/// (variance-normalised), times `INPAINT_TEXTURE_GAIN`. Mirroring
+/// keeps the texture continuous at the run ends and on the same image
+/// row (the same depth on a ground plane). Zero where nothing known
+/// is reachable. Reads nothing but known pixels.
+fn mirrored_texture(rgb: &[[f32; 3]], known: &[bool], w: usize, h: usize) -> Vec<[f32; 3]> {
+    let r = INPAINT_TEXTURE_RADIUS;
+    // Known-only box sums, separable: horizontal then vertical.
+    let mut hsum = vec![[0f32; 4]; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut s = [0f32; 4];
+            for xx in x.saturating_sub(r)..(x + r + 1).min(w) {
+                let j = y * w + xx;
+                if known[j] {
+                    (0..3).for_each(|c| s[c] += rgb[j][c]);
+                    s[3] += 1.0;
+                }
+            }
+            hsum[y * w + x] = s;
+        }
+    }
+    let mut residual = vec![[0f32; 3]; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if !known[i] {
+                continue;
+            }
+            let mut s = [0f32; 4];
+            for yy in y.saturating_sub(r)..(y + r + 1).min(h) {
+                let t = hsum[yy * w + x];
+                (0..4).for_each(|c| s[c] += t[c]);
+            }
+            for c in 0..3 {
+                residual[i][c] =
+                    (rgb[i][c] - s[c] / s[3]).clamp(-INPAINT_TEXTURE_CLAMP, INPAINT_TEXTURE_CLAMP);
+            }
+        }
+    }
+    drop(hsum);
+    let mut texture = vec![[0f32; 3]; w * h];
+    for y in 0..h {
+        let row = y * w;
+        let mut x = 0;
+        while x < w {
+            if known[row + x] {
+                x += 1;
+                continue;
+            }
+            let a = x;
+            while x < w && !known[row + x] {
+                x += 1;
+            }
+            let b = x;
+            for xi in a..b {
+                let (dl, dr) = ((xi - a + 1) as f32, (b - xi) as f32);
+                let left = (2 * a)
+                    .checked_sub(xi + 1)
+                    .filter(|&xl| known[row + xl])
+                    .map(|xl| (residual[row + xl], dr / (dl + dr)));
+                let right = Some(2 * b - 1 - xi)
+                    .filter(|&xr| xr < w && known[row + xr])
+                    .map(|xr| (residual[row + xr], dl / (dl + dr)));
+                let (mut acc, mut norm) = ([0f32; 3], 0f32);
+                for (res, wt) in [left, right].into_iter().flatten() {
+                    (0..3).for_each(|c| acc[c] += res[c] * wt);
+                    norm += wt * wt;
+                }
+                if norm > 0.0 {
+                    let scale = INPAINT_TEXTURE_GAIN / norm.sqrt();
+                    texture[row + xi] = acc.map(|v| v * scale);
+                }
+            }
+        }
+    }
+    texture
 }
 
 /// Fill unknown pixels from known neighbours across scales (push-pull).

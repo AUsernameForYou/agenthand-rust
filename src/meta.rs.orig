@@ -1502,6 +1502,150 @@ mod http_timeout_tests {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Generated-plate clauses (docs/LIGHT-AND-THIN.md): light direction,
+// thin-structure plainness, scene exclusions. They ride after the angle
+// steer in the legacy `generated` mode only; source_edit prompts and the
+// identify instructions are unchanged.
+// ---------------------------------------------------------------------------
+
+/// Light phrases, one per `staging::LightSide` read from a cast shadow.
+pub const LIGHT_PHRASE_FROM_LEFT: &str =
+    "Sun low from camera-left; long soft shadows fall to camera-right across the ground.";
+pub const LIGHT_PHRASE_FROM_RIGHT: &str =
+    "Sun low from camera-right; long soft shadows fall to camera-left across the ground.";
+pub const LIGHT_PHRASE_FROM_CAMERA: &str =
+    "Light from behind the camera; soft shadows fall straight back, away from the camera.";
+pub const LIGHT_PHRASE_FROM_BEHIND: &str =
+    "Light from behind the scene, facing the camera; soft shadows fall toward the camera.";
+pub const LIGHT_PHRASE_OVERHEAD: &str =
+    "Soft high daylight from overhead; short soft shadows fall directly beneath objects.";
+/// Gradient-only reads claim a side, not a low sun.
+pub const LIGHT_PHRASE_GRADIENT_LEFT: &str =
+    "Light from camera-left; soft shadows fall to camera-right.";
+pub const LIGHT_PHRASE_GRADIENT_RIGHT: &str =
+    "Light from camera-right; soft shadows fall to camera-left.";
+/// Plainness clause for open-frame products (thin-structure trigger).
+pub const THIN_PLAIN_CLAUSE: &str = "Keep the surface directly behind the product plain, smooth and evenly lit, with no dark blocks, doorways, vehicles, furniture or hard edges showing through the product's open frame.";
+/// The fixed tail of the scene exclusions.
+pub const SCENE_EXCLUSIONS_FIXED: [&str; 3] = ["bicycles or other vehicles", "people", "animals"];
+
+/// The light phrase for an estimate, or None when nothing is claimed.
+pub fn light_clause(estimate: &crate::staging::LightEstimate) -> Option<&'static str> {
+    use crate::staging::LightSide;
+    let side = estimate.side?;
+    Some(match (side, estimate.method) {
+        (LightSide::FromLeft, "gradient") => LIGHT_PHRASE_GRADIENT_LEFT,
+        (LightSide::FromRight, "gradient") => LIGHT_PHRASE_GRADIENT_RIGHT,
+        (LightSide::FromLeft, _) => LIGHT_PHRASE_FROM_LEFT,
+        (LightSide::FromRight, _) => LIGHT_PHRASE_FROM_RIGHT,
+        (LightSide::FromCamera, _) => LIGHT_PHRASE_FROM_CAMERA,
+        (LightSide::FromBehind, _) => LIGHT_PHRASE_FROM_BEHIND,
+        (LightSide::Overhead, _) => LIGHT_PHRASE_OVERHEAD,
+    })
+}
+
+fn plural(noun: &str) -> String {
+    let consonant_y = noun.len() > 1
+        && noun.ends_with('y')
+        && !noun[..noun.len() - 1].ends_with(['a', 'e', 'i', 'o', 'u']);
+    if noun.ends_with('s') {
+        noun.to_string()
+    } else if consonant_y {
+        format!("{}ies", &noun[..noun.len() - 1])
+    } else if noun.ends_with("ch") || noun.ends_with("sh") || noun.ends_with(['x', 'z']) {
+        format!("{noun}es")
+    } else {
+        format!("{noun}s")
+    }
+}
+
+/// What a generated plate must not contain, from the identify concept:
+/// the concept itself, its head noun's plural, then the fixed list. Empty
+/// when the concept is unknown (the prompt is then unchanged).
+pub fn scene_exclusions(concept: Option<&str>) -> Vec<String> {
+    let cleaned: String = concept
+        .unwrap_or("")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '\'' {
+                c.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let mut words: Vec<&str> = cleaned.split_whitespace().collect();
+    // Keep the concept short (an identify phrase is a few words).
+    words.truncate(8);
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let phrase = words.join(" ");
+    // Head noun: the last word before a qualifier ("bike with basket").
+    let cut = words
+        .iter()
+        .position(|w| ["with", "on", "in", "for", "from", "against", "and", "near"].contains(w))
+        .filter(|&p| p > 0)
+        .unwrap_or(words.len());
+    let head = plural(words[cut - 1]);
+    let mut out = Vec::new();
+    if words.len() > 1 {
+        out.push(phrase);
+    }
+    if head != "bicycles" && !out.contains(&head) {
+        out.push(head);
+    }
+    out.extend(SCENE_EXCLUSIONS_FIXED.iter().map(|s| s.to_string()));
+    out
+}
+
+/// "Empty scene, no a, no b, ...; the product will be placed afterwards."
+pub fn scene_exclusion_clause(exclusions: &[String]) -> Option<String> {
+    if exclusions.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = exclusions.iter().map(|e| format!("no {e}")).collect();
+    Some(format!(
+        "Empty scene, {}; the product will be placed afterwards.",
+        list.join(", ")
+    ))
+}
+
+/// Append a clause as its own sentence.
+pub fn append_plate_clause(text: &str, clause: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        clause.to_string()
+    } else {
+        format!("{text}{} {clause}", sentence_end(text))
+    }
+}
+
+/// The generated plate's scene text: `generated_plate_scene` (caller's
+/// scene, angle steer), then the light phrase when one is stated, the
+/// plainness clause when the thin-structure guard triggered, and the
+/// exclusion clause when the concept is known.
+pub fn generated_plate_scene_dressed(
+    scene_prompt: &str,
+    estimate: &crate::staging::AngleEstimate,
+    light: Option<&str>,
+    thin: bool,
+    exclusions: &[String],
+) -> String {
+    let mut text = generated_plate_scene(scene_prompt, estimate);
+    if let Some(phrase) = light {
+        text = append_plate_clause(&text, phrase);
+    }
+    if thin {
+        text = append_plate_clause(&text, THIN_PLAIN_CLAUSE);
+    }
+    if let Some(clause) = scene_exclusion_clause(exclusions) {
+        text = append_plate_clause(&text, &clause);
+    }
+    text
+}
+
 #[cfg(test)]
 mod plate_default_style_tests {
     use super::*;

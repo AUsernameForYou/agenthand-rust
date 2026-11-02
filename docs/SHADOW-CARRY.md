@@ -6,7 +6,7 @@ Fix: automatic, two layers. The prompt clause is best effort; the composite carr
 
 ## 1. Prompt clause (best effort)
 - `meta::SHADOW_CLAUSE`, appended by `plate_edit_prompt_locked` right after the angle lock, on every `source_edit` plate prompt (object and surface wording, with or without scene text, stated angle or not):
-  - "Keep the object's cast shadow on the ground as in the original photo, same direction, length and softness."
+  - "The object itself is not in this photo. Keep the existing cast shadow on the ground and wall exactly as it already appears, same direction, length and softness; do not add any new shadow or silhouette." (reworded 2026-11-01: the earlier "Keep the object's cast shadow..." pointed the model at the grey hole; docs/REFERENCE-FILL.md)
 - The legacy `generated` mode has no reference photo and gets no clause.
 - Identify instructions and identify output schema are untouched.
 
