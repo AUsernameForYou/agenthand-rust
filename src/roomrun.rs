@@ -38,7 +38,8 @@ use crate::meta::{
     project_cut_out_cost_usd, project_draw_cost_usd, project_identify_cost_usd, CUT_OUT_MODEL,
     DRAW_BACKGROUND_MODEL, IDENTIFY_MAX_ATTEMPTS, IDENTIFY_MODEL,
 };
-use crate::{backdrop, composite, comps, config, ingest, ledger, market_pricing};
+use crate::pricing::Usage;
+use crate::{backdrop, billing, composite, comps, config, ingest, ledger, market_pricing};
 
 pub const MAX_PHOTOS_PER_ITEM: usize = 3;
 pub const MAX_SAM_CALLS_PER_ITEM: usize = 6;
@@ -53,12 +54,18 @@ pub const DEFAULT_SCENE: &str = "a bright, calm room with a plain warm-white wal
 pub const DEFAULT_BUDGET_USD: f64 = 1.00;
 
 // -- narration constants ---------------------------------------------
-// Narration runs on Baseten partner credits (a separate pool from the
-// Meta $150 gate): Muse Spark Open is the only model Baseten serves on
-// this account and it accepts audio input. The prompt extracts the
+// Narration runs on Baseten partner credits: Muse Spark Open is the
+// only model Baseten serves on this account and it accepts audio
+// input. Since fix pass F3 the call runs inside billing::billed_call
+// like every Meta call (tool NARRATION_TOOL), so it reserves its
+// worst-case projection against the spend cap and leaves pending +
+// settled rows in the ledger; the room's Meta total
+// (total_cost_usd) and run budget still exclude it, as before. The prompt extracts the
 // transcript AND the sale intent in one call: narration is where a
 // video tour turns into the seller's item list.
 pub const NARRATION_MODEL: &str = "meta-models/muse-spark-open-1026";
+/// Ledger tool name for narration receipts.
+pub const NARRATION_TOOL: &str = "narration";
 /// Spark Open always reasons before it answers, and the reasoning
 /// grows with the clip. The voice spike showed a 1024-token cap fully
 /// consumed by reasoning, leaving an empty reply; 4096 covered the
@@ -771,6 +778,41 @@ pub fn narration_cost_usd(usage: Option<&Value>) -> Option<f64> {
         return None;
     }
     Some(prompt * 1.25 / 1_000_000.0 + completion * 4.25 / 1_000_000.0)
+}
+
+/// The token usage a narration call settles at in the ledger: the
+/// provider's reported prompt / completion tokens, or, when the
+/// reply reports none, the worst-case projection's own token counts
+/// (audio at NARRATION_TOKENS_PER_SECOND plus the prompt floor, the
+/// full cap per planned piece). An unreported call therefore settles
+/// at its projected cost, never at $0: money that may have been
+/// spent is counted as spent.
+pub fn narration_billing_usage(usage: Option<&Value>, duration_s: f64) -> Usage {
+    let grab = |key: &str| -> i64 {
+        usage
+            .and_then(|u| u.get(key))
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v.round() as i64)
+            .unwrap_or(0)
+    };
+    let prompt = grab("prompt_tokens");
+    let completion = grab("completion_tokens");
+    if prompt == 0 && completion == 0 {
+        let pieces = plan_narration_chunks(duration_s).len() as i64;
+        return Usage {
+            input_tokens: (duration_s * NARRATION_TOKENS_PER_SECOND
+                + NARRATION_PROMPT_TOKENS_FLOOR)
+                .ceil() as i64,
+            output_tokens: pieces * NARRATION_MAX_TOKENS as i64,
+            ..Default::default()
+        };
+    }
+    Usage {
+        input_tokens: prompt,
+        output_tokens: completion,
+        ..Default::default()
+    }
 }
 
 /// Structured view parsed from a narration reply (transcript lines,
@@ -1814,12 +1856,75 @@ fn narrate_one(
     if let Some(prepared) = prepared_s {
         record["prepared_duration_s"] = json!(python_round(prepared, 2));
     }
-    let result = match narration_fn(&send_path) {
-        Ok(result) => result,
-        Err(message) => {
+    // Billing (fix pass F3): the Baseten call runs inside
+    // billing::billed_call, like every Meta call. The worst-case
+    // projection is reserved against the spend cap BEFORE the call
+    // (a pending ledger row, or a refusal with no call made) and the
+    // reported usage settles it after (a settled row). A failed call
+    // leaves its reservation counted. The record's own fields are
+    // unchanged: cost_usd_estimate is still priced from the usage.
+    let call_id = uuid::Uuid::new_v4().simple().to_string();
+    let note = format!(
+        "narration of {}",
+        source_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    );
+    let outcome: std::cell::RefCell<Option<NarrationResult>> = std::cell::RefCell::new(None);
+    let billed = billing::billed_call(
+        NARRATION_TOOL,
+        Some(NARRATION_MODEL),
+        projected,
+        "ok",
+        &note,
+        &call_id,
+        || {
+            let result = narration_fn(&send_path);
+            let usage = match &result {
+                Ok(value) => Ok(narration_billing_usage(value.get("usage"), duration)),
+                Err(message) => Err(message.clone()),
+            };
+            *outcome.borrow_mut() = Some(result);
+            usage
+        },
+    );
+    let result = match (billed, outcome.into_inner()) {
+        (Ok(_), Some(Ok(result))) => result,
+        (_, Some(Err(message))) => {
             record["error"] = json!({
                 "code": "NARRATION_FAILED",
                 "message": message,
+            });
+            return record;
+        }
+        (Err(message), None) => {
+            // Refused before the call ran: the spend cap cannot cover
+            // the projection (or the ledger state is unusable).
+            let code = if message.starts_with("Spend cap") {
+                "SPEND_CAP_REFUSED"
+            } else {
+                "NARRATION_BILLING_FAILED"
+            };
+            record["error"] = json!({
+                "code": code,
+                "message": format!("the narration was refused before any call was made: {message}"),
+            });
+            return record;
+        }
+        (Err(message), Some(Ok(_))) => {
+            // The call ran but its settle failed (for example, the
+            // actual cost pushed the ledger over the cap).
+            record["error"] = json!({
+                "code": "NARRATION_BILLING_FAILED",
+                "message": message,
+            });
+            return record;
+        }
+        (Ok(_), None) => {
+            record["error"] = json!({
+                "code": "NARRATION_BILLING_FAILED",
+                "message": "billing reported success but the narration call produced no result",
             });
             return record;
         }
@@ -4480,7 +4585,6 @@ fn run_room_body(
             Box::new(move || ledger::ledger_total_usd(&path).map_err(|e| e.to_string()))
         }
     };
-    let spend_before = spend_probe()?;
 
     // ---- source pool -------------------------------------------------
     let mut sources: Vec<PhotoSource> = Vec::new();
@@ -4555,6 +4659,11 @@ fn run_room_body(
             ));
         }
     }
+    // The room's Meta spend baseline, measured AFTER narration: the
+    // Baseten narration calls are billed through the ledger (fix pass
+    // F3, so the spend cap sees them) but stay out of the room's Meta
+    // total and run budget, exactly as before.
+    let spend_before = spend_probe()?;
     let mut narrated_names: Vec<(String, String, &'static str)> = Vec::new(); // (name, source, kind)
     for record in &narration_records {
         let source = record

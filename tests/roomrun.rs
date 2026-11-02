@@ -2475,3 +2475,147 @@ fn summarize_manifest_matches_python_output_on_frozen_manifests() {
         assert_eq!(rendered, expected, "summary mismatch for {run}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Narration billing (fix pass F3): the Baseten narration call runs inside
+// billing::billed_call — a pending row before the call, a settled row
+// after, and a refusal (no call made) when the spend cap cannot cover
+// the projection.
+// ---------------------------------------------------------------------------
+
+fn ledger_rows(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Run `body` with the given env vars set (None = removed), restoring
+/// the previous values afterwards even if `body` panics.
+fn with_env<T>(vars: &[(&str, Option<&std::ffi::OsStr>)], body: impl FnOnce() -> T) -> T {
+    let saved: Vec<(String, Option<std::ffi::OsString>)> = vars
+        .iter()
+        .map(|(k, _)| (k.to_string(), std::env::var_os(k)))
+        .collect();
+    for (k, v) in vars {
+        match v {
+            Some(val) => std::env::set_var(k, val),
+            None => std::env::remove_var(k),
+        }
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    for (k, v) in &saved {
+        match v {
+            Some(val) => std::env::set_var(k, val),
+            None => std::env::remove_var(k),
+        }
+    }
+    match result {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+#[test]
+fn narration_is_billed_through_the_ledger_and_refused_over_the_cap() {
+    let _guard = env_lock();
+    let root = temp_root("narration-billing");
+    let data_dir = root.join("data");
+    let photos = vec![photo(&root, "purifier.png", [120, 60, 20, 255])];
+    let audio = wav_file(&root.join("walk.wav"), 1.0, 8000, 0.5);
+    let run = |out: &Path, narration: &Rc<FakeNarration>| -> (Value, Rc<FakeChain>) {
+        let fake = FakeChain::new(
+            &root,
+            vec![plan("air purifier")],
+            contents(&[((0, "filter"), "filter1")]),
+        );
+        let mut opts = narrated_opts(&fake, &root, narration);
+        opts.narrated_audios = vec![audio.clone()];
+        (run_room(&photos, &[], out, opts).unwrap(), fake)
+    };
+
+    // Under the cap: one pending + one settled narration row, same call.
+    let narration = FakeNarration::new(NARRATION_REPLY);
+    let out1 = root.join("out1");
+    let (manifest, fake) = with_env(
+        &[
+            ("AGENTHAND_DATA_DIR", Some(data_dir.as_os_str())),
+            ("AGENTHAND_TOTAL_SPEND_CAP_USD", None),
+        ],
+        || run(&out1, &narration),
+    );
+    let record = &manifest["narration"]["files"][0];
+    assert!(record["error"].is_null(), "{}", record["error"]);
+    let rows: Vec<Value> = ledger_rows(&out1.join("ledger.jsonl"))
+        .into_iter()
+        .filter(|r| r["tool"] == "narration")
+        .collect();
+    assert_eq!(rows.len(), 2, "pending + settled narration rows, got {rows:?}");
+    assert_eq!(rows[0]["phase"], "pending");
+    assert_eq!(rows[1]["phase"], "settled");
+    assert_eq!(rows[0]["call_id"], rows[1]["call_id"]);
+    assert_eq!(rows[1]["model"], NARRATION_MODEL);
+    // The reservation is the worst-case projection (the record shows
+    // it rounded to the micro-dollar).
+    assert!(
+        (rows[0]["usd_estimate"].as_f64().unwrap()
+            - record["projected_cost_usd"].as_f64().unwrap())
+        .abs()
+            < 1e-6
+    );
+    assert_eq!(rows[1]["input_tokens"], 1000);
+    assert_eq!(rows[1]["output_tokens"], 500);
+    let actual = 1000.0 * 1.25e-6 + 500.0 * 4.25e-6;
+    assert!(approx(rows[1]["usd_estimate"].as_f64().unwrap(), actual));
+    // The record's fields are unchanged, and the room's Meta total
+    // still excludes the narration spend.
+    assert!(approx(record["cost_usd_estimate"].as_f64().unwrap(), actual));
+    assert!(approx(
+        manifest["total_cost_usd"].as_f64().unwrap(),
+        *fake.spend.borrow()
+    ));
+
+    // Over the cap: refused before the Baseten call is made.
+    let narration = FakeNarration::new(NARRATION_REPLY);
+    let out2 = root.join("out2");
+    let (manifest, _) = with_env(
+        &[
+            ("AGENTHAND_DATA_DIR", Some(data_dir.as_os_str())),
+            (
+                "AGENTHAND_TOTAL_SPEND_CAP_USD",
+                Some(std::ffi::OsStr::new("0.0001")),
+            ),
+        ],
+        || run(&out2, &narration),
+    );
+    let record = &manifest["narration"]["files"][0];
+    assert_eq!(record["error"]["code"], "SPEND_CAP_REFUSED", "{record}");
+    assert!(record["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Spend cap"));
+    assert!(narration.calls.borrow().is_empty(), "no Baseten call over the cap");
+    assert!(ledger_rows(&out2.join("ledger.jsonl"))
+        .iter()
+        .all(|r| r["tool"] != "narration"));
+}
+
+/// F3: a narration reply that reports no usage settles at its
+/// worst-case projection, never at $0.
+#[test]
+fn unreported_narration_usage_settles_at_the_projection() {
+    let usage = agenthand::roomrun::narration_billing_usage(None, 1.0);
+    assert_eq!(usage.input_tokens, 662); // 1 s x 150 tok/s + 512 floor
+    assert_eq!(usage.output_tokens, NARRATION_MAX_TOKENS as i64);
+    let billed = agenthand::pricing::estimate_cost_usd(NARRATION_MODEL, &usage).unwrap();
+    assert!((billed - project_narration_cost_usd(1.0, NARRATION_MAX_TOKENS)).abs() < 1e-6);
+    let reported = agenthand::roomrun::narration_billing_usage(
+        Some(&json!({"prompt_tokens": 1000, "completion_tokens": 500})),
+        1.0,
+    );
+    assert_eq!((reported.input_tokens, reported.output_tokens), (1000, 500));
+}

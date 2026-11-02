@@ -29,6 +29,16 @@ fn token_prices(model: &str) -> Option<(f64, f64, f64)> {
     match model {
         "muse-spark-1.3" => Some((1.25, 4.25, 0.15)),
         "muse-wonder-1.0" => Some((4.00, 20.00, 0.20)),
+        // Baseten Spark Open, the narration model (roomrun's
+        // NARRATION_MODEL): the published $1.25/M in, $4.25/M out
+        // that `roomrun::narration_cost_usd` and the narration
+        // projection already price at. Baseten reports no cached
+        // tokens; any that ever appear are priced as fresh input
+        // (no discount assumed), so the ledger never under-counts.
+        // Added in fix pass F3 so narration can run inside
+        // billing::billed_call; no existing rate changed, so the
+        // table version (shared with the Python build) is unchanged.
+        "meta-models/muse-spark-open-1026" => Some((1.25, 4.25, 1.25)),
         _ => None,
     }
 }
