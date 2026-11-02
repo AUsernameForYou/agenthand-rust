@@ -2178,7 +2178,21 @@ pub struct Detection {
     /// Projected frame vertices, TL/TR/BR/BL order.
     pub quad: [Pt; 4],
     pub rms: f64,
+    /// Strict re-observation at the accepted fit: tick cuts and arms
+    /// the strict matcher finds at `H` (see `STRICT_COLLAPSE_*`).
+    pub strict_ticks: usize,
+    pub strict_arms: usize,
 }
+
+/// Strict re-verification after the size gates. The fit pipeline
+/// adopts a strict re-observation only when it confirms (>= 10 strict
+/// ticks) and otherwise grades its gates on the loose pairs it kept,
+/// so a fit can stand on loose evidence alone. At or below this many
+/// strict tick cuts AND arms at the accepted fit, the card's tick
+/// structure is not there and the estimate refuses (Python parity:
+/// agenthand main c5f5929, `estimate`).
+const STRICT_COLLAPSE_MAX_TICKS: usize = 2;
+const STRICT_COLLAPSE_MAX_ARMS: usize = 1;
 
 /// Fit + strict refits; the span gate lives here (port of the
 /// Python `pipeline` closure inside `_detect_card`).
@@ -2643,11 +2657,14 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
         project1(&H, card.frame["BR"]),
         project1(&H, card.frame["BL"]),
     ];
+    let strict = tick_matches(frame, &mask, card, &H, true, false);
     Ok(Detection {
         H,
         tick_pairs,
         quad,
         rms,
+        strict_ticks: strict.matched.len(),
+        strict_arms: strict.arms_hit,
     })
 }
 
@@ -2976,6 +2993,15 @@ pub fn estimate(
              fit stays quiet but the range stops covering the true \
              size below ~{MIN_CARD_PX:.0} px) — Retake the shot \
              or use a bigger card."
+        ));
+    }
+    if det.strict_ticks <= STRICT_COLLAPSE_MAX_TICKS && det.strict_arms <= STRICT_COLLAPSE_MAX_ARMS {
+        return Err(format!(
+            "Card failed strict tick verification at its own fit ({} tick \
+             cuts on {} arms under strict matching; the fit stood on loose \
+             matches only) — Retake the shot closer, with the card flat, \
+             sharp and fully in frame.",
+            det.strict_ticks, det.strict_arms
         ));
     }
     let mut sys_frac = 0.0;
