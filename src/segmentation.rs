@@ -1001,8 +1001,13 @@ pub fn run_attempts(
 //    is judged by structure: a second colour model with samples from
 //    inside the frame marks the kept structure (rim, tubes, fork, hub);
 //    open cells deeper than the accepted windows reach, framed by
-//    look-through structure and linked to an accepted window across a
-//    spoke, are released whole. Kill switch: AGENTHAND_HOLE_COMPLETE=off.
+//    look-through structure, not lying in a pocket of solid parts (the
+//    cog between the chain and the dropout) and linked to an accepted
+//    window across a spoke, are released whole. Kill switch:
+//    AGENTHAND_HOLE_COMPLETE=off.
+// 5a''. Pale-part guard (`restore_pale_parts`): compact pale parts the
+//    carve mostly kept (reflectors) get every carved pixel inside their
+//    convex hull back (frayed edge, the bolt).
 //    The enclosed-remainder GATE measures the linked enclosed cells left
 //    unreleased; cut_out refuses above 10% (`hole_carve_gate_refusal`).
 // 5. Finish: line-contrast pixels of BACKGROUND colour inside a window
@@ -1116,6 +1121,40 @@ pub const CARVE_COMPLETE_LINK_RADIUS: usize = 7;
 pub const CARVE_GATE_MAX_REMAINDER_FRAC: f64 = 0.10;
 /// cut_out's error code when the gate refuses.
 pub const HOLE_CARVE_GATE_CODE: &str = "HOLE_CARVE_INCOMPLETE";
+/// Pocket guard (step 4e): a cell that lies mostly (`_FRAC`) in a pocket
+/// of solid kept parts (parts at least 2r+1 px across, closed with a
+/// (2k+1) square, k = max(`_MIN_PX`, frac x mask bbox diagonal)) is not
+/// completed: the cog between the chain and the dropout, a nut beside a
+/// fork. k is 24 px on the 24 MP IMG_1443 frame.
+pub const CARVE_POCKET_MIN_PX: usize = 2;
+pub const CARVE_POCKET_DIAG_FRAC: f64 = 0.0042;
+pub const CARVE_POCKET_FRAC: f64 = 0.5;
+/// Pale-part guard (step 5a''): pale solid parts (luma at least
+/// `_MIN_LUMA`, channel spread at most `_MAX_CHROMA`, at least 2r+1 px
+/// across) that the carve mostly kept (`_KEPT_FRAC`) are product; every
+/// carved pixel inside such a part's convex hull is restored (a
+/// reflector's frayed edge, the bolt on it).
+pub const CARVE_PALE_MIN_LUMA: u8 = 120;
+pub const CARVE_PALE_MAX_CHROMA: u8 = 50;
+pub const CARVE_PALE_KEPT_FRAC: f64 = 0.6;
+/// ...and compact: the part fills at least this share of its convex hull
+/// (a sunlit rim arc does not).
+pub const CARVE_PALE_SOLIDITY: f64 = 0.7;
+/// Pieces of one pale part split by a bolt are joined with a (2k+1)
+/// closing before the parts are labelled, k = max(`_MIN_PX`, frac x mask
+/// bbox diagonal) (24 px on IMG_1443)...
+pub const CARVE_PALE_JOIN_MIN_PX: usize = 2;
+pub const CARVE_PALE_JOIN_DIAG_FRAC: f64 = 0.0042;
+/// ...and, as a second reading, with only pieces split by a spoke joined
+/// (8 px on IMG_1443; a joined part that reaches a pale rim arc is no
+/// longer compact).
+pub const CARVE_PALE_SPOKE_JOIN_MIN_PX: usize = 1;
+pub const CARVE_PALE_SPOKE_JOIN_DIAG_FRAC: f64 = 0.0014;
+/// Dense line work (a chain, reflector prisms): thin pixels with at least
+/// this share of thin pixels in the (2R+1) box around them
+/// (R = `CARVE_RELEASE_RADIUS`) count as a solid part for the pocket
+/// guard.
+pub const CARVE_DENSE_THIN_FRAC: f64 = 0.6;
 
 /// Whether an on/off environment switch is on: unset or any value
 /// other than 0 / off / false / no (any case) means on.
@@ -1706,6 +1745,173 @@ pub fn hole_carve_gate_refusal(record: &Value) -> Option<(String, String, Value)
     Some((HOLE_CARVE_GATE_CODE.to_string(), message, extra))
 }
 
+/// 5a''. Pale-part guard. Pale solid parts (luma >= `CARVE_PALE_MIN_LUMA`,
+/// channel spread <= `CARVE_PALE_MAX_CHROMA`, opened with the thin square
+/// so spokes drop out) are labelled once per join radius in `joins`
+/// (pieces split by a spoke or a bolt joined by a closing). A part that
+/// the carve kept for at least `CARVE_PALE_KEPT_FRAC` of its pale pixels
+/// and that fills at least `CARVE_PALE_SOLIDITY` of its convex hull is
+/// product: every carved candidate inside the hull is restored (a
+/// reflector's frayed edge, the bolt on it). Sunlit wall or paving is
+/// warmer than the chroma limit or was carved; a pale rim arc is not
+/// compact. Returns the restored pixel count.
+fn restore_pale_parts<'s>(
+    w: usize,
+    h: usize,
+    on: &[bool],
+    cand: &[bool],
+    src_at: &dyn Fn(usize) -> &'s [u8],
+    carved: &mut [bool],
+    min_area: u64,
+    joins: &[usize],
+) -> u64 {
+    let n = w * h;
+    let r = CARVE_THIN_RADIUS;
+    let is_pale = |i: usize| -> bool {
+        let px = src_at(i);
+        let (mx, mn) = (px[0].max(px[1]).max(px[2]), px[0].min(px[1]).min(px[2]));
+        carve_luma(px) >= CARVE_PALE_MIN_LUMA && mx - mn <= CARVE_PALE_MAX_CHROMA
+    };
+    let plane: Vec<u8> = (0..n).map(|i| if on[i] && is_pale(i) { 255 } else { 0 }).collect();
+    let opened = square_extreme(&square_extreme(&plane, w, h, r, false), w, h, r, true);
+    drop(plane);
+    if !opened.iter().any(|&v| v != 0) {
+        return 0;
+    }
+    let solid: Vec<bool> = opened.iter().map(|&v| v != 0).collect();
+    let mut restored = 0u64;
+    let mut hulls = vec![0u8; n];
+    for &join in joins {
+        let joined: Vec<bool> = if join == 0 {
+            opened.iter().map(|&v| v != 0).collect()
+        } else {
+            square_extreme(&square_extreme(&opened, w, h, join, true), w, h, join, false)
+                .iter()
+                .map(|&v| v != 0)
+                .collect()
+        };
+        let (labels, count) = label8(&joined, w, h);
+        drop(joined);
+        if count == 0 {
+            continue;
+        }
+        let mut area = vec![0u64; count + 1];
+        let mut pale = vec![0u64; count + 1];
+        let mut kept = vec![0u64; count + 1];
+        // Per row of each part: leftmost and rightmost pixel (hull input).
+        let mut rows: Vec<Vec<(usize, usize, usize)>> = vec![Vec::new(); count + 1];
+        for y in 0..h {
+            let mut x = 0;
+            while x < w {
+                let l = labels[y * w + x] as usize;
+                if l == 0 {
+                    x += 1;
+                    continue;
+                }
+                let start = x;
+                while x < w && labels[y * w + x] as usize == l {
+                    let i = y * w + x;
+                    area[l] += 1;
+                    if solid[i] {
+                        pale[l] += 1;
+                        if !carved[i] {
+                            kept[l] += 1;
+                        }
+                    }
+                    x += 1;
+                }
+                match rows[l].last_mut() {
+                    Some(last) if last.0 == y => {
+                        last.1 = last.1.min(start);
+                        last.2 = last.2.max(x - 1);
+                    }
+                    _ => rows[l].push((y, start, x - 1)),
+                }
+            }
+        }
+        for l in 1..=count {
+            if pale[l] < min_area || (kept[l] as f64) < CARVE_PALE_KEPT_FRAC * pale[l] as f64 {
+                continue;
+            }
+            // Convex hull (monotone chain) of the row extremes.
+            let mut pts: Vec<(i64, i64)> = Vec::with_capacity(rows[l].len() * 2);
+            for &(y, a, b) in &rows[l] {
+                pts.push((a as i64, y as i64));
+                pts.push((b as i64, y as i64));
+            }
+            pts.sort_unstable();
+            pts.dedup();
+            let cross = |o: (i64, i64), a: (i64, i64), b: (i64, i64)| {
+                (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+            };
+            let mut hull: Vec<(i64, i64)> = Vec::with_capacity(pts.len() + 1);
+            for &pt in pts.iter().chain(pts.iter().rev().skip(1)) {
+                while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], pt) <= 0 {
+                    hull.pop();
+                }
+                hull.push(pt);
+            }
+            hull.pop();
+            if hull.len() < 3 {
+                continue;
+            }
+            let (ymin, ymax) = (rows[l].first().unwrap().0, rows[l].last().unwrap().0);
+            let span = |y: usize| -> Option<(usize, usize)> {
+                // Scanline: x range of the hull polygon at row y.
+                let yf = y as f64;
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for k in 0..hull.len() {
+                    let (a, b) = (hull[k], hull[(k + 1) % hull.len()]);
+                    let (ya, yb) = (a.1 as f64, b.1 as f64);
+                    if yf < ya.min(yb) || yf > ya.max(yb) {
+                        continue;
+                    }
+                    if ya == yb {
+                        lo = lo.min(a.0.min(b.0) as f64);
+                        hi = hi.max(a.0.max(b.0) as f64);
+                    } else {
+                        let x = a.0 as f64 + (yf - ya) * (b.0 - a.0) as f64 / (yb - ya);
+                        lo = lo.min(x);
+                        hi = hi.max(x);
+                    }
+                }
+                let (x0, x1) = (lo.ceil().max(0.0), hi.floor().min((w - 1) as f64));
+                (x0 <= x1).then_some((x0 as usize, x1 as usize))
+            };
+            let hull_area: u64 = (ymin..=ymax)
+                .filter_map(span)
+                .map(|(a, b)| (b - a + 1) as u64)
+                .sum();
+            if (area[l] as f64) < CARVE_PALE_SOLIDITY * hull_area as f64 {
+                continue;
+            }
+            for y in ymin..=ymax {
+                let Some((x0, x1)) = span(y) else {
+                    continue;
+                };
+                for x in x0..=x1 {
+                    let i = y * w + x;
+                    hulls[i] = 255;
+                    if carved[i] && cand[i] {
+                        carved[i] = false;
+                        restored += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Pale slivers of the part that the opening cut off (beyond a spoke
+    // near its end), within the thin radius of a hull.
+    let near = square_extreme(&hulls, w, h, r, true);
+    for i in 0..n {
+        if near[i] != 0 && carved[i] && cand[i] && is_pale(i) {
+            carved[i] = false;
+            restored += 1;
+        }
+    }
+    restored
+}
+
 /// What the completion pass reads (all planes are the carve window).
 struct CompleteInputs<'a> {
     w: usize,
@@ -1762,7 +1968,11 @@ struct CompletionOutcome {
 ///    band, holds a core of `core` px, at least half its border is
 ///    look-through (accepted windows, or thin / structure pixels outside
 ///    a part twice the thin square wide: spokes, not tread on a tyre), and
-///    it links to an accepted window through gaps of at most 2k px.
+///    it links to an accepted window through gaps of at most 2k px, and
+///    less than half of it lies in a pocket of solid kept parts (kept
+///    structure, dense line work such as a chain, and the outer band,
+///    opened with the thin square and closed with a square scaled by
+///    `CARVE_POCKET_DIAG_FRAC`): the cog between the chain and the dropout stays.
 /// 4. Windows are returned as a plane (`apply`) and join the carve after
 ///    the line release and the specks (5a', 5a), which judge only the
 ///    colour-proven windows.
@@ -1885,6 +2095,26 @@ fn complete_windows(
             .map(|i| carved[i] || (p.cand[i] && (p.thin[i] || structure[i]) && wide[i] == 0))
             .collect()
     };
+    // Pocket guard: pockets of solid kept parts (kept structure and the
+    // outer band, opened with the thin square so lines drop out, then
+    // closed with a (2k+1) square).
+    let pocket: Vec<bool> = {
+        let rr = CARVE_RELEASE_RADIUS;
+        let need = (CARVE_DENSE_THIN_FRAC * ((2 * rr + 1) * (2 * rr + 1)) as f64).ceil() as u16;
+        let dense = box_count(p.thin, w, h, rr);
+        let plane: Vec<u8> = (0..n)
+            .map(|i| {
+                let solid_part = structure[i] || !p.cand[i] || (p.thin[i] && dense[i] >= need);
+                if p.on[i] && !carved[i] && solid_part { 255 } else { 0 }
+            })
+            .collect();
+        drop(dense);
+        let solid = square_extreme(&square_extreme(&plane, w, h, r, false), w, h, r, true);
+        drop(plane);
+        let k = CARVE_POCKET_MIN_PX.max((CARVE_POCKET_DIAG_FRAC * p.diag).round() as usize);
+        let closed = square_extreme(&square_extreme(&solid, w, h, k, true), w, h, k, false);
+        (0..n).map(|i| closed[i] != 0 && solid[i] == 0).collect()
+    };
     drop(structure);
     let deep: Vec<bool> = {
         let not_open: Vec<bool> = open.iter().map(|&v| !v).collect();
@@ -1898,6 +2128,7 @@ fn complete_windows(
         deep
     };
     let mut area = vec![0u64; cc + 1];
+    let mut in_pocket = vec![0u64; cc + 1];
     let mut border = vec![0u64; cc + 1];
     let mut framed = vec![0u64; cc + 1];
     let mut touches_band = vec![false; cc + 1];
@@ -1908,6 +2139,9 @@ fn complete_windows(
             continue;
         }
         area[l] += 1;
+        if pocket[i] {
+            in_pocket[l] += 1;
+        }
         comp[l] = p.comp_labels[i];
         let (x, y) = (i % w, i / w);
         for ny in y.saturating_sub(1)..(y + 2).min(h) {
@@ -1926,7 +2160,7 @@ fn complete_windows(
             }
         }
     }
-    drop((look, open));
+    drop((look, open, pocket));
     let enclosed: Vec<bool> = (0..=cc)
         .map(|l| {
             l != 0 && !touches_band[l] && {
@@ -1937,7 +2171,10 @@ fn complete_windows(
         .collect();
     let window: Vec<bool> = (0..=cc)
         .map(|l| {
-            enclosed[l] && deep[l] && framed[l] as f64 >= CARVE_CELL_FRAME_FRAC * border[l] as f64
+            enclosed[l]
+                && deep[l]
+                && framed[l] as f64 >= CARVE_CELL_FRAME_FRAC * border[l] as f64
+                && (in_pocket[l] as f64) < CARVE_POCKET_FRAC * area[l] as f64
         })
         .collect();
     // Linking: the accepted windows and the member cells, each grown by
@@ -2681,6 +2918,27 @@ pub fn carve_holes_opts(
     }
     drop(completed);
 
+    // 5a''. Pale-part guard: pale solid parts the carve mostly kept (a
+    // reflector) are product; carved pixels inside their convex hull go
+    // back to the product (its frayed edge, the bolt on it).
+    // Parts are judged with pieces split by a spoke joined, and again with
+    // pieces split by a bolt joined; a joined part that reaches a pale rim
+    // arc is no longer compact, so both readings run.
+    let pale_restored = restore_pale_parts(
+        w,
+        h,
+        &on,
+        &cand,
+        &|i: usize| src_at(i),
+        &mut carved,
+        CARVE_CELL_MIN_PX,
+        &[
+            CARVE_PALE_SPOKE_JOIN_MIN_PX
+                .max((CARVE_PALE_SPOKE_JOIN_DIAG_FRAC * diag).round() as usize),
+            CARVE_PALE_JOIN_MIN_PX.max((CARVE_PALE_JOIN_DIAG_FRAC * diag).round() as usize),
+        ],
+    );
+
     // 5b. Close 1 px gaps along kept structures.
     let kept = |carved: &[bool], x: isize, y: isize| -> bool {
         x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && {
@@ -2817,6 +3075,7 @@ pub fn carve_holes_opts(
         "speck_pixels": speck_px,
         "released_line_pixels": released,
         "appendage_pixels_kept": appendage_px,
+        "pale_part_pixels_kept": pale_restored,
         "product_pixels_before": product_before,
         "product_pixels_after": product_after,
         "open_frame_keyword": keyword,
