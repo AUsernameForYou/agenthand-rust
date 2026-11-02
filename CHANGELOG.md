@@ -39,9 +39,19 @@
   completed_window_pixels, remainder_pixels, enclosed_candidate_pixels,
   enclosed_cells, remainder_fraction, max_remainder_fraction}`. Other
   fields keep their meaning.
-- Tests: four new tests in `tests/hole_carve.rs` (shaded wheel
+- **Strip release and strip residue** (review round 3). Kept interior
+  bands narrower than 0.37% of the bbox diagonal, cored by a 0.09%
+  opening and bordered at least 60% by released windows are released,
+  with spokes crossing them bridged back; bands bordered 30% to 60% count
+  as gate residue. IMG_1443: 17,123 px of front-wheel paver joints
+  released, 0 spoke-line px lost, reflectors and cog unchanged; front
+  disc 601,331 -> 618,529 px transparent; gate 7.72% / 7.84%. The wider
+  upper joint and the rear shade patches remain (docs/HOLE-CARVE.md
+  Limits). Record: completion.strip_pixels, strip_cells,
+  spoke_bridge_pixels; gate.strip_pixels, strip_residue_pixels.
+- Tests: five new tests in `tests/hole_carve.rs` (shaded wheel
   completed, completion kill switch, gate refusal, reflector and bolt
-  kept).
+  kept, dark joint band released).
 - **Pocket guard and pale-part guard** (review round 2). The completion
   had released the rear cog between the chain and the dropout (17,640
   px) and the rear reflector's bolt; the colour-only carve already frayed
