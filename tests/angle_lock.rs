@@ -8,7 +8,7 @@ use agenthand::composite::composite_images;
 use agenthand::image::{GrayImage, RgbaImage};
 use agenthand::meta::{
     angle_lock_clause, generated_plate_scene, plate_edit_prompt, plate_edit_prompt_locked,
-    wrap_plate_prompt, ANGLE_LOCK_CLAUSE, ANGLE_PHRASE_EYE_LEVEL, ANGLE_PHRASE_LOW_UP,
+    wrap_plate_prompt, ANGLE_LOCK_CLAUSE, SHADOW_CLAUSE, ANGLE_PHRASE_EYE_LEVEL, ANGLE_PHRASE_LOW_UP,
     ANGLE_PHRASE_STEEP_DOWN,
 };
 use agenthand::segmentation::extract_foreground;
@@ -178,7 +178,7 @@ fn estimate_from_a_real_mask_and_the_staged_composite_keeps_the_lock() {
     assert!(g.to_json().get("angle_lock").is_none());
     // The prompt the server builds for this draw.
     let prompt = plate_edit_prompt_locked("on a marble floor", g.fills_frame, Some(&angle));
-    assert!(prompt.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE}")), "{prompt}");
+    assert!(prompt.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE} {SHADOW_CLAUSE}")), "{prompt}");
     // Product pixels: the staged composite changes none of them.
     let plate = staging::finish_plate(&staging::fallback_plate(&src, &fg), &fg, &g);
     let (out, counts, _) = composite_images(&fg, &plate);
@@ -219,7 +219,7 @@ fn every_object_prompt_carries_the_clause_with_and_without_scene_text() {
     assert!(bare.starts_with(
         "Edit @Image1. It is a real photo in which one region has been filled flat grey."
     ));
-    assert!(bare.ends_with(ANGLE_LOCK_CLAUSE), "{bare}");
+    assert!(bare.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")), "{bare}");
     assert_eq!(bare.matches(ANGLE_LOCK_CLAUSE).count(), 1);
     // Whitespace-only scene text counts as none.
     assert_eq!(plate_edit_prompt("   ", false), bare);
@@ -227,7 +227,7 @@ fn every_object_prompt_carries_the_clause_with_and_without_scene_text() {
     // cannot pull the camera; the scene gets a sentence end.
     let scene = plate_edit_prompt("on a beach at sunset", false);
     assert!(scene.contains("Styling only (keep the geometry): on a beach at sunset. Keep the exact"));
-    assert!(scene.ends_with(ANGLE_LOCK_CLAUSE), "{scene}");
+    assert!(scene.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")), "{scene}");
     assert!(
         scene.find("on a beach").unwrap() < scene.find(ANGLE_LOCK_CLAUSE).unwrap()
     );
@@ -241,7 +241,7 @@ fn the_surface_wording_path_also_carries_the_base_clause() {
     for scene in ["", "a tidy back garden"] {
         let p = plate_edit_prompt(scene, true);
         assert!(p.contains("Continue the surroundings"), "{p}");
-        assert!(p.ends_with(ANGLE_LOCK_CLAUSE), "{p}");
+        assert!(p.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")), "{p}");
         // The estimator never states an angle for a surface, so the
         // server's locked prompt is the same text.
         let lawn = est(1000, 1000, (0, 300, 1000, 1000), 0.7, true, &["left", "right", "bottom"]);
@@ -250,16 +250,16 @@ fn the_surface_wording_path_also_carries_the_base_clause() {
     // And a stated angle rides on the surface wording too.
     let p = plate_edit_prompt_locked("", true, Some(&stated(ShotAngle::SteepDown)));
     assert!(p.contains("Continue the surroundings"));
-    assert!(p.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE}")));
+    assert!(p.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE} {SHADOW_CLAUSE}")));
 }
 
 #[test]
 fn stated_angles_add_their_phrase_and_the_default_adds_nothing() {
     for scene in ["", "studio white sweep"] {
         let steep = plate_edit_prompt_locked(scene, false, Some(&stated(ShotAngle::SteepDown)));
-        assert!(steep.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE}")), "{steep}");
+        assert!(steep.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {STEEP_SENTENCE} {SHADOW_CLAUSE}")), "{steep}");
         let low = plate_edit_prompt_locked(scene, false, Some(&stated(ShotAngle::LowUp)));
-        assert!(low.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {LOW_SENTENCE}")), "{low}");
+        assert!(low.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {LOW_SENTENCE} {SHADOW_CLAUSE}")), "{low}");
         // Unstated eye level: the base clause only, never an
         // "eye-level" claim the geometry did not support.
         let eye = plate_edit_prompt_locked(scene, false, Some(&unstated()));

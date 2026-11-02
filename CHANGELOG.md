@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased: shadow carry-over
+
+- **The product's own cast shadow comes back** (Daniel's shadow ruling,
+  IMG_1443 run: only the contact ellipse survived the plate edit).
+  Two layers, both automatic. docs/SHADOW-CARRY.md has the details.
+- **Prompt clause (best effort).** Every `source_edit` plate prompt
+  appends `meta::SHADOW_CLAUSE` right after the angle lock: "Keep the
+  object's cast shadow on the ground as in the original photo, same
+  direction, length and softness." The `generated` mode and identify
+  are unchanged. The prompt-suffix assertions in `tests/angle_lock.rs`
+  and the `meta.rs` unit tests now expect the clause after the lock.
+- **Deterministic carry-over (the guarantee).**
+  `composite::carry_source_shadow` reads a shadow matte from the
+  ORIGINAL photo against the finished plate and multiplies it onto
+  the plate:
+  - plain luma ratio up to 0.92 from the region's floor (0.25
+    attached, 0.35 ground band), similar chroma;
+  - read on a 4 px grid, outside the dilated product mask;
+  - connected to the dilated mask (v2: any side) or the band under
+    the product;
+  - coherent: 75% of the region within +-0.15 of its median;
+  - sized: 0.2% of the image up to 35% of the non-product area.
+  Rims of shadows deeper than the region's floor are not carried on
+  their own, so no half-dark blob is left beside an uncarried core. The
+  feather is the source shadow's own edge ramp (capped at 12 px,
+  never wider). Order on `source_edit` / `source_blur` draws:
+  plate -> carried shadow -> edge fix -> product.
+- **v2 (coordinator's ruling for Daniel).**
+  - Regions may attach to the dilated product mask on ANY side. Their ratio floor is 0.25; ground-band-only regions keep 0.35.
+  - Coherence and the rim rule are judged per region.
+  - The record lists `regions [{side, pixels, mean_ratio, coherence, floor}]` and `rejected [... reason]`.
+- **Bike fixture (IMG_1443), v2.** `carried`: 919,162 px, mean ratio 0.588, coherence 0.860, feather 4 px, product bit-identical.
+  - Restored: the wall course behind the frame and seat, the rear-wheel arc, and the ground between the wheels.
+  - Not restored: the seat shadow on the fence, rejected by coherence (65.4% < 75%, median 0.366, 158,800 px), and the handlebar and stem shadows on the fence. Those two are detached: they never touch the mask, with a gap of at least ~88 px.
+- **Record.** `shadow {mode: carried | contact_only, reason,
+  shadow_pixels, mean_ratio, feather_px, coherence, regions, rejected}` in the draw
+  result (beside `angle_lock`). It is additive in source-plate
+  receipts. Generated, placeholder and code-rendered plates get
+  `contact_only` / "generated plate" in the draw result; their
+  receipts are unchanged.
+- **Kill switch:** `AGENTHAND_SHADOW=off` gives the previous composite
+  exactly, with the record `contact_only` / "disabled by
+  AGENTHAND_SHADOW".
+- Product pixels (alpha 255) are never written, and receipt counts and
+  semantics are unchanged. Tests: `tests/composite_shadow.rs`, plus an
+  opt-in real-fixture run (ignored).
+
 ## Unreleased: angle lock
 
 - **The angle is never asked for.** Every `source_edit` draw ends its

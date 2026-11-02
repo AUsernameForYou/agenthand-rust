@@ -971,6 +971,10 @@ pub fn tool_draw_with_plate(
             base.insert(k.clone(), v.clone());
         }
     }
+    // Shadow carry-over record (docs/SHADOW-CARRY.md), beside angle_lock:
+    // carried | contact_only with the reason ("generated plate" off the
+    // source plates).
+    result["shadow"] = composite::shadow_record_of(&receipt);
     annotate_draw_result(&store, &handle, &mut full, &mut result);
     let preview = store.read_bytes(&handle)?;
     Ok((result, preview))
@@ -1011,6 +1015,7 @@ fn draw_with_placeholder_plate(
         "cost_usd": billing.actual_usd,
         "note": "OFFLINE DEV MODE (AGENTHAND_DRAW_PLACEHOLDER_PLATE): the plate is a deterministic local placeholder, not a generated scene; no API call was made. The compositing, lineage checks, and fidelity receipt are the real pipeline.",
     });
+    result["shadow"] = composite::shadow_record_of(&receipt);
     annotate_draw_result(store, &handle, &mut full, &mut result);
     let preview = store.read_bytes(&handle)?;
     Ok((result, preview))

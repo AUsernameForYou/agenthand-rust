@@ -1161,6 +1161,10 @@ pub const PLATE_EDIT_DEFAULT_STYLE: &str = "a clean, tidy, bright version of the
 /// source_edit plate prompt, with or without caller scene text, so a
 /// caller never has to ask for the angle to match.
 pub const ANGLE_LOCK_CLAUSE: &str = "Keep the exact same camera angle and perspective as the original photo, same horizon position, same framing.";
+/// Shadow ruling (owner, 2026-11-01): appended right after the angle
+/// lock on every source_edit plate prompt. Best effort only; the
+/// composite's shadow carry-over is the guarantee.
+pub const SHADOW_CLAUSE: &str = "Keep the object's cast shadow on the ground as in the original photo, same direction, length and softness.";
 /// Shot-angle phrases, one per `staging::ShotAngle` bucket.
 pub const ANGLE_PHRASE_STEEP_DOWN: &str =
     "shot from standing height looking down at the surface at a steep angle";
@@ -1231,8 +1235,8 @@ fn sentence_end(text: &str) -> &'static str {
 /// angle lock). `fills_frame` switches to the "continue the
 /// surroundings" wording for surfaces and subjects cut by the frame.
 /// The caller's scene text rides as styling only: the geometry is the
-/// photo's. The base angle-lock clause is always last, after any scene
-/// text, so a scene change cannot pull the camera.
+/// photo's. The base angle-lock clause comes after any scene text, so a
+/// scene change cannot pull the camera; only `SHADOW_CLAUSE` follows it.
 pub fn plate_edit_prompt(scene_prompt: &str, fills_frame: bool) -> String {
     plate_edit_prompt_locked(scene_prompt, fills_frame, None)
 }
@@ -1249,7 +1253,10 @@ pub fn plate_edit_prompt_locked(
     } else {
         PLATE_EDIT_OBJECT
     };
-    let lock = angle_lock_clause(estimate);
+    // Shadow ruling (docs/SHADOW-CARRY.md): the cast-shadow clause rides
+    // right after the angle lock (best effort; the composite's shadow
+    // carry-over is the guarantee).
+    let lock = format!("{} {SHADOW_CLAUSE}", angle_lock_clause(estimate));
     let scene = scene_prompt.trim();
     // No scene text on an object plate: the tidy default styling.
     let styling = if scene.is_empty() && !fills_frame {
@@ -1505,7 +1512,7 @@ mod plate_default_style_tests {
         assert_eq!(
             p,
             format!(
-                "{PLATE_EDIT_OBJECT} Styling only (keep the geometry): {PLATE_EDIT_DEFAULT_STYLE}. {ANGLE_LOCK_CLAUSE}"
+                "{PLATE_EDIT_OBJECT} Styling only (keep the geometry): {PLATE_EDIT_DEFAULT_STYLE}. {ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}"
             )
         );
         assert_eq!(plate_edit_prompt("  ", false), p);
@@ -1515,10 +1522,10 @@ mod plate_default_style_tests {
     fn surface_plates_and_caller_scenes_do_not_get_the_default() {
         assert_eq!(
             plate_edit_prompt_locked("", true, None),
-            format!("{PLATE_EDIT_SURFACE} {ANGLE_LOCK_CLAUSE}")
+            format!("{PLATE_EDIT_SURFACE} {ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")
         );
         let scene = plate_edit_prompt_locked("on a beach", false, None);
         assert!(!scene.contains(PLATE_EDIT_DEFAULT_STYLE));
-        assert!(scene.ends_with(ANGLE_LOCK_CLAUSE));
+        assert!(scene.ends_with(&format!("{ANGLE_LOCK_CLAUSE} {SHADOW_CLAUSE}")));
     }
 }

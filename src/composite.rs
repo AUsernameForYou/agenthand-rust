@@ -760,6 +760,937 @@ pub fn composite_images_with_edge_fix(
     (out, counts, transformations, fix.report)
 }
 
+// ---------------------------------------------------------------------------
+// Shadow carry-over (docs/SHADOW-CARRY.md): put the product's own cast
+// shadow back on source-derived plates. The plate edit repaints
+// everything outside the product mask, the long cast shadow included,
+// and the contact ellipse alone reads as a paste. Before the product
+// goes down, a shadow matte is read from the ORIGINAL photo against the
+// finished plate, and the plate is multiplied by the measured luma
+// ratio there. Plate pixels only (never under an opaque product pixel);
+// the additive `shadow` record says what was carried, or why only the
+// contact shadow stands (`contact_only`).
+// ---------------------------------------------------------------------------
+
+/// Kill switch: `AGENTHAND_SHADOW=off` (or 0 / false / no) restores
+/// the composite exactly as it was without the carry-over.
+pub const SHADOW_ENV: &str = "AGENTHAND_SHADOW";
+/// Measurement grid: block side in px. Ratios, chroma, components and
+/// coherence are read on block means, which averages the texture
+/// mismatch between an edited plate and the photo.
+pub const SHADOW_GRID: usize = 4;
+/// A block is shadow when the plain luma ratio
+/// L_orig / max(L_plate, 1) lies in this range...
+pub const SHADOW_RATIO_MIN: f64 = 0.35;
+/// The floor for regions that touch the dilated product mask directly
+/// (any side): a cast shadow attached to the product, e.g. on a sunlit
+/// wall behind it, may be deeper than one only found under it.
+pub const SHADOW_RATIO_MIN_ATTACHED: f64 = 0.25;
+pub const SHADOW_RATIO_MAX: f64 = 0.92;
+/// ...its chromaticity (each of r, g, b over r + g + b) moved by at
+/// most this much (a colour edit is not a shadow)...
+pub const SHADOW_CHROMA_TOL: f64 = 0.08;
+/// ...and the plate block is at least this bright (the ratio of two
+/// near-black values is noise).
+pub const SHADOW_PLATE_LUMA_MIN: f64 = 16.0;
+/// Measurement exclusion: the product footprint dilated by this many
+/// px per 1024 px of the long edge (at least 2 px): the reference hole's
+/// own dilation (`staging::REFERENCE_DILATE_PX`) at the edit's working
+/// size. Inside it the plate is the model's fill and the photo carries
+/// the cut's fringe, so nothing there is measured.
+pub const SHADOW_EXCLUDE_PX_PER_1024: usize = 8;
+/// Region blocks this close (in blocks) to a deep zone (deep-umbra blocks,
+/// ratio below `SHADOW_RATIO_MIN`) are the rim of a deeper shadow: not
+/// carried.
+pub const SHADOW_DEEP_MARGIN_BLOCKS: usize = 2;
+/// Deep zone: at least this many deep-umbra blocks in a 9x9 window (15%).
+pub const SHADOW_DEEP_ZONE_BLOCKS: usize = 12;
+/// A shadow body more than this share deep-umbra blocks is not carried.
+pub const SHADOW_RIM_BODY_DEEP_SHARE: f64 = 0.25;
+/// Seed band under the product's bottom edge: this share of the
+/// product's height (at least two grid blocks).
+pub const SHADOW_SEED_BAND_FRACTION: f64 = 0.15;
+/// Components smaller than this share of the image are specks.
+pub const SHADOW_SPECK_FRACTION: f64 = 0.0005;
+/// Coherence: at least `SHADOW_COHERENCE_MIN` of the region's pixels
+/// within +-`SHADOW_COHERENCE_BAND` of its median ratio.
+pub const SHADOW_COHERENCE_BAND: f64 = 0.15;
+pub const SHADOW_COHERENCE_MIN: f64 = 0.75;
+/// Region size: at least this share of the image...
+pub const SHADOW_MIN_AREA_FRACTION: f64 = 0.002;
+/// ...and at most this share of the non-product area.
+pub const SHADOW_MAX_AREA_FRACTION: f64 = 0.35;
+/// Feather: the source shadow's own edge ramp width, capped.
+pub const SHADOW_FEATHER_MAX_PX: u32 = 12;
+/// Feather when too few edge profiles qualify (never assume softness).
+pub const SHADOW_FEATHER_DEFAULT_PX: u32 = 2;
+/// Edge profiles run from `SHADOW_EDGE_REACH - 1` px inside the matte
+/// to `SHADOW_EDGE_REACH` px outside, and need at least this luma step.
+pub const SHADOW_EDGE_REACH: i64 = 7;
+pub const SHADOW_EDGE_MIN_CONTRAST: u32 = 16;
+/// The `contact_only` reason on plates not derived from the photo.
+pub const SHADOW_GENERATED_REASON: &str = "generated plate";
+
+/// Whether the shadow carry-over runs at all (the kill switch).
+pub fn shadow_carry_enabled() -> bool {
+    !matches!(
+        std::env::var(SHADOW_ENV)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "off" | "false" | "no"
+    )
+}
+
+/// The plate kinds the carry-over applies to: the edge fix's
+/// (source_edit, source_blur). Everything else is `contact_only`.
+pub fn shadow_carry_applies_to(plate_kind: Option<&str>) -> bool {
+    edge_fix_applies_to(plate_kind)
+}
+
+/// What the carry-over did; `to_json` is the `shadow` record.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShadowReport {
+    pub carried: bool,
+    pub reason: Option<String>,
+    /// Plate pixels the carried shadow changed.
+    pub shadow_pixels: u64,
+    /// Pixel-weighted mean luma ratio over the measured region.
+    pub mean_ratio: Option<f64>,
+    pub feather_px: u32,
+    /// Share of the region within +-0.15 of its median ratio
+    /// (pixel-weighted over the carried regions).
+    pub coherence: Option<f64>,
+    /// The surfaces carried, and the candidate regions refused.
+    pub regions: Vec<ShadowRegion>,
+    pub rejected: Vec<ShadowRegion>,
+}
+
+/// One shadow region: where it lies against the product, its size,
+/// ratio, coherence and floor, and why it was refused (if it was).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ShadowRegion {
+    /// behind (inside the product bbox) | left | right | above | below.
+    pub side: String,
+    pub pixels: u64,
+    pub mean_ratio: f64,
+    pub coherence: f64,
+    pub floor: f64,
+    pub reason: Option<String>,
+}
+
+impl ShadowRegion {
+    pub fn to_json(&self) -> Value {
+        let mut v = json!({
+            "side": self.side,
+            "pixels": self.pixels,
+            "mean_ratio": round6(self.mean_ratio),
+            "coherence": round6(self.coherence),
+            "floor": self.floor,
+        });
+        if let Some(reason) = &self.reason {
+            v["reason"] = json!(reason);
+        }
+        v
+    }
+}
+
+impl ShadowReport {
+    pub fn contact_only(reason: &str) -> Self {
+        ShadowReport {
+            reason: Some(reason.to_string()),
+            ..Default::default()
+        }
+    }
+
+    pub fn mode(&self) -> &'static str {
+        if self.carried {
+            "carried"
+        } else {
+            "contact_only"
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "mode": self.mode(),
+            "reason": self.reason,
+            "shadow_pixels": self.shadow_pixels,
+            "mean_ratio": self.mean_ratio.map(round6),
+            "feather_px": self.feather_px,
+            "coherence": self.coherence.map(round6),
+            "regions": self.regions.iter().map(ShadowRegion::to_json).collect::<Vec<_>>(),
+            "rejected": self.rejected.iter().map(ShadowRegion::to_json).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// The carried plate (plate-side pixels only) and its record.
+pub struct ShadowOutput {
+    pub plate: RgbaImage,
+    pub report: ShadowReport,
+}
+
+/// The draw's `shadow` record: the receipt's when the draw carried one,
+/// else `contact_only` / "generated plate" (generated, code-rendered and
+/// local placeholder plates never had the photo's shadow to carry).
+pub fn shadow_record_of(receipt: &Value) -> Value {
+    match receipt.get("shadow") {
+        Some(record) if !record.is_null() => record.clone(),
+        _ => ShadowReport::contact_only(SHADOW_GENERATED_REASON).to_json(),
+    }
+}
+
+/// The gated carry-over: plate kind first (non-source plates are
+/// `contact_only` / "generated plate"), then the kill switch, then
+/// `carry_source_shadow`. `plate` is already at the layer's frame.
+pub fn carry_shadow_for_plate_kind(
+    plate_kind: Option<&str>,
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    plate: &RgbaImage,
+) -> ShadowOutput {
+    let unchanged = |reason: &str| ShadowOutput {
+        plate: plate.clone(),
+        report: ShadowReport::contact_only(reason),
+    };
+    if !shadow_carry_applies_to(plate_kind) {
+        return unchanged(SHADOW_GENERATED_REASON);
+    }
+    if !shadow_carry_enabled() {
+        return unchanged(&format!("disabled by {SHADOW_ENV}"));
+    }
+    carry_source_shadow(source, foreground, plate)
+}
+
+/// Pillow 'L' luma of an RGB triple, unrounded.
+#[inline]
+fn luma_f(rgb: [f64; 3]) -> f64 {
+    (rgb[0] * 19595.0 + rgb[1] * 38470.0 + rgb[2] * 7471.0) / 65536.0
+}
+
+/// Measure the shadow region on the block grid and carry it onto the
+/// plate. Steps (docs/SHADOW-CARRY.md):
+/// 1. block means of photo and plate; the footprint dilated by the
+///    exclusion is not measured;
+/// 2. shadow-like blocks: luma ratio <= 0.92, chroma within 0.08,
+///    plate luma >= 16; a 3x3 opening drops one-block seams;
+/// 3. regions: 8-connected components touching the dilated mask on any
+///    side (ratio floor 0.25), then components touching only the band
+///    under the product's bottom edge (floor 0.35); specks dropped;
+/// 4. per region: coherence, then the rim rule at its floor (blocks
+///    within two blocks of a deep zone, or in a shadow body mostly below
+///    the floor, are dropped); then the total size gates, else
+///    `contact_only` with the reason;
+/// 5. full-resolution matte inside the region (and into the exclusion
+///    ring next to it): a pixel is shadow when its 3x3 ratio is at most
+///    halfway between the region's local ratio and 1, weighted by the
+///    region mask grown and box-blurred by half a block;
+/// 6. feather = the source shadow's own edge ramp width (median,
+///    capped at 12 px), a normalized box blur no wider than it;
+/// 7. plate *= the carried ratio where the matte is > 0 and the layer
+///    alpha is below 255.
+pub fn carry_source_shadow(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    plate: &RgbaImage,
+) -> ShadowOutput {
+    let unchanged = |report: ShadowReport| ShadowOutput {
+        plate: plate.clone(),
+        report,
+    };
+    if (source.width, source.height) != (foreground.width, foreground.height)
+        || (plate.width, plate.height) != (foreground.width, foreground.height)
+    {
+        return unchanged(ShadowReport::contact_only(
+            "source, plate and product layer frames differ",
+        ));
+    }
+    let Some((bx0, by0, bx1, by1)) = opaque_bbox(foreground) else {
+        return unchanged(ShadowReport::contact_only(
+            "the product layer has no opaque pixel",
+        ));
+    };
+    let (w, h) = (foreground.width as usize, foreground.height as usize);
+    let g = SHADOW_GRID;
+    let (gw, gh) = (w.div_ceil(g), h.div_ceil(g));
+    let nb = gw * gh;
+    let alpha_at = |x: usize, y: usize| foreground.pixels[(y * w + x) * 4 + 3];
+
+    // 1. Block sums.
+    let mut src_sum = vec![[0u32; 3]; nb];
+    let mut plate_sum = vec![[0u32; 3]; nb];
+    let mut count = vec![0u32; nb];
+    let mut footprint = vec![0u8; nb];
+    for y in 0..h {
+        let row = (y / g) * gw;
+        for x in 0..w {
+            let b = row + x / g;
+            let j = (y * w + x) * 4;
+            for c in 0..3 {
+                src_sum[b][c] += source.pixels[j + c] as u32;
+                plate_sum[b][c] += plate.pixels[j + c] as u32;
+            }
+            count[b] += 1;
+            if foreground.pixels[j + 3] > 0 {
+                footprint[b] = 1;
+            }
+        }
+    }
+    let exclude_px = (SHADOW_EXCLUDE_PX_PER_1024 * w.max(h))
+        .div_ceil(1024)
+        .max(2);
+    let exclude_blocks = exclude_px.div_ceil(g);
+    let dilated = dilate_square(&footprint, gw, gh, exclude_blocks);
+
+    // 2. Shadow-like blocks: outside the exclusion, plate luma >= 16,
+    // ratio <= 0.92, chroma within tolerance. From the floor up they are
+    // candidates; below it, deep umbra. Two floors: 0.25 for regions that
+    // touch the dilated mask (any side), 0.35 for ground-band-only ones.
+    let mut ratio = vec![0f64; nb];
+    let mut shadow_like = vec![0u8; nb];
+    for b in 0..nb {
+        let n = count[b] as f64;
+        let s = src_sum[b].map(|v| v as f64 / n);
+        let p = plate_sum[b].map(|v| v as f64 / n);
+        let (ls, lp) = (luma_f(s), luma_f(p));
+        let r = ls / lp.max(1.0);
+        ratio[b] = r;
+        if dilated[b] != 0 || lp < SHADOW_PLATE_LUMA_MIN || r > SHADOW_RATIO_MAX {
+            continue;
+        }
+        let (ss, ps) = (
+            s.iter().sum::<f64>().max(1.0),
+            p.iter().sum::<f64>().max(1.0),
+        );
+        let chroma = (0..3)
+            .map(|c| (s[c] / ss - p[c] / ps).abs())
+            .fold(0f64, f64::max);
+        shadow_like[b] = u8::from(chroma <= SHADOW_CHROMA_TOL);
+    }
+    // (candidates, deep umbra) for a floor.
+    let split = |floor: f64| -> (Vec<u8>, Vec<u8>) {
+        (0..nb)
+            .map(|b| {
+                let like = shadow_like[b] != 0;
+                (
+                    u8::from(like && ratio[b] >= floor),
+                    u8::from(like && ratio[b] < floor),
+                )
+            })
+            .unzip()
+    };
+    // 3x3 opening: erode (dilate the complement), then dilate.
+    let open3 = |plane: &[u8]| -> Vec<u8> {
+        let outside: Vec<u8> = plane.iter().map(|&v| 1 - v).collect();
+        let eroded: Vec<u8> = dilate_square(&outside, gw, gh, 1)
+            .iter()
+            .map(|&v| 1 - v)
+            .collect();
+        dilate_square(&eroded, gw, gh, 1)
+            .iter()
+            .zip(plane)
+            .map(|(&a, &c)| a & c)
+            .collect()
+    };
+
+    // 3. Seeds: the ring just outside the dilated mask (any side), and a
+    // band under the product's bottom edge.
+    let centre = |i: usize| (i * g) as f64 + g as f64 / 2.0;
+    let ring: Vec<u8> = dilate_square(&dilated, gw, gh, 1)
+        .iter()
+        .zip(&dilated)
+        .map(|(&l, &d)| u8::from(l != 0 && d == 0))
+        .collect();
+    let mut band = vec![0u8; nb];
+    let band_h = (SHADOW_SEED_BAND_FRACTION * (by1 - by0) as f64).max(2.0 * g as f64);
+    for gy in 0..gh {
+        let cy = centre(gy);
+        if cy < by1 as f64 || cy >= by1 as f64 + band_h {
+            continue;
+        }
+        for gx in 0..gw {
+            let cx = centre(gx);
+            if cx >= bx0 as f64 && cx < bx1 as f64 {
+                band[gy * gw + gx] = 1;
+            }
+        }
+    }
+    let speck_px = (SHADOW_SPECK_FRACTION * (w * h) as f64).max((4 * g * g) as f64);
+    let px_of = |blocks: &[usize]| blocks.iter().map(|&b| count[b] as u64).sum::<u64>();
+    // Which side of the product a region lies on: its centroid against
+    // the product's bbox ("behind" = inside the bbox).
+    let side_of = |blocks: &[usize]| -> &'static str {
+        let (mut sx, mut sy, mut n) = (0f64, 0f64, 0f64);
+        for &b in blocks {
+            let c = count[b] as f64;
+            sx += centre(b % gw) * c;
+            sy += centre(b / gw) * c;
+            n += c;
+        }
+        let (hw, hh) = ((bx1 - bx0) as f64 / 2.0, (by1 - by0) as f64 / 2.0);
+        let nx = (sx / n - (bx0 as f64 + hw)) / hw.max(1.0);
+        let ny = (sy / n - (by0 as f64 + hh)) / hh.max(1.0);
+        if nx.abs() <= 1.0 && ny.abs() <= 1.0 {
+            "behind"
+        } else if nx.abs() >= ny.abs() {
+            if nx < 0.0 {
+                "left"
+            } else {
+                "right"
+            }
+        } else if ny < 0.0 {
+            "above"
+        } else {
+            "below"
+        }
+    };
+    let components = |cand: &[u8]| -> Vec<Vec<usize>> {
+        let (label, n) = label_components(&open3(cand), gw, gh);
+        let mut groups = vec![Vec::new(); n + 1];
+        for b in 0..nb {
+            if label[b] != 0 {
+                groups[label[b] as usize].push(b);
+            }
+        }
+        groups.into_iter().skip(1).collect()
+    };
+    // Regions: (blocks, floor, side). Attached first (floor 0.25), then
+    // ground-band-only components (floor 0.35) not already attached.
+    let (cand_low, deep_low) = split(SHADOW_RATIO_MIN_ATTACHED);
+    let (cand_high, deep_high) = split(SHADOW_RATIO_MIN);
+    let mut regions: Vec<(Vec<usize>, f64, &'static str)> = Vec::new();
+    let mut taken = vec![0u8; nb];
+    for comp in components(&cand_low) {
+        if comp.iter().any(|&b| ring[b] != 0) && px_of(&comp) as f64 >= speck_px {
+            comp.iter().for_each(|&b| taken[b] = 1);
+            let side = side_of(&comp);
+            regions.push((comp, SHADOW_RATIO_MIN_ATTACHED, side));
+        }
+    }
+    for comp in components(&cand_high) {
+        if comp.iter().any(|&b| band[b] != 0)
+            && !comp.iter().any(|&b| taken[b] != 0)
+            && px_of(&comp) as f64 >= speck_px
+        {
+            regions.push((comp, SHADOW_RATIO_MIN, "below"));
+        }
+    }
+    if regions.is_empty() {
+        return unchanged(ShadowReport::contact_only(
+            "no coherent shadow region adjacent to the product",
+        ));
+    }
+
+    // 4. Per region: coherence, then the rim rule at the region's floor.
+    // Rims of deeper shadows: region blocks within
+    // `SHADOW_DEEP_MARGIN_BLOCKS` of a deep zone (a 9x9 window holding at
+    // least `SHADOW_DEEP_ZONE_BLOCKS` deep-umbra blocks: a solid core, or a
+    // shadow flickering across the floor; a one-block seam puts 9 in a
+    // window and does not count) are not carried, and a shadow body
+    // (connected shadow-like blocks, opened) more than
+    // `SHADOW_RIM_BODY_DEEP_SHARE` deep-umbra blocks is not carried at all.
+    // Carrying the in-band rim alone would leave a half-dark blob beside
+    // the uncarried core.
+    let (body, bodies) = label_components(&open3(&shadow_like), gw, gh);
+    let mut body_blocks = vec![0u64; bodies + 1];
+    for b in 0..nb {
+        body_blocks[body[b] as usize] += 1;
+    }
+    let rim_rule = |deep: &[u8]| -> (Vec<u8>, Vec<f64>) {
+        let deep_f: Vec<f32> = deep.iter().map(|&v| f32::from(v)).collect();
+        let deep_zone: Vec<u8> = box_blur_sum(&deep_f, gw, gh, 4)
+            .iter()
+            .map(|&n| u8::from(n >= SHADOW_DEEP_ZONE_BLOCKS as f32 - 0.5))
+            .collect();
+        let mut body_deep = vec![0u64; bodies + 1];
+        for b in 0..nb {
+            body_deep[body[b] as usize] += u64::from(deep[b]);
+        }
+        let share = (0..=bodies)
+            .map(|l| body_deep[l] as f64 / body_blocks[l].max(1) as f64)
+            .collect();
+        (
+            dilate_square(&deep_zone, gw, gh, SHADOW_DEEP_MARGIN_BLOCKS),
+            share,
+        )
+    };
+    let (near_low, share_low) = rim_rule(&deep_low);
+    let (near_high, share_high) = rim_rule(&deep_high);
+    let stats = |blocks: &[usize]| -> (u64, f64, f64, f64) {
+        let mut v: Vec<(f64, u64)> = blocks
+            .iter()
+            .map(|&b| (ratio[b], count[b] as u64))
+            .collect();
+        let px: u64 = v.iter().map(|s| s.1).sum();
+        let mean = v.iter().map(|s| s.0 * s.1 as f64).sum::<f64>() / px.max(1) as f64;
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut acc = 0u64;
+        let median = v
+            .iter()
+            .find(|s| {
+                acc += s.1;
+                2 * acc >= px
+            })
+            .map_or(mean, |s| s.0);
+        let within: u64 = v
+            .iter()
+            .filter(|s| (s.0 - median).abs() <= SHADOW_COHERENCE_BAND)
+            .map(|s| s.1)
+            .sum();
+        (px, mean, median, within as f64 / px.max(1) as f64)
+    };
+    let mut kept = vec![0u8; nb];
+    let mut carried_regions: Vec<ShadowRegion> = Vec::new();
+    let mut rejected: Vec<ShadowRegion> = Vec::new();
+    for (blocks, floor, side) in &regions {
+        let (px, mean, median, coherence) = stats(blocks);
+        let mut record = ShadowRegion {
+            side: side.to_string(),
+            pixels: px,
+            mean_ratio: mean,
+            coherence,
+            floor: *floor,
+            reason: None,
+        };
+        if coherence < SHADOW_COHERENCE_MIN {
+            record.reason = Some(format!(
+                "incoherent shadow ratio: {:.1}% of the region within {SHADOW_COHERENCE_BAND} of the median {:.3} (minimum {:.0}%)",
+                100.0 * coherence,
+                median,
+                100.0 * SHADOW_COHERENCE_MIN
+            ));
+            rejected.push(record);
+            continue;
+        }
+        let (near, share) = if *floor < SHADOW_RATIO_MIN {
+            (&near_low, &share_low)
+        } else {
+            (&near_high, &share_high)
+        };
+        let mut worst_share = 0f64;
+        let rest: Vec<usize> = blocks
+            .iter()
+            .copied()
+            .filter(|&b| {
+                let s = share[body[b] as usize];
+                worst_share = worst_share.max(s);
+                near[b] == 0 && s <= SHADOW_RIM_BODY_DEEP_SHARE
+            })
+            .collect();
+        if rest.is_empty() {
+            record.reason = Some(format!(
+                "the region is the rim of a shadow deeper than the {floor} ratio floor ({:.0}% of its body below the floor)",
+                100.0 * worst_share
+            ));
+            rejected.push(record);
+            continue;
+        }
+        let (px, mean, _, _) = stats(&rest);
+        record.pixels = px;
+        record.mean_ratio = mean;
+        rest.iter().for_each(|&b| kept[b] = 1);
+        carried_regions.push(record);
+    }
+    let region_px: u64 = carried_regions.iter().map(|r| r.pixels).sum();
+    let (mean_ratio, coherence) = if region_px > 0 {
+        (
+            carried_regions
+                .iter()
+                .map(|r| r.mean_ratio * r.pixels as f64)
+                .sum::<f64>()
+                / region_px as f64,
+            carried_regions
+                .iter()
+                .map(|r| r.coherence * r.pixels as f64)
+                .sum::<f64>()
+                / region_px as f64,
+        )
+    } else {
+        let largest = rejected.iter().max_by_key(|r| r.pixels).unwrap();
+        (largest.mean_ratio, largest.coherence)
+    };
+    let measured = |reason: String| ShadowReport {
+        reason: Some(reason),
+        mean_ratio: Some(mean_ratio),
+        coherence: Some(coherence),
+        regions: carried_regions.clone(),
+        rejected: rejected.clone(),
+        ..Default::default()
+    };
+    if carried_regions.is_empty() {
+        let largest = rejected.iter().max_by_key(|r| r.pixels).unwrap();
+        return unchanged(measured(largest.reason.clone().unwrap_or_default()));
+    }
+    let image_px = (w * h) as u64;
+    let non_product_px = foreground
+        .pixels
+        .iter()
+        .skip(3)
+        .step_by(4)
+        .filter(|&&a| a < OPAQUE_ALPHA_THRESHOLD)
+        .count() as u64;
+    if (region_px as f64) < SHADOW_MIN_AREA_FRACTION * image_px as f64 {
+        return unchanged(measured(format!(
+            "shadow region too small: {:.3}% of the image (minimum {:.1}%)",
+            100.0 * region_px as f64 / image_px as f64,
+            100.0 * SHADOW_MIN_AREA_FRACTION
+        )));
+    }
+    if region_px as f64 > SHADOW_MAX_AREA_FRACTION * non_product_px as f64 {
+        return unchanged(measured(format!(
+            "shadow region too large: {:.1}% of the non-product area (maximum {:.0}%)",
+            100.0 * region_px as f64 / non_product_px.max(1) as f64,
+            100.0 * SHADOW_MAX_AREA_FRACTION
+        )));
+    }
+
+    // 5a. The region's local ratio: the median of the kept-block ratios
+    // in a 5x5-block window (texture smoothing that the penumbra blocks
+    // at the region's rim do not drag lighter), then carried by BFS two
+    // blocks beyond the region and through the exclusion ring toward the
+    // product (never measured there: the plate is the model's fill).
+    let mut field = vec![f64::NAN; nb];
+    let mut window: Vec<f64> = Vec::with_capacity(25);
+    for b in 0..nb {
+        if kept[b] == 0 {
+            continue;
+        }
+        let (bx, by) = (b % gw, b / gw);
+        window.clear();
+        for yy in by.saturating_sub(2)..(by + 3).min(gh) {
+            for xx in bx.saturating_sub(2)..(bx + 3).min(gw) {
+                if kept[yy * gw + xx] != 0 {
+                    window.push(ratio[yy * gw + xx]);
+                }
+            }
+        }
+        window.sort_by(f64::total_cmp);
+        field[b] = window[window.len() / 2];
+    }
+    let mut steps = vec![u32::MAX; nb];
+    let mut queue = std::collections::VecDeque::new();
+    for b in 0..nb {
+        if kept[b] != 0 {
+            steps[b] = 0;
+            queue.push_back(b);
+        }
+    }
+    let reach_ring = exclude_blocks as u32 + 1;
+    while let Some(b) = queue.pop_front() {
+        let next_step = steps[b] + 1;
+        let (bx, by) = ((b % gw) as i64, (b / gw) as i64);
+        for dy in -1i64..=1 {
+            for dx in -1i64..=1 {
+                let (nx, ny) = (bx + dx, by + dy);
+                if nx < 0 || ny < 0 || nx >= gw as i64 || ny >= gh as i64 {
+                    continue;
+                }
+                let n = ny as usize * gw + nx as usize;
+                if steps[n] != u32::MAX {
+                    continue;
+                }
+                if next_step <= 2 || (dilated[n] != 0 && next_step <= reach_ring) {
+                    steps[n] = next_step;
+                    field[n] = field[b];
+                    queue.push_back(n);
+                }
+            }
+        }
+    }
+
+    // 5b. Full-resolution matte over the reach's bounding box (grown
+    // for the edge profiles and the blur).
+    let (mut rx0, mut ry0, mut rx1, mut ry1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+    for b in 0..nb {
+        if steps[b] != u32::MAX {
+            let (bx, by) = (b % gw, b / gw);
+            rx0 = rx0.min(bx * g);
+            ry0 = ry0.min(by * g);
+            rx1 = rx1.max(((bx + 1) * g).min(w));
+            ry1 = ry1.max(((by + 1) * g).min(h));
+        }
+    }
+    let grow = SHADOW_FEATHER_MAX_PX as usize + SHADOW_EDGE_REACH as usize;
+    let (x0, y0) = (rx0.saturating_sub(grow), ry0.saturating_sub(grow));
+    let (x1, y1) = ((rx1 + grow).min(w), (ry1 + grow).min(h));
+    let (bw, bh) = (x1 - x0, y1 - y0);
+    let luma3 = |img: &RgbaImage, x: usize, y: usize| -> f64 {
+        let (mut s, mut n) = (0u32, 0u32);
+        for yy in y.saturating_sub(1)..(y + 2).min(h) {
+            for xx in x.saturating_sub(1)..(x + 2).min(w) {
+                s += luma(&img.pixels[(yy * w + xx) * 4..]);
+                n += 1;
+            }
+        }
+        s as f64 / n as f64
+    };
+    // Region weight: the region's blocks closed by two blocks (deep-umbra
+    // and noise holes up to 8 px filled), with its exclusion ring and the
+    // footprint, at pixel level, grown by half a block and box-blurred by
+    // half a block: 1 across the region, 0 one block beyond it. Where the
+    // region stops inside a broader shadow of the photo, the carried
+    // shadow fades out with rounded corners instead of stepping along the
+    // 4 px grid.
+    let closed: Vec<u8> = {
+        let grown = dilate_square(&kept, gw, gh, 2);
+        let outside: Vec<u8> = grown.iter().map(|&v| 1 - v).collect();
+        dilate_square(&outside, gw, gh, 2)
+            .iter()
+            .map(|&v| 1 - v)
+            .collect()
+    };
+    let half = g / 2;
+    let mut region_mask = vec![0u8; bw * bh];
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let b = (y / g) * gw + x / g;
+            let reached = steps[b] != u32::MAX && (closed[b] != 0 || dilated[b] != 0);
+            region_mask[(y - y0) * bw + (x - x0)] = u8::from(reached || footprint[b] != 0);
+        }
+    }
+    let grown: Vec<f32> = dilate_square(&region_mask, bw, bh, half)
+        .iter()
+        .map(|&v| f32::from(v))
+        .collect();
+    let ones = vec![1f32; bw * bh];
+    let region_weight: Vec<f32> = box_blur_sum(&grown, bw, bh, half)
+        .iter()
+        .zip(box_blur_sum(&ones, bw, bh, half))
+        .map(|(&n, d)| n / d)
+        .collect();
+    // The local ratio at a pixel: the block field read bilinearly between
+    // block centres (over the reached blocks only), so the carried
+    // density has no 4 px block steps.
+    let axis = |v: usize, n: usize| -> (usize, usize, f64) {
+        let f = ((v as f64 + 0.5) / g as f64 - 0.5).max(0.0);
+        let i0 = (f.floor() as usize).min(n - 1);
+        (i0, (i0 + 1).min(n - 1), f - i0 as f64)
+    };
+    let field_at = |x: usize, y: usize, own: usize| -> f64 {
+        let (gx0, gx1, tx) = axis(x, gw);
+        let (gy0, gy1, ty) = axis(y, gh);
+        let (mut s, mut n) = (0f64, 0f64);
+        for (gx, gy, wgt) in [
+            (gx0, gy0, (1.0 - tx) * (1.0 - ty)),
+            (gx1, gy0, tx * (1.0 - ty)),
+            (gx0, gy1, (1.0 - tx) * ty),
+            (gx1, gy1, tx * ty),
+        ] {
+            let v = field[gy * gw + gx];
+            if v.is_finite() && wgt > 0.0 {
+                s += v * wgt;
+                n += wgt;
+            }
+        }
+        if n > 0.0 {
+            s / n
+        } else {
+            field[own]
+        }
+    };
+    let mut matte = vec![0u8; bw * bh];
+    let mut density = vec![0f32; bw * bh];
+    for y in ry0..ry1 {
+        for x in rx0..rx1 {
+            let b = (y / g) * gw + x / g;
+            if steps[b] == u32::MAX || alpha_at(x, y) == OPAQUE_ALPHA_THRESHOLD {
+                continue;
+            }
+            let local = field_at(x, y, b);
+            let r = luma3(source, x, y) / luma3(plate, x, y).max(1.0);
+            if r <= (1.0 + local) / 2.0 {
+                let i = (y - y0) * bw + (x - x0);
+                matte[i] = 1;
+                density[i] = (1.0 - local) as f32 * region_weight[i];
+            }
+        }
+    }
+
+    // 6. Feather: the source's own luma ramp across the matte boundary
+    // (shadow inside, lit ground outside; profiles touching the product
+    // footprint are skipped). Width = step / steepest single step, the
+    // `estimate_source_edge_width` rule; median, capped.
+    let mut widths: Vec<u32> = Vec::new();
+    let max_fx = SHADOW_FEATHER_MAX_PX * 256;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if matte[(y - y0) * bw + (x - x0)] == 0 {
+                continue;
+            }
+            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                if nx < x0 as i64 || ny < y0 as i64 || nx >= x1 as i64 || ny >= y1 as i64 {
+                    continue;
+                }
+                if matte[(ny as usize - y0) * bw + (nx as usize - x0)] != 0 {
+                    continue;
+                }
+                let mut l = [0u32; 2 * SHADOW_EDGE_REACH as usize];
+                let mut clean = true;
+                for (k, slot) in l.iter_mut().enumerate() {
+                    let off = k as i64 - (SHADOW_EDGE_REACH - 1);
+                    let (sx, sy) = (x as i64 + off * dx, y as i64 + off * dy);
+                    if sx < 0 || sy < 0 || sx >= w as i64 || sy >= h as i64 {
+                        clean = false;
+                        break;
+                    }
+                    let (sx, sy) = (sx as usize, sy as usize);
+                    if alpha_at(sx, sy) != 0 {
+                        clean = false;
+                        break;
+                    }
+                    *slot = luma(&source.pixels[(sy * w + sx) * 4..]);
+                }
+                if !clean {
+                    continue;
+                }
+                let (first, last) = (l[0], l[l.len() - 1]);
+                if last < first + SHADOW_EDGE_MIN_CONTRAST {
+                    continue; // not a shadow-to-lit step
+                }
+                let c = last - first;
+                let (lo, hi) = (*l.iter().min().unwrap(), *l.iter().max().unwrap());
+                if 2 * (hi - lo) > 3 * c {
+                    continue; // texture, not a ramp
+                }
+                let steepest = l.windows(2).map(|p| p[0].abs_diff(p[1])).max().unwrap_or(0);
+                if steepest == 0 {
+                    continue;
+                }
+                widths.push((c * 256 / steepest).clamp(256, max_fx));
+            }
+        }
+    }
+    let feather_px = if widths.len() < EDGE_WIDTH_MIN_SAMPLES {
+        SHADOW_FEATHER_DEFAULT_PX
+    } else {
+        widths.sort_unstable();
+        ((widths[widths.len() / 2] + 128) / 256).clamp(1, SHADOW_FEATHER_MAX_PX)
+    };
+
+    // Normalized box blur over plate-side pixels (never averaging the
+    // product in), no wider than the measured ramp.
+    let radius = ((feather_px.max(1) - 1) / 2) as usize;
+    let valid: Vec<f32> = (0..bw * bh)
+        .map(|i| {
+            let (x, y) = (x0 + i % bw, y0 + i / bw);
+            f32::from(u8::from(alpha_at(x, y) != OPAQUE_ALPHA_THRESHOLD))
+        })
+        .collect();
+    let blurred = if radius == 0 {
+        density
+    } else {
+        let weighted: Vec<f32> = density.iter().zip(&valid).map(|(d, v)| d * v).collect();
+        let num = box_blur_sum(&weighted, bw, bh, radius);
+        let den = box_blur_sum(&valid, bw, bh, radius);
+        num.iter()
+            .zip(&den)
+            .map(|(&n, &d)| if d > 0.0 { n / d } else { 0.0 })
+            .collect()
+    };
+
+    // 7. Apply: multiply the plate by the carried ratio, plate side only.
+    let mut out = plate.clone();
+    let mut shadow_pixels = 0u64;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = (y - y0) * bw + (x - x0);
+            let d = blurred[i];
+            if d <= 0.0 || valid[i] == 0.0 {
+                continue;
+            }
+            let factor = 1.0 - d;
+            let j = (y * w + x) * 4;
+            let mut changed = false;
+            for c in 0..3 {
+                let v = (plate.pixels[j + c] as f32 * factor).round() as u8;
+                changed |= v != plate.pixels[j + c];
+                out.pixels[j + c] = v;
+            }
+            shadow_pixels += u64::from(changed);
+        }
+    }
+    if shadow_pixels == 0 {
+        return unchanged(measured(
+            "the carried shadow changed no plate pixel".to_string(),
+        ));
+    }
+    ShadowOutput {
+        plate: out,
+        report: ShadowReport {
+            carried: true,
+            reason: None,
+            shadow_pixels,
+            mean_ratio: Some(mean_ratio),
+            feather_px,
+            coherence: Some(coherence),
+            regions: carried_regions,
+            rejected,
+        },
+    }
+}
+
+/// 8-connected components of a 0/1 plane: (labels, 1-based; count).
+fn label_components(plane: &[u8], w: usize, h: usize) -> (Vec<u32>, usize) {
+    let mut label = vec![0u32; plane.len()];
+    let mut next = 0u32;
+    let mut stack: Vec<usize> = Vec::new();
+    for start in 0..plane.len() {
+        if plane[start] == 0 || label[start] != 0 {
+            continue;
+        }
+        next += 1;
+        label[start] = next;
+        stack.push(start);
+        while let Some(b) = stack.pop() {
+            let (bx, by) = ((b % w) as i64, (b / w) as i64);
+            for dy in -1i64..=1 {
+                for dx in -1i64..=1 {
+                    let (nx, ny) = (bx + dx, by + dy);
+                    if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                        continue;
+                    }
+                    let n = ny as usize * w + nx as usize;
+                    if plane[n] != 0 && label[n] == 0 {
+                        label[n] = next;
+                        stack.push(n);
+                    }
+                }
+            }
+        }
+    }
+    (label, next as usize)
+}
+
+/// Separable box sum over a `w` x `h` plane: each output is the sum of
+/// the inputs in the (2r+1)^2 window clipped to the plane.
+fn box_blur_sum(data: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
+    let pass = |data: &[f32], horizontal: bool| -> Vec<f32> {
+        let mut out = vec![0f32; data.len()];
+        let (outer, inner) = if horizontal { (h, w) } else { (w, h) };
+        let at = |o: usize, k: usize| if horizontal { o * w + k } else { k * w + o };
+        for o in 0..outer {
+            let mut s = 0f32;
+            for k in 0..r.min(inner) {
+                s += data[at(o, k)];
+            }
+            for k in 0..inner {
+                if k + r < inner {
+                    s += data[at(o, k + r)];
+                }
+                if k > r {
+                    s -= data[at(o, k - r - 1)];
+                }
+                out[at(o, k)] = s;
+            }
+        }
+        out
+    };
+    pass(&pass(data, true), false)
+}
+
 /// Resize/crop the PLATE to the product's dimensions. Never the reverse.
 fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<String>) {
     if plate.width == width && plate.height == height {
@@ -1098,27 +2029,33 @@ pub fn draw_product_with_plate_kind(
     // the layer's own lineage; the thin-structure flag from the staged
     // subject record when the caller passed one.
     let plate_kind = plate_kind_override.as_ref().map(|(kind, _)| *kind);
-    let (composite, transformations, edge_fix) = if edge_fix_applies_to(plate_kind) {
+    let (composite, transformations, edge_fix, shadow) = if edge_fix_applies_to(plate_kind) {
+        let source_image =
+            store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
+        // Shadow carry-over (docs/SHADOW-CARRY.md) onto the fitted plate:
+        // plate -> carried shadow (the contact shadow is already in the
+        // finished plate) -> edge fix -> product. Off or not carried: the
+        // fitted plate unchanged, so the composite is the previous one.
+        let (fitted, transformations) = fit_plate(&plate, foreground.width, foreground.height);
+        let carried = carry_shadow_for_plate_kind(plate_kind, &source_image, &foreground, &fitted);
+        let shadow = Some(carried.report.to_json());
         if edge_fix_enabled() {
-            let source_image =
-                store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
             let thin = plate_kind_override
                 .as_ref()
                 .and_then(|(_, b)| b.pointer("/subject/thin_structure"))
                 .and_then(Value::as_bool)
                 .unwrap_or_else(|| crate::staging::analyze_subject(&foreground).thin);
-            let (composite, _in_memory_counts, transformations, report) =
-                composite_images_with_edge_fix(&foreground, &plate, &source_image, thin);
-            (composite, transformations, Some(report.to_json()))
+            let (composite, _in_memory_counts, _, report) =
+                composite_images_with_edge_fix(&foreground, &carried.plate, &source_image, thin);
+            (composite, transformations, Some(report.to_json()), shadow)
         } else {
-            let (composite, _in_memory_counts, transformations) =
-                composite_images(&foreground, &plate);
+            let (composite, _in_memory_counts, _) = composite_images(&foreground, &carried.plate);
             let off = EdgeFixReport::skipped(&format!("disabled by {EDGE_FIX_ENV}"));
-            (composite, transformations, Some(off.to_json()))
+            (composite, transformations, Some(off.to_json()), shadow)
         }
     } else {
         let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
-        (composite, transformations, None)
+        (composite, transformations, None, None)
     };
     let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
     let composite_record = store.get_record(&composite_handle)?;
@@ -1190,6 +2127,11 @@ pub fn draw_product_with_plate_kind(
         // the product. The counts above are over the stored layer's
         // pixel set, unchanged by it.
         receipt["edge_fix"] = edge_fix;
+    }
+    if let Some(shadow) = shadow {
+        // Additive record (never graded): the shadow carry-over, plate
+        // pixels only; the counts above are unchanged by it.
+        receipt["shadow"] = shadow;
     }
     if let Some(provenance) = &mask_provenance {
         // Mask provenance (decisions 68/69): the receipt states the
