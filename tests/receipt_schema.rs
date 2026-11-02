@@ -291,3 +291,64 @@ fn source_plate_kinds_stamp_schema_2_and_verify() {
         assert_eq!(report["ok"], json!(true), "{kind}: {}", report["problems"]);
     }
 }
+
+/// Python `verify_receipt_from_disk` grades the foreground colour
+/// profile pin a current receipt carries
+/// (`foreground_profile_matches_receipt`, gated on the key being
+/// present, which only v2+ receipts can be); it does not just carry
+/// it. A receipt whose pinned foreground profile hash differs from
+/// the foreground asset's recorded profile fails, with the Python
+/// message; an untouched receipt grades the pin and passes.
+#[test]
+fn foreground_profile_pin_is_graded() {
+    let (store, _dir, _photo, fg) = seeded_store_alpha_mask();
+    let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
+    assert!(receipt
+        .as_object()
+        .unwrap()
+        .contains_key("color_profile_foreground_sha256"));
+
+    // Untouched: the pin is graded (present in checks) and holds.
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["checks"]["foreground_profile_matches_receipt"],
+        json!(true)
+    );
+
+    // A well-formed hash that names a different profile: FAIL.
+    let mut tampered = receipt.clone();
+    tampered["color_profile_foreground_sha256"] = json!("ab".repeat(32));
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&tampered)).unwrap();
+    assert_eq!(report["ok"], json!(false));
+    assert_eq!(
+        report["checks"]["foreground_profile_matches_receipt"],
+        json!(false)
+    );
+    let problems: Vec<String> = report["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        problems,
+        vec!["foreground_profile_matches_receipt: the receipt's foreground profile hash \
+              does not match the foreground asset's recorded profile"
+            .to_string()]
+    );
+
+    // A v1 receipt (no marker, no v2-only fields) carries no pin, so
+    // the check is not run at all, exactly as in Python.
+    let mut v1 = receipt.clone();
+    let obj = v1.as_object_mut().unwrap();
+    obj.remove("receipt_schema");
+    for field in V2_ONLY_FIELDS {
+        obj.remove(field);
+    }
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&v1)).unwrap();
+    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert!(report["checks"]
+        .get("foreground_profile_matches_receipt")
+        .is_none());
+}

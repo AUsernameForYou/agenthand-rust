@@ -2649,6 +2649,22 @@ pub fn verify_receipt_from_disk(
                 == foreground_record.pixel_sha256.as_deref(),
         "the receipt's foreground hashes do not match the foreground asset's recorded hashes",
     );
+    // The receipt pins the foreground's colour profile too (v2+);
+    // grade the pin, do not just carry it. Python gates this on the
+    // key being present (`"color_profile_foreground_sha256" in
+    // receipt`), which only a v2+ receipt can be: the downgrade guard
+    // refuses the key on an unmarked receipt. Compared as JSON values
+    // so a pinned null equals a profile-less record, as Python's
+    // `None == None` does.
+    if let Some(pinned) = receipt.get("color_profile_foreground_sha256") {
+        set_check(
+            &mut checks,
+            &mut problems,
+            "foreground_profile_matches_receipt",
+            *pinned == json!(foreground_record.color_profile_sha256),
+            "the receipt's foreground profile hash does not match the foreground asset's recorded profile",
+        );
+    }
     set_check(
         &mut checks,
         &mut problems,
