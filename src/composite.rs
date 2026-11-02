@@ -1693,11 +1693,23 @@ fn box_blur_sum(data: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
     pass(&pass(data, true), false)
 }
 
+/// Cover-fit resamples `fit_plate` has run in this process. A 24 MP fit
+/// costs about 1.3 s, so a draw runs at most one (review aaa44dc
+/// defect 7); tests read this to prove it.
+static PLATE_FIT_RESAMPLES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many plate cover-fit resamples this process has run.
+#[doc(hidden)]
+pub fn plate_fit_resamples() -> u64 {
+    PLATE_FIT_RESAMPLES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Resize/crop the PLATE to the product's dimensions. Never the reverse.
 fn fit_plate(plate: &RgbaImage, width: u32, height: u32) -> (RgbaImage, Vec<String>) {
     if plate.width == width && plate.height == height {
         return (plate.clone(), Vec::new());
     }
+    PLATE_FIT_RESAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let fitted = crate::resample::fit(plate, width, height);
     (
         fitted,
@@ -1842,10 +1854,17 @@ pub fn composite_images(
     plate: &RgbaImage,
 ) -> (RgbaImage, Measure, Vec<String>) {
     let (fitted, transformations) = fit_plate(plate, foreground.width, foreground.height);
-    let mut out = alpha_composite(&fitted, foreground);
-    out.icc_profile = foreground.icc_profile.clone();
+    let out = composite_over_fitted(foreground, &fitted);
     let counts = measure(foreground, &out);
     (out, counts, transformations)
+}
+
+/// `composite_images`' pixels over a plate already fitted to the
+/// foreground's frame: the same composite, no fit, no counts.
+fn composite_over_fitted(foreground: &RgbaImage, fitted: &RgbaImage) -> RgbaImage {
+    let mut out = alpha_composite(fitted, foreground);
+    out.icc_profile = foreground.icc_profile.clone();
+    out
 }
 
 /// Check an asset may be composited; returns its lineage chain.
@@ -2031,6 +2050,13 @@ pub fn draw_product_with_plate_kind(
     // the layer's own lineage; the thin-structure flag from the staged
     // subject record when the caller passed one.
     let plate_kind = plate_kind_override.as_ref().map(|(kind, _)| *kind);
+    // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
+    // A model-generated plate is hashed above as stored, before the cover
+    // fit; also pin the fitted pixels actually composited. Hashed from the
+    // one fit each branch below already runs (a second 24 MP fit costs
+    // about 1.3 s; review aaa44dc defect 7).
+    let generated_plate = plate_kind_override.is_none() && plate_handle.is_some();
+    let mut plate_fitted_pixel_sha256 = None;
     let (composite, transformations, edge_fix, shadow) = if edge_fix_applies_to(plate_kind) {
         let source_image =
             store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
@@ -2039,6 +2065,9 @@ pub fn draw_product_with_plate_kind(
         // finished plate) -> edge fix -> product. Off or not carried: the
         // fitted plate unchanged, so the composite is the previous one.
         let (fitted, transformations) = fit_plate(&plate, foreground.width, foreground.height);
+        if generated_plate {
+            plate_fitted_pixel_sha256 = Some(fitted.pixel_sha256());
+        }
         let carried = carry_shadow_for_plate_kind(plate_kind, &source_image, &foreground, &fitted);
         let shadow = Some(carried.report.to_json());
         if edge_fix_enabled() {
@@ -2056,18 +2085,15 @@ pub fn draw_product_with_plate_kind(
             (composite, transformations, Some(off.to_json()), shadow)
         }
     } else {
-        let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
+        // `composite_images` fit inline; fit here once so the receipt
+        // hash below reuses these pixels instead of fitting again.
+        let (fitted, transformations) = fit_plate(&plate, foreground.width, foreground.height);
+        let composite = composite_over_fitted(&foreground, &fitted);
+        if generated_plate {
+            plate_fitted_pixel_sha256 = Some(fitted.pixel_sha256());
+        }
         (composite, transformations, None, None)
     };
-    // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
-    // A model-generated plate is hashed above as stored, before the cover
-    // fit; also pin the fitted pixels actually composited.
-    let plate_fitted_pixel_sha256 =
-        (plate_kind_override.is_none() && plate_handle.is_some()).then(|| {
-            fit_plate(&plate, foreground.width, foreground.height)
-                .0
-                .pixel_sha256()
-        });
     let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
     let composite_record = store.get_record(&composite_handle)?;
 
