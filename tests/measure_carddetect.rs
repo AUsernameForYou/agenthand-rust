@@ -195,10 +195,7 @@ fn profile_ring_and_ticks_match_the_printed_art() {
         }
         assert!(n > 10_000, "{id}: printed ring not found");
         let (cx, cy) = (sx / n as f64, sy / n as f64);
-        let mut radii: Vec<f64> = pts
-            .iter()
-            .map(|u| (u[0] - cx).hypot(u[1] - cy))
-            .collect();
+        let mut radii: Vec<f64> = pts.iter().map(|u| (u[0] - cx).hypot(u[1] - cy)).collect();
         radii.sort_by(|a, b| a.total_cmp(b));
         let inner_u = percentile_sorted(&radii, 0.1);
         let outer_u = percentile_sorted(&radii, 99.9);
@@ -257,5 +254,168 @@ fn profile_ring_and_ticks_match_the_printed_art() {
             }
         }
     }
-    assert!(failures.is_empty(), "profile vs print:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "profile vs print:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// Card-mm -> image similarity used by the printed-card scenes: the
+/// card turned a quarter (card x runs down the image, card y runs
+/// right-to-left), like the AH-BIG print in IMG_1491.
+const SCENE_SCALE: f64 = 1.6; // px per card-mm
+const SCENE_T: [f64; 2] = [600.0, 150.0];
+
+fn scene_h() -> [f64; 9] {
+    let s = SCENE_SCALE;
+    [0.0, -s, SCENE_T[0], s, 0.0, SCENE_T[1], 0.0, 0.0, 1.0]
+}
+
+fn scene_to_mm(p: [f64; 2]) -> [f64; 2] {
+    [
+        (p[1] - SCENE_T[1]) / SCENE_SCALE,
+        (SCENE_T[0] - p[0]) / SCENE_SCALE,
+    ]
+}
+
+/// Deterministic LCG for scene texture.
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self) -> f64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// A photo-like scene of the PRINTED AH-BIG card: the print master
+/// art (3-arc ring 0.43x the old profile's, block-gap ticks) on an
+/// untrimmed white sheet larger than the 254 x 190.5 mm trim, turned a
+/// quarter, on a grey floor; an orange 420 x 260 mm object in the same
+/// plane; and a denim-like patch whose scattered cyan-hued pixels
+/// outnumber the ring's 15 to 1, so the centroid of all cyan lands on
+/// the patch, not the card (the IMG_1491 failure).
+fn printed_card_scene() -> agenthand::image::RgbaImage {
+    let art = printed_art();
+    let profile: Value = serde_json::from_str(
+        &std::fs::read_to_string(root().join("tests/fixtures/layout-profile.json")).unwrap(),
+    )
+    .unwrap();
+    let img_spec = &profile["cards"]["AH-BIG"]["image"];
+    let s = img_spec["scale_mm_per_unit"].as_f64().unwrap();
+    let ox = img_spec["offset_x_mm"].as_f64().unwrap();
+    let oy = img_spec["offset_y_mm"].as_f64().unwrap();
+    let (aw, ah) = (art.width as f64, art.height as f64);
+    let art_rgb = |x: f64, y: f64| -> [f64; 3] {
+        let (x0, y0) = (x.floor(), y.floor());
+        let (dx, dy) = (x - x0, y - y0);
+        let mut out = [0.0; 3];
+        for (xx, yy, wt) in [
+            (x0, y0, (1.0 - dx) * (1.0 - dy)),
+            (x0 + 1.0, y0, dx * (1.0 - dy)),
+            (x0, y0 + 1.0, (1.0 - dx) * dy),
+            (x0 + 1.0, y0 + 1.0, dx * dy),
+        ] {
+            let cx = xx.clamp(0.0, aw - 1.0) as usize;
+            let cy = yy.clamp(0.0, ah - 1.0) as usize;
+            let k = (cy * art.width as usize + cx) * 4;
+            for c in 0..3 {
+                out[c] += wt * art.pixels[k + c] as f64;
+            }
+        }
+        out
+    };
+    let (w, h) = (1600usize, 1000usize);
+    let mut pixels = vec![0u8; w * h * 4];
+    let mut rng = Lcg(0x5eed_1491);
+    for y in 0..h {
+        for x in 0..w {
+            let k = (y * w + x) * 4;
+            let grain = (rng.next() - 0.5) * 16.0;
+            let mut rgb = [158.0 + grain, 146.0 + grain, 134.0 + grain];
+            let mm = scene_to_mm([x as f64, y as f64]);
+            // Untrimmed sheet: 40 mm / 30 mm of extra paper around the trim.
+            if (-40.0..=294.0).contains(&mm[0]) && (-30.0..=220.0).contains(&mm[1]) {
+                rgb = [236.0, 234.0, 228.0];
+                let u = [(mm[0] - ox) / s, (mm[1] - oy) / s];
+                if (0.0..1200.0).contains(&u[0]) && (0.0..880.0).contains(&u[1]) {
+                    let a = art_rgb(u[0] * 2.0 - 0.5, u[1] * 2.0 - 0.5);
+                    // Paper is not pure white; ink is not pure black.
+                    for c in 0..3 {
+                        rgb[c] = 20.0 + a[c] * (rgb[c] - 20.0) / 255.0;
+                    }
+                }
+            }
+            // The object: 420 x 260 mm, card x 31.25-451.25, card y -385 to -125.
+            if (800..1216).contains(&x) && (200..872).contains(&y) {
+                rgb = [214.0, 84.0, 40.0];
+            }
+            // Denim-like patch with scattered cyan-hued pixels.
+            if (1250..1580).contains(&x) && (100..900).contains(&y) {
+                rgb = [118.0 + grain, 146.0 + grain, 186.0 + grain];
+                if rng.next() < 0.06 {
+                    rgb = [60.0, 170.0, 200.0];
+                }
+            }
+            for c in 0..3 {
+                pixels[k + c] = rgb[c].round().clamp(0.0, 255.0) as u8;
+            }
+            pixels[k + 3] = 255;
+        }
+    }
+    agenthand::image::RgbaImage {
+        width: w as u32,
+        height: h as u32,
+        pixels,
+        icc_profile: None,
+    }
+}
+
+/// The printed card must be found where it lies, even when most of
+/// the frame's cyan is elsewhere, and measure the object in its plane.
+#[test]
+fn printed_card_is_found_beside_scattered_cyan() {
+    let img = printed_card_scene();
+    let profile = root().join("tests/fixtures/layout-profile.json");
+    let card = load_card_profile(&profile, "AH-BIG").unwrap();
+    let frame = MeasureFrame::from_rgba(&img);
+    let det = detect_card(&frame, &card).unwrap_or_else(|e| panic!("printed card refused: {e}"));
+    let truth_h = scene_h();
+    for (k, key) in ["TL", "TR", "BR", "BL"].iter().enumerate() {
+        let want = project(&truth_h, card.frame[*key]);
+        let got = det.quad[k];
+        let err = (got[0] - want[0]).hypot(got[1] - want[1]);
+        println!(
+            "{key}: fitted ({:.1}, {:.1}) truth ({:.1}, {:.1}) err {err:.2} px",
+            got[0], got[1], want[0], want[1]
+        );
+        assert!(
+            err <= 3.0,
+            "{key}: fitted corner {err:.2} px off the printed card"
+        );
+    }
+    // Object bbox in the image: x 800-1216, y 200-872.
+    let est = estimate(
+        &frame,
+        &card,
+        "AH-BIG",
+        Some((800.0, 200.0, 416.0, 672.0)),
+        None,
+    )
+    .unwrap_or_else(|e| panic!("printed card estimate refused: {e}"));
+    println!("{}", est.to_json_pretty());
+    assert!((est.card_width_px as f64 - 254.0 * SCENE_SCALE).abs() <= 6.0);
+    assert!(
+        est.width_range_mm[0] <= 420.0 && 420.0 <= est.width_range_mm[1],
+        "width {:?}",
+        est.width_range_mm
+    );
+    assert!(
+        est.height_range_mm[0] <= 260.0 && 260.0 <= est.height_range_mm[1],
+        "height {:?}",
+        est.height_range_mm
+    );
 }

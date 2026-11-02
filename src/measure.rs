@@ -1202,27 +1202,311 @@ fn ink_mask(frame: &MeasureFrame) -> Vec<u8> {
     mask
 }
 
-/// (centroid, pixel area) of the lockup's cyan ring — port of
-/// `_ring_centroid` (HSV inRange (88,70,70)-(104,255,255), moments).
-fn ring_centroid(frame: &MeasureFrame) -> Option<(Pt, f64)> {
-    let mut count = 0f64;
-    let mut sx = 0f64;
-    let mut sy = 0f64;
-    for y in 0..frame.height {
-        for x in 0..frame.width {
-            if is_ring_cyan(frame, y * frame.width + x) {
-                count += 1.0;
-                sx += x as f64;
-                sy += y as f64;
+// ---------------------------------------------------------------------------
+// Ring candidates (the seed anchors)
+//
+// The Python port anchored every seed at the centroid of ALL cyan-hued
+// pixels in the frame (`_ring_centroid`). Sky, teal play equipment and
+// denim pull that centroid off the card, so on real photos the search
+// never looked at the card (IMG_1403, IMG_1435, IMG_1491). Seeds now
+// come from ring-shaped cyan blobs: connected components of the ring
+// cyan, grouped when they are similar in size and close together (the
+// printed ring is three 92-degree arcs, i.e. three components), each
+// group tested for ring geometry, and each surviving ring anchoring
+// its own seed search at its own centre and scale.
+
+/// A ring-shaped cyan blob: centre, outer radius (px, geometric mean
+/// of the ellipse axes) and pixel count.
+#[derive(Clone, Copy, Debug)]
+struct RingCandidate {
+    centre: Pt,
+    outer_px: f64,
+    n_px: usize,
+}
+
+/// Components smaller than this are speckle, not ring arcs.
+const RING_COMP_MIN_PX: usize = 3;
+/// Only the largest components take part in grouping (bounds the
+/// pairwise pass on frames full of cyan speckle).
+const RING_MAX_COMPONENTS: usize = 3000;
+/// Two components join one group when the gap between their boxes is at
+/// most this fraction of the larger box side and their box sides differ
+/// by at most RING_LINK_MAX_SIZE_RATIO (the arcs of one ring are equal;
+/// a big background blob must not swallow a nearby ring).
+const RING_LINK_FRAC: f64 = 0.5;
+const RING_LINK_MAX_SIZE_RATIO: f64 = 2.5;
+/// A ring candidate needs this many pixels and this outer radius. A
+/// card at the 130 px floor carries a ring of ~8 px outer radius.
+const RING_MIN_PX: usize = 20;
+const RING_MIN_OUTER_PX: f64 = 5.0;
+/// Ellipse axis-length ratio limit (eigenvalue ratio 4: a tilt of
+/// up to 60 degrees).
+const RING_MAX_EIG_RATIO: f64 = 4.0;
+/// After whitening, at most this fraction of the blob may lie inside
+/// the hole or outside the outer edge (with a margin of a quarter of
+/// the ring width, at least 1 px).
+const RING_MAX_STRAY_FRAC: f64 = 0.05;
+/// Pixel count over the annulus area: 1.0 for a full ring, 0.77 for
+/// the printed three-arc ring.
+const RING_FILL_MIN: f64 = 0.5;
+const RING_FILL_MAX: f64 = 1.2;
+/// At least this many of 12 thirty-degree sectors hold ring pixels
+/// (each 28-degree gap of the printed ring can empty at most one).
+const RING_MIN_SECTORS_OF_12: usize = 9;
+/// At most this many ring candidates are fitted and verified.
+const RING_MAX_CANDIDATES: usize = 4;
+
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(n: usize) -> UnionFind {
+        UnionFind {
+            parent: (0..n).collect(),
+        }
+    }
+    fn find(&mut self, mut i: usize) -> usize {
+        while self.parent[i] != i {
+            self.parent[i] = self.parent[self.parent[i]];
+            i = self.parent[i];
+        }
+        i
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra != rb {
+            // Deterministic: the smaller root wins.
+            let (lo, hi) = if ra < rb { (ra, rb) } else { (rb, ra) };
+            self.parent[hi] = lo;
+        }
+    }
+}
+
+/// Ring geometry of one pixel set, or None when it is not ring-shaped.
+/// `k` is the profile's inner/outer radius ratio.
+fn ring_shape(points: &[(f64, f64)], k: f64) -> Option<RingCandidate> {
+    let n = points.len();
+    if n < RING_MIN_PX {
+        return None;
+    }
+    let nf = n as f64;
+    let mx = points.iter().map(|p| p.0).sum::<f64>() / nf;
+    let my = points.iter().map(|p| p.1).sum::<f64>() / nf;
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (dx, dy) = (p.0 - mx, p.1 - my);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
+    let (sxx, sxy, syy) = (sxx / nf, sxy / nf, syy / nf);
+    // Eigen-decomposition of the 2x2 covariance.
+    let tr = sxx + syy;
+    let det = sxx * syy - sxy * sxy;
+    let disc = (tr * tr / 4.0 - det).max(0.0).sqrt();
+    let (l1, l2) = (tr / 2.0 + disc, tr / 2.0 - disc);
+    if l2 <= 0.0 || l1 / l2 > RING_MAX_EIG_RATIO {
+        return None;
+    }
+    let theta = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let (c, s) = (theta.cos(), theta.sin());
+    // Area-preserving whitening: the major axis shrinks, the minor
+    // stretches, both to the geometric mean.
+    let (f1, f2) = ((l2 / l1).powf(0.25), (l1 / l2).powf(0.25));
+    let whiten = |p: &(f64, f64)| -> (f64, f64) {
+        let (dx, dy) = (p.0 - mx, p.1 - my);
+        let (a, b) = (c * dx + s * dy, -s * dx + c * dy);
+        (a * f1, b * f2)
+    };
+    let mut m2 = 0.0;
+    let mut whitened: Vec<(f64, f64)> = Vec::with_capacity(n);
+    for p in points {
+        let q = whiten(p);
+        m2 += q.0 * q.0 + q.1 * q.1;
+        whitened.push(q);
+    }
+    m2 /= nf;
+    // Uniform annulus: E[r^2] = (inner^2 + outer^2) / 2.
+    let outer = (2.0 * m2 / (1.0 + k * k)).sqrt();
+    let inner = k * outer;
+    if outer < RING_MIN_OUTER_PX {
+        return None;
+    }
+    let margin = (0.25 * (outer - inner)).max(1.0);
+    let (mut inside, mut outside) = (0usize, 0usize);
+    let mut sectors = [false; 12];
+    for q in &whitened {
+        let r = (q.0 * q.0 + q.1 * q.1).sqrt();
+        if r < inner - margin {
+            inside += 1;
+        } else if r > outer + margin {
+            outside += 1;
+        }
+        let a = q.1.atan2(q.0).rem_euclid(std::f64::consts::TAU);
+        sectors[((a / std::f64::consts::TAU * 12.0) as usize).min(11)] = true;
+    }
+    let fill = nf / (std::f64::consts::PI * (outer * outer - inner * inner));
+    if inside as f64 > RING_MAX_STRAY_FRAC * nf
+        || outside as f64 > RING_MAX_STRAY_FRAC * nf
+        || !(RING_FILL_MIN..=RING_FILL_MAX).contains(&fill)
+        || sectors.iter().filter(|&&b| b).count() < RING_MIN_SECTORS_OF_12
+    {
+        return None;
+    }
+    Some(RingCandidate {
+        centre: pt(mx, my),
+        outer_px: outer,
+        n_px: n,
+    })
+}
+
+/// Every ring-cyan pixel of a photo, summarised.
+struct CyanSurvey {
+    /// Pixel count and centroid of ALL ring-cyan pixels (the Python
+    /// port's `_ring_centroid`, used only as an extra anchor when it
+    /// sits on a ring candidate).
+    count: usize,
+    centroid: Pt,
+    /// Ring-shaped blobs, largest first, at most RING_MAX_CANDIDATES.
+    candidates: Vec<RingCandidate>,
+}
+
+fn ring_candidates(frame: &MeasureFrame, card: &CardProfile) -> CyanSurvey {
+    let (w, h) = (frame.width, frame.height);
+    let cyan: Vec<usize> = (0..w * h).filter(|&i| is_ring_cyan(frame, i)).collect();
+    if cyan.is_empty() {
+        return CyanSurvey {
+            count: 0,
+            centroid: pt(0.0, 0.0),
+            candidates: Vec::new(),
+        };
+    }
+    // 8-connected components over the sparse cyan set (scan order).
+    let mut uf = UnionFind::new(cyan.len());
+    let pos = |idx: usize| cyan.binary_search(&idx).ok();
+    for (i, &idx) in cyan.iter().enumerate() {
+        let (x, y) = (idx % w, idx / w);
+        let mut neighbours: [Option<usize>; 4] = [None; 4];
+        if x > 0 {
+            neighbours[0] = Some(idx - 1);
+        }
+        if y > 0 {
+            let up = idx - w;
+            neighbours[1] = Some(up);
+            if x > 0 {
+                neighbours[2] = Some(up - 1);
+            }
+            if x + 1 < w {
+                neighbours[3] = Some(up + 1);
+            }
+        }
+        for nb in neighbours.iter().flatten() {
+            if let Some(j) = pos(*nb) {
+                uf.union(i, j);
             }
         }
     }
-    // moments m00 sums pixel VALUES (255 per cyan pixel); the
-    // Python gate is m00 < 200.
-    if count * 255.0 < 200.0 {
-        return None;
+    struct Comp {
+        members: Vec<usize>,
+        x0: usize,
+        y0: usize,
+        x1: usize,
+        y1: usize,
     }
-    Some((pt(sx / count, sy / count), count))
+    let mut by_root: HashMap<usize, usize> = HashMap::new();
+    let mut comps: Vec<Comp> = Vec::new();
+    for (i, &idx) in cyan.iter().enumerate() {
+        let root = uf.find(i);
+        let (x, y) = (idx % w, idx / w);
+        let ci = *by_root.entry(root).or_insert_with(|| {
+            comps.push(Comp {
+                members: Vec::new(),
+                x0: x,
+                y0: y,
+                x1: x,
+                y1: y,
+            });
+            comps.len() - 1
+        });
+        let c = &mut comps[ci];
+        c.members.push(idx);
+        c.x0 = c.x0.min(x);
+        c.y0 = c.y0.min(y);
+        c.x1 = c.x1.max(x);
+        c.y1 = c.y1.max(y);
+    }
+    // comps is in order of first pixel (scan order): deterministic.
+    let mut kept: Vec<usize> = (0..comps.len())
+        .filter(|&i| comps[i].members.len() >= RING_COMP_MIN_PX)
+        .collect();
+    kept.sort_by(|&a, &b| {
+        comps[b]
+            .members
+            .len()
+            .cmp(&comps[a].members.len())
+            .then(a.cmp(&b))
+    });
+    kept.truncate(RING_MAX_COMPONENTS);
+    kept.sort_unstable();
+    let side = |c: &Comp| (c.x1 - c.x0 + 1).max(c.y1 - c.y0 + 1) as f64;
+    let mut groups = UnionFind::new(kept.len());
+    for a in 0..kept.len() {
+        for b in (a + 1)..kept.len() {
+            let (ca, cb) = (&comps[kept[a]], &comps[kept[b]]);
+            let (sa, sb) = (side(ca), side(cb));
+            if sa.max(sb) > RING_LINK_MAX_SIZE_RATIO * sa.min(sb) {
+                continue;
+            }
+            let gap_x = (cb.x0 as f64 - ca.x1 as f64 - 1.0)
+                .max(ca.x0 as f64 - cb.x1 as f64 - 1.0)
+                .max(0.0);
+            let gap_y = (cb.y0 as f64 - ca.y1 as f64 - 1.0)
+                .max(ca.y0 as f64 - cb.y1 as f64 - 1.0)
+                .max(0.0);
+            if gap_x.max(gap_y) <= RING_LINK_FRAC * sa.max(sb) {
+                groups.union(a, b);
+            }
+        }
+    }
+    let mut members_of: Vec<Vec<usize>> = vec![Vec::new(); kept.len()];
+    for a in 0..kept.len() {
+        let r = groups.find(a);
+        members_of[r].push(a);
+    }
+    let k = if card.ring_outer_mm > 0.0 && card.ring_inner_mm > 0.0 {
+        card.ring_inner_mm / card.ring_outer_mm
+    } else {
+        0.62
+    };
+    let mut out: Vec<RingCandidate> = Vec::new();
+    for group in members_of.iter().filter(|g| !g.is_empty()) {
+        let points: Vec<(f64, f64)> = group
+            .iter()
+            .flat_map(|&a| comps[kept[a]].members.iter())
+            .map(|&idx| ((idx % w) as f64, (idx / w) as f64))
+            .collect();
+        if let Some(c) = ring_shape(&points, k) {
+            out.push(c);
+        }
+    }
+    out.sort_by(|a, b| {
+        b.n_px
+            .cmp(&a.n_px)
+            .then(a.centre[1].total_cmp(&b.centre[1]))
+            .then(a.centre[0].total_cmp(&b.centre[0]))
+    });
+    out.truncate(RING_MAX_CANDIDATES);
+    let nf = cyan.len() as f64;
+    let centroid = pt(
+        cyan.iter().map(|&i| (i % w) as f64).sum::<f64>() / nf,
+        cyan.iter().map(|&i| (i / w) as f64).sum::<f64>() / nf,
+    );
+    CyanSurvey {
+        count: cyan.len(),
+        centroid,
+        candidates: out,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1537,19 +1821,19 @@ fn order_quad(pts: &[Pt]) -> [Pt; 4] {
 
 /// Homography seed from the card sheet's own quad, or None (port
 /// of `_sheet_seed`).
-fn sheet_seed(
-    mask: &[u8],
-    w: usize,
-    h: usize,
-    card: &CardProfile,
-    ring_centroid: Pt,
-) -> Option<H3> {
+/// The six longest external ink contours, the sheet seed's input
+/// (computed once per photo and shared by every ring candidate).
+fn sheet_contours(mask: &[u8], w: usize, h: usize) -> Vec<Vec<Pt>> {
     let mut contours = external_contours(mask, w, h, true);
     contours.sort_by(|a, b| arc_length(b, true).total_cmp(&arc_length(a, true)));
     contours.truncate(6);
+    contours
+}
+
+fn sheet_seed(contours: &[Vec<Pt>], card: &CardProfile, ring_centroid: Pt) -> Option<H3> {
     let (cw, ch) = (card.card_width_mm, card.card_height_mm);
     let sheet_mm = [pt(0.0, 0.0), pt(cw, 0.0), pt(cw, ch), pt(0.0, ch)];
-    for contour in &contours {
+    for contour in contours {
         let peri = arc_length(contour, true);
         if peri < 400.0 {
             continue;
@@ -1670,6 +1954,7 @@ fn canny_edges(img: &[u8], w: usize, h: usize) -> Vec<u8> {
     out
 }
 
+#[derive(Clone)]
 struct HoughSeg {
     length: f64,
     rho: f64,
@@ -1830,11 +2115,11 @@ fn hough_quad_seed(
     frame: &MeasureFrame,
     mask: &[u8],
     card: &CardProfile,
+    all_segs: &[HoughSeg],
     ring_centroid: Pt,
     scale0: f64,
 ) -> Option<H3> {
-    let edges = canny_edges(mask, frame.width, frame.height);
-    let mut segs = hough_segments(&edges, frame.width, frame.height);
+    let mut segs: Vec<HoughSeg> = all_segs.to_vec();
     if segs.len() < 4 {
         return None;
     }
@@ -2475,23 +2760,41 @@ fn verify_card(
     Ok(())
 }
 
-/// Port of `_detect_card`.
-pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection, String> {
-    let mask = ink_mask(frame);
-    let (centre, ring_area_px) = ring_centroid(frame)
-        .ok_or_else(|| "Cyan ring not found; card not detectable.".to_string())?;
-    let ring_mm = card.ring_centre_mm;
-    let ring_area_mm2 =
-        std::f64::consts::PI * (card.ring_outer_mm.powi(2) - card.ring_inner_mm.powi(2));
-    let scale0 = (ring_area_px / ring_area_mm2).sqrt();
-    if mask.iter().filter(|&&v| v > 0).count() < 500 {
-        return Err("Too little ink; card not detectable.".to_string());
-    }
+/// Why one ring candidate produced no accepted fit.
+enum AnchorFailure {
+    /// No seed passed loose tick observation.
+    NoObservation,
+    /// Seeds observed, but no fit passed the span/tick/RMS gates.
+    NoConvergence,
+    /// Fits converged; the best one failed the acceptance gate.
+    NotVerified(String),
+}
 
-    let objective = |params: &[f64; 4]| -> (f64, Vec<(Pt, Pt)>, usize) {
+/// Shared per-photo inputs for the seed search (computed once).
+struct SeedInputs<'a> {
+    mask: &'a [u8],
+    contours: &'a [Vec<Pt>],
+    hough: std::cell::OnceCell<Vec<HoughSeg>>,
+}
+
+/// Seed search, fit and verification for one ring candidate (the body
+/// of the Python `_detect_card`, run from each of the candidate's
+/// anchors instead of the all-cyan centroid). An anchor is a ring
+/// centre in the image and a px-per-card-mm scale. Returns the best
+/// fit that passes the acceptance gate.
+fn fit_at_anchors(
+    frame: &MeasureFrame,
+    card: &CardProfile,
+    inputs: &SeedInputs,
+    anchors: &[(Pt, f64)],
+) -> Result<(H3, Vec<(Pt, Pt)>, f64), AnchorFailure> {
+    let mask = inputs.mask;
+    let ring_mm = card.ring_centre_mm;
+
+    let objective = |centre: Pt, params: &[f64; 4]| -> (f64, Vec<(Pt, Pt)>, usize) {
         let anchor = add(centre, pt(params[0], params[1]));
         let H = similarity(ring_mm, anchor, params[2], params[3].exp());
-        let tm = tick_matches(frame, &mask, card, &H, false, false);
+        let tm = tick_matches(frame, mask, card, &H, false, false);
         let mut pairs = tm.matched.clone();
         pairs.extend_from_slice(&tm.corners);
         (
@@ -2501,49 +2804,51 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
         )
     };
     let loose_score = |H: &H3| -> f64 {
-        let tm = tick_matches(frame, &mask, card, H, false, false);
+        let tm = tick_matches(frame, mask, card, H, false, false);
         tm.arms_hit as f64 + 0.02 * (tm.matched.len() + tm.corners.len()) as f64
     };
-
-    // Coarse grid over rotation x scale, ring-anchored.
-    let mut grid: Vec<(f64, [f64; 4])> = Vec::new();
-    for theta_deg in (0..360).step_by(10) {
-        for factor in [0.86, 0.92, 0.98, 1.04, 1.10] {
-            let trial = [
-                0.0,
-                0.0,
-                (theta_deg as f64).to_radians(),
-                (scale0 * factor).ln(),
-            ];
-            let (value, _, _) = objective(&trial);
-            grid.push((value, trial));
+    // Coarse grid over rotation x scale about one anchor: its top
+    // seeds in distinct rotation buckets.
+    let grid_seeds = |centre: Pt, scale0: f64| -> Vec<[f64; 4]> {
+        let mut grid: Vec<(f64, [f64; 4])> = Vec::new();
+        for theta_deg in (0..360).step_by(10) {
+            for factor in [0.86, 0.92, 0.98, 1.04, 1.10] {
+                let trial = [
+                    0.0,
+                    0.0,
+                    (theta_deg as f64).to_radians(),
+                    (scale0 * factor).ln(),
+                ];
+                let (value, _, _) = objective(centre, &trial);
+                grid.push((value, trial));
+            }
         }
-    }
-    grid.sort_by(|a, b| b.0.total_cmp(&a.0));
-    // Top seeds in distinct rotation buckets.
-    let mut seeds: Vec<[f64; 4]> = Vec::new();
-    for (_, trial) in &grid {
-        let theta_deg = trial[2].to_degrees().rem_euclid(360.0);
-        let distinct = seeds.iter().all(|s: &[f64; 4]| {
-            let other = s[2].to_degrees().rem_euclid(360.0);
-            let d = (theta_deg - other).abs();
-            d.min(360.0 - d) >= 20.0
-        });
-        if distinct {
-            seeds.push(*trial);
+        grid.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut seeds: Vec<[f64; 4]> = Vec::new();
+        for (_, trial) in &grid {
+            let theta_deg = trial[2].to_degrees().rem_euclid(360.0);
+            let distinct = seeds.iter().all(|s: &[f64; 4]| {
+                let other = s[2].to_degrees().rem_euclid(360.0);
+                let d = (theta_deg - other).abs();
+                d.min(360.0 - d) >= 20.0
+            });
+            if distinct {
+                seeds.push(*trial);
+            }
+            if seeds.len() >= 3 {
+                break;
+            }
         }
-        if seeds.len() >= 3 {
-            break;
-        }
-    }
+        seeds
+    };
 
     let frame_keys = ["TL", "TR", "BR", "BL"];
     let frame_src: Vec<Pt> = frame_keys.iter().map(|k| card.frame[*k]).collect();
 
     // Similarity ascent + projective vertex search from one seed.
-    let refine_seed = |params0: &[f64; 4]| -> [H3; 2] {
+    let refine_seed = |centre: Pt, params0: &[f64; 4]| -> [H3; 2] {
         let mut params = *params0;
-        let (mut value, _, _) = objective(&params);
+        let (mut value, _, _) = objective(centre, &params);
         let mut steps = [8.0, 8.0, 1.5f64.to_radians(), 0.03];
         for _round in 0..4 {
             let mut improved = true;
@@ -2553,7 +2858,7 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
                     for sign in [1.0, -1.0] {
                         let mut trial = params;
                         trial[i] += sign * steps[i];
-                        let (trial_value, _, _) = objective(&trial);
+                        let (trial_value, _, _) = objective(centre, &trial);
                         if trial_value > value + 1e-9 {
                             params = trial;
                             value = trial_value;
@@ -2597,61 +2902,175 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
         [H_sim, H_proj]
     };
 
-    let mut seed_observations: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
     let observe = |H: &H3| -> Option<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> {
-        let tm = tick_matches(frame, &mask, card, H, false, false);
+        let tm = tick_matches(frame, mask, card, H, false, false);
         if tm.arms_hit >= 4 && tm.matched.len() >= 10 {
             Some((tm.matched, tm.corners))
         } else {
             None
         }
     };
-    if let Some(H_sheet) = sheet_seed(&mask, frame.width, frame.height, card, centre) {
-        if let Some(obs) = observe(&H_sheet) {
-            seed_observations.push(obs);
-        }
-    }
-    for seed in &seeds {
-        for H_seed in refine_seed(seed) {
-            if let Some(obs) = observe(&H_seed) {
-                seed_observations.push(obs);
+    // Each anchor runs the Python seed procedure on its own (sheet
+    // seed, refined grid seeds, and the Hough fallback when those
+    // observe nothing), so the observations are a superset of what the
+    // Python port finds whenever its anchor is among them.
+    let mut seed_observations: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
+    for &(centre, scale0) in anchors {
+        let mut found: Vec<(Vec<(Pt, Pt)>, Vec<(Pt, Pt)>)> = Vec::new();
+        if let Some(H_sheet) = sheet_seed(inputs.contours, card, centre) {
+            if let Some(obs) = observe(&H_sheet) {
+                found.push(obs);
             }
         }
-    }
-    if seed_observations.is_empty() {
-        if let Some(H_hough) = hough_quad_seed(frame, &mask, card, centre, scale0) {
-            if let Some(obs) = observe(&H_hough) {
-                seed_observations.push(obs);
+        for seed in grid_seeds(centre, scale0) {
+            for H_seed in refine_seed(centre, &seed) {
+                if let Some(obs) = observe(&H_seed) {
+                    found.push(obs);
+                }
             }
         }
+        if found.is_empty() {
+            let segs = inputs.hough.get_or_init(|| {
+                let edges = canny_edges(mask, frame.width, frame.height);
+                hough_segments(&edges, frame.width, frame.height)
+            });
+            if let Some(H_hough) = hough_quad_seed(frame, mask, card, segs, centre, scale0) {
+                if let Some(obs) = observe(&H_hough) {
+                    found.push(obs);
+                }
+            }
+        }
+        seed_observations.extend(found);
     }
     if seed_observations.is_empty() {
-        return Err("Tick verification failed (card too degraded or occluded).".to_string());
+        return Err(AnchorFailure::NoObservation);
     }
 
     let mut results: Vec<(H3, Vec<(Pt, Pt)>, f64)> = Vec::new();
     for (t0, c0) in &seed_observations {
-        if let Some(result) = fit_pipeline(frame, &mask, card, t0.clone(), c0.clone()) {
+        if let Some(result) = fit_pipeline(frame, mask, card, t0.clone(), c0.clone()) {
             if result.2 <= 4.0 {
                 results.push(result);
             }
         }
     }
     if results.is_empty() {
-        return Err("Card fit did not converge to a trustworthy homography \
-             (coverage or residual gates failed)."
-            .to_string());
+        return Err(AnchorFailure::NoConvergence);
     }
     results.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.2.total_cmp(&b.2)));
-    let (H, tick_pairs, rms) = results.into_iter().next().unwrap();
-    // Acceptance gate: the winning fit must show the printed card (its
-    // ring first), not just tick-spaced texture.
-    if let Err(reason) = verify_card(frame, card, &H, tick_pairs.len()) {
+    // Acceptance gate: a fit must show the printed card (its ring
+    // first), not just tick-spaced texture. The best fit that passes
+    // wins; when none does, the best fit's reason is reported.
+    let mut first_reason: Option<String> = None;
+    for (H, tick_pairs, rms) in results {
+        match verify_card(frame, card, &H, tick_pairs.len()) {
+            Ok(()) => return Ok((H, tick_pairs, rms)),
+            Err(reason) => {
+                first_reason.get_or_insert(reason);
+            }
+        }
+    }
+    Err(AnchorFailure::NotVerified(first_reason.unwrap_or_default()))
+}
+
+/// Find and verify the card (port of `_detect_card`, with ring-shaped
+/// seeding). Every ring-shaped cyan blob anchors its own seed search;
+/// the best verified fit over all of them wins; no verified fit
+/// refuses.
+pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection, String> {
+    let survey = ring_candidates(frame, card);
+    let (cyan_px, candidates) = (survey.count, &survey.candidates);
+    // moments m00 sums pixel VALUES (255 per cyan pixel); the Python
+    // gate is m00 < 200.
+    if (cyan_px as f64) * 255.0 < 200.0 {
+        return Err("Cyan ring not found; card not detectable.".to_string());
+    }
+    if candidates.is_empty() {
         return Err(format!(
-            "Card not verified in this photo ({reason}) — shoot closer \
-             with the card flat and fully in frame."
+            "Card not verified in this photo (no cyan ring found: nothing \
+             ring-shaped at least {RING_MIN_OUTER_PX:.0} px in radius) — shoot \
+             closer with the card flat and fully in frame."
         ));
     }
+    let mask = ink_mask(frame);
+    if mask.iter().filter(|&&v| v > 0).count() < 500 {
+        return Err("Too little ink; card not detectable.".to_string());
+    }
+    let contours = sheet_contours(&mask, frame.width, frame.height);
+    let inputs = SeedInputs {
+        mask: &mask,
+        contours: &contours,
+        hough: std::cell::OnceCell::new(),
+    };
+
+    let mut best: Option<(H3, Vec<(Pt, Pt)>, f64)> = None;
+    let mut not_verified: Option<String> = None;
+    let mut any_observed = false;
+    let ring_area_mm2 =
+        std::f64::consts::PI * (card.ring_outer_mm.powi(2) - card.ring_inner_mm.powi(2));
+    for cand in candidates {
+        // Anchor groups, tried in order; the first group with a
+        // verified fit gives this candidate's fit.
+        //
+        // 1. The Python port's anchor (centroid and area of ALL cyan),
+        //    only when it lies on this ring (within two outer radii:
+        //    the ring is the only cyan in the photo, as in every
+        //    synthetic battery scene). Its seed procedure then runs
+        //    unchanged, so clean photos keep the Python fits.
+        // 2. The blob's own centre with two px-per-card-mm hypotheses:
+        //    its outer radius from the annulus second moment
+        //    (independent of how much of the circle is inked: right for
+        //    the printed three-arc ring) and its area over the
+        //    profile's full annulus (exact for a full ring; 0.88x on
+        //    the printed ring).
+        let mut groups: Vec<Vec<(Pt, f64)>> = Vec::new();
+        if norm(sub(survey.centroid, cand.centre)) <= 2.0 * cand.outer_px {
+            groups.push(vec![(
+                survey.centroid,
+                (cyan_px as f64 / ring_area_mm2).sqrt(),
+            )]);
+        }
+        groups.push(vec![
+            (cand.centre, cand.outer_px / card.ring_outer_mm),
+            (cand.centre, (cand.n_px as f64 / ring_area_mm2).sqrt()),
+        ]);
+        for anchors in &groups {
+            match fit_at_anchors(frame, card, &inputs, anchors) {
+                Ok(fit) => {
+                    let better = match &best {
+                        None => true,
+                        Some(b) => {
+                            fit.1.len() > b.1.len() || (fit.1.len() == b.1.len() && fit.2 < b.2)
+                        }
+                    };
+                    if better {
+                        best = Some(fit);
+                    }
+                    break;
+                }
+                Err(AnchorFailure::NotVerified(reason)) => {
+                    any_observed = true;
+                    not_verified.get_or_insert(reason);
+                }
+                Err(AnchorFailure::NoConvergence) => any_observed = true,
+                Err(AnchorFailure::NoObservation) => {}
+            }
+        }
+    }
+    let Some((H, tick_pairs, rms)) = best else {
+        if let Some(reason) = not_verified {
+            return Err(format!(
+                "Card not verified in this photo ({reason}) — shoot closer \
+                 with the card flat and fully in frame."
+            ));
+        }
+        if any_observed {
+            return Err("Card fit did not converge to a trustworthy homography \
+                 (coverage or residual gates failed)."
+                .to_string());
+        }
+        return Err("Tick verification failed (card too degraded or occluded).".to_string());
+    };
     let quad = [
         project1(&H, card.frame["TL"]),
         project1(&H, card.frame["TR"]),
@@ -2996,7 +3415,8 @@ pub fn estimate(
              or use a bigger card."
         ));
     }
-    if det.strict_ticks <= STRICT_COLLAPSE_MAX_TICKS && det.strict_arms <= STRICT_COLLAPSE_MAX_ARMS {
+    if det.strict_ticks <= STRICT_COLLAPSE_MAX_TICKS && det.strict_arms <= STRICT_COLLAPSE_MAX_ARMS
+    {
         return Err(format!(
             "Card failed strict tick verification at its own fit ({} tick \
              cuts on {} arms under strict matching; the fit stood on loose \
