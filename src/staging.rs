@@ -62,12 +62,65 @@ pub const REFERENCE_FILL_ENV: &str = "AGENTHAND_REFERENCE_FILL";
 /// side is at most this, solve there, then refine level by level back
 /// up to the reference size.
 pub const INPAINT_COARSE_LONG_SIDE: usize = 8;
-/// Gauss-Seidel (over-relaxed) sweeps per level: at most this many,
-/// stopping early once no hole value moves more than the tolerance
-/// (0-255 units) in a sweep.
+/// Gauss-Seidel (over-relaxed) sweeps per coarse level: at most this
+/// many, stopping early once no hole value moves more than the
+/// tolerance (0-255 units) in a sweep.
 pub const INPAINT_MAX_SWEEPS: usize = 200;
 pub const INPAINT_TOLERANCE: f32 = 0.02;
 pub const INPAINT_SOR: f32 = 1.5;
+/// Fine levels (long side over this) stop at `INPAINT_FINE_MAX_SWEEPS`:
+/// they start from the converged coarser level's upsample and only
+/// need to settle the detail, and each fine sweep costs 4x the level
+/// below. Uncapped, a frame-filling surface (a lawn, 90% of a 24 MP
+/// frame) ran 841 sweeps and +5.2 s before the Meta call (review
+/// aaa44dc defect 2); capped it is 534 sweeps and +0.8 s, within 0.3
+/// mean (0-255) of the uncapped fill. Coarse levels still converge.
+pub const INPAINT_FINE_LONG_SIDE: usize = 256;
+pub const INPAINT_FINE_MAX_SWEEPS: usize = 30;
+pub const INPAINT_FINE_TOLERANCE: f32 = 0.25;
+
+/// The inpaint's sweep schedule.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InpaintBudget {
+    /// Sweep cap on coarse levels (long side at most `fine_long_side`).
+    pub max_sweeps: usize,
+    /// Sweep cap on fine levels.
+    pub fine_max_sweeps: usize,
+    pub fine_long_side: usize,
+    /// Early stop: largest move in a sweep below this (0-255 units),
+    /// on coarse and on fine levels.
+    pub tolerance: f32,
+    pub fine_tolerance: f32,
+}
+
+impl InpaintBudget {
+    /// What `edit_reference` runs.
+    pub const DEFAULT: InpaintBudget = InpaintBudget {
+        max_sweeps: INPAINT_MAX_SWEEPS,
+        fine_max_sweeps: INPAINT_FINE_MAX_SWEEPS,
+        fine_long_side: INPAINT_FINE_LONG_SIDE,
+        tolerance: INPAINT_TOLERANCE,
+        fine_tolerance: INPAINT_FINE_TOLERANCE,
+    };
+    /// Every level to convergence (the schedule before the fine cap);
+    /// for comparison only.
+    pub const CONVERGED: InpaintBudget = InpaintBudget {
+        max_sweeps: INPAINT_MAX_SWEEPS,
+        fine_max_sweeps: INPAINT_MAX_SWEEPS,
+        fine_long_side: INPAINT_FINE_LONG_SIDE,
+        tolerance: INPAINT_TOLERANCE,
+        fine_tolerance: INPAINT_TOLERANCE,
+    };
+
+    /// (sweep cap, tolerance) for a level of w x h.
+    fn for_level(&self, w: usize, h: usize) -> (usize, f32) {
+        if w.max(h) > self.fine_long_side {
+            (self.fine_max_sweeps, self.fine_tolerance)
+        } else {
+            (self.max_sweeps, self.tolerance)
+        }
+    }
+}
 /// Texture: the surround's fine grain (pixel minus its known-only box
 /// mean of this radius), clamped to +-`CLAMP` (0-255 units) so edges
 /// are not echoed, mirrored into each hole row from both run ends and
@@ -574,6 +627,9 @@ pub struct EditReference {
     /// Total Gauss-Seidel sweeps over all pyramid levels (0 for grey,
     /// or when nothing outside the footprint was left to fill from).
     pub fill_iterations: u64,
+    /// Hole-pixel updates over all sweeps and levels: the inpaint's
+    /// cost, deterministic (not in the receipt).
+    pub fill_work_px: u64,
 }
 
 impl EditReference {
@@ -630,6 +686,26 @@ pub fn edit_reference(
     out_h: u32,
     fill: ReferenceFill,
 ) -> EditReference {
+    edit_reference_with_budget(
+        source,
+        foreground,
+        out_w,
+        out_h,
+        fill,
+        InpaintBudget::DEFAULT,
+    )
+}
+
+/// `edit_reference` with an explicit inpaint sweep schedule (tests
+/// compare `InpaintBudget::DEFAULT` against `CONVERGED`).
+pub fn edit_reference_with_budget(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    out_w: u32,
+    out_h: u32,
+    fill: ReferenceFill,
+    budget: InpaintBudget,
+) -> EditReference {
     let dilate_px = reference_dilate_px(source.width, source.height, out_w, out_h);
     if fill == ReferenceFill::Grey {
         let (image, hole_pixels) = masked_reference(source, foreground, out_w, out_h);
@@ -639,13 +715,14 @@ pub fn edit_reference(
             dilate_px,
             fill,
             fill_iterations: 0,
+            fill_work_px: 0,
         };
     }
     let (mut reference, hole, _) = reference_base(source, foreground, out_w, out_h);
     let (w, h) = (out_w as usize, out_h as usize);
     let known: Vec<bool> = hole.iter().map(|&v| v == 0).collect();
     let hole_pixels = known.iter().filter(|&&k| !k).count() as u64;
-    let mut fill_iterations = 0u64;
+    let (mut fill_iterations, mut fill_work_px) = (0u64, 0u64);
     if hole_pixels > 0 {
         let mut rgb: Vec<[f32; 3]> = reference
             .pixels
@@ -663,7 +740,7 @@ pub fn edit_reference(
             .collect();
         if known.iter().any(|&k| k) {
             let texture = mirrored_texture(&rgb, &known, w, h);
-            fill_iterations = diffuse_fill(&mut rgb, &known, w, h);
+            (fill_iterations, fill_work_px) = diffuse_fill(&mut rgb, &known, w, h, budget);
             for (i, t) in texture.iter().enumerate() {
                 if !known[i] {
                     (0..3).for_each(|c| rgb[i][c] += t[c]);
@@ -693,6 +770,7 @@ pub fn edit_reference(
         dilate_px,
         fill,
         fill_iterations,
+        fill_work_px,
     }
 }
 
@@ -709,9 +787,16 @@ struct FillLevel {
 /// coarsest level starts from the known mean; each finer level starts
 /// its unknowns from the bilinear upsample of the level below; every
 /// level runs over-relaxed Gauss-Seidel (4-neighbour mean, known
-/// pixels fixed, image borders reflecting). Reads nothing but known
-/// pixels. Returns the total sweeps.
-fn diffuse_fill(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64 {
+/// pixels fixed, image borders reflecting) for at most the `budget`'s
+/// sweeps for its size. Reads nothing but known pixels. Returns the
+/// total (sweeps, hole-pixel updates).
+fn diffuse_fill(
+    rgb: &mut [[f32; 3]],
+    known: &[bool],
+    w: usize,
+    h: usize,
+    budget: InpaintBudget,
+) -> (u64, u64) {
     let mut levels = vec![FillLevel {
         rgb: rgb.to_vec(),
         known: known.to_vec(),
@@ -749,7 +834,7 @@ fn diffuse_fill(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64
         }
         levels.push(coarse);
     }
-    let mut total = 0u64;
+    let (mut total, mut work) = (0u64, 0u64);
     let mut below: Option<FillLevel> = None;
     while let Some(mut level) = levels.pop() {
         match &below {
@@ -789,11 +874,21 @@ fn diffuse_fill(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64
                 }
             }
         }
-        total += gauss_seidel(&mut level.rgb, &level.known, level.w, level.h);
+        let (max_sweeps, tolerance) = budget.for_level(level.w, level.h);
+        let (sweeps, updates) = gauss_seidel(
+            &mut level.rgb,
+            &level.known,
+            level.w,
+            level.h,
+            max_sweeps,
+            tolerance,
+        );
+        total += sweeps;
+        work += updates;
         below = Some(level);
     }
     rgb.copy_from_slice(&below.expect("level 0 solved").rgb);
-    total
+    (total, work)
 }
 
 /// Bilinear sample with clamped edges.
@@ -814,15 +909,22 @@ fn bilinear(rgb: &[[f32; 3]], w: usize, h: usize, fx: f32, fy: f32) -> [f32; 3] 
 
 /// Over-relaxed Gauss-Seidel on the unknown pixels (row-major order):
 /// each moves toward the mean of its in-image 4-neighbours. Stops at
-/// `INPAINT_MAX_SWEEPS` or when the largest move in a sweep is under
-/// `INPAINT_TOLERANCE`. Returns the sweeps run.
-fn gauss_seidel(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64 {
+/// `max_sweeps` or when the largest move in a sweep is under
+/// `tolerance`. Returns (sweeps run, pixel updates).
+fn gauss_seidel(
+    rgb: &mut [[f32; 3]],
+    known: &[bool],
+    w: usize,
+    h: usize,
+    max_sweeps: usize,
+    tolerance: f32,
+) -> (u64, u64) {
     let unknown: Vec<usize> = (0..w * h).filter(|&i| !known[i]).collect();
     if unknown.is_empty() || w * h < 2 {
-        return 0;
+        return (0, 0);
     }
     let mut sweeps = 0u64;
-    while (sweeps as usize) < INPAINT_MAX_SWEEPS {
+    while (sweeps as usize) < max_sweeps {
         sweeps += 1;
         let mut max_move = 0f32;
         for &i in &unknown {
@@ -850,11 +952,11 @@ fn gauss_seidel(rgb: &mut [[f32; 3]], known: &[bool], w: usize, h: usize) -> u64
                 max_move = max_move.max(step.abs());
             }
         }
-        if max_move < INPAINT_TOLERANCE {
+        if max_move < tolerance {
             break;
         }
     }
-    sweeps
+    (sweeps, sweeps * unknown.len() as u64)
 }
 
 /// The texture added over the harmonic fill: the known pixels'

@@ -20,7 +20,7 @@ The reference must carry no silhouette.
    - A pyramid is built from known-weighted 2x2 means down to a long side of at most 8 px.
    - The coarsest level starts from the mean of its known pixels.
    - Each finer level starts its unknowns from the bilinear upsample of the level below.
-   - Every level runs over-relaxed Gauss-Seidel (omega 1.5, 4-neighbour mean, known pixels fixed, image borders reflecting). It runs at most 200 sweeps per level and stops early once no hole value moves more than 0.02 (0-255 units) in a sweep.
+   - Every level runs over-relaxed Gauss-Seidel (omega 1.5, 4-neighbour mean, known pixels fixed, image borders reflecting). Coarse levels (long side at most 256 px) run at most 200 sweeps and stop early once no hole value moves more than 0.02 (0-255 units) in a sweep. Fine levels (long side over 256) start from the converged level below and run at most 30 sweeps, stopping once no value moves more than 0.25 (`InpaintBudget::DEFAULT`).
 4. Texture is added on top: the surround's fine grain (pixel minus its known-only 5x5 box mean), clamped to +-10, is mirrored into each hole row from both ends of the run (x -> 2a-1-x and 2b-1-x, used only where that pixel is known), cross-faded by distance and variance-normalised, at gain 1.0. Mirroring keeps the grain continuous at the hole edge and on the same image row, which is the same depth on a ground plane.
 5. The pixels outside the hole are exactly the Lanczos-resized photo, byte for byte (the dilation keeps the constant's resize support inside the hole). Only the hole changes.
 
@@ -35,7 +35,16 @@ Why "no product pixel was sent" stays literally true, at every source size:
 
 Edge case: a footprint that covers the whole frame has nothing outside it to fill from. The hole is then neutral grey and `fill_iterations` is 0.
 
-Cost: 1536x1024 on IMG_1443 takes 397 sweeps over 8 levels, ~2.5 s in a release build. The full 5712x4284 size takes 698 sweeps and ~19 s; it is only built by the fixture example.
+Cost: the fine-level cap (review aaa44dc defect 2) bounds the work at under 44 hole-sized sweeps; it was up to 200 x 1.33. Release build, 2-vCPU VM, `edit_reference` at 1536x1024 including the 24 MP resize:
+
+| IMG_1443 | sweeps | work (x hole) | time | vs uncapped, inside the hole |
+|---|---|---|---|---|
+| bike, uncapped (before) | 397 | 106.2 | 2.79 s | |
+| bike, capped | 228 | 24.2 | 2.27 s | mean abs diff 0.45/255, max 5 |
+| review's 90% lawn, uncapped (before) | 841 | 137.5 | 5.72 s | |
+| review's 90% lawn, capped | 534 | 25.9 | 2.71 s | mean abs diff 0.29/255, max 9 |
+
+The grey reference costs about 1.6-2.1 s there (the resize), so the lawn's inpaint dropped from about +3-5 s to +0.8 s before the Meta call. `tests/inpaint_budget.rs` pins the bound, a 2.5 s wall clock for a 90% mask (release), and the capped fill against the uncapped one on a bike (`InpaintBudget::CONVERGED`, comparison only). The full 5712x4284 size is only built by the fixture example.
 
 ## What it does NOT do (failure modes)
 
