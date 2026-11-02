@@ -54,9 +54,11 @@ All distances are chessboard distances in source pixels. All work happens inside
      - it does not touch the outer band, and it is at least the cell floor;
      - it holds a core of max(4 px, 0.15% of diag) px;
      - at least half of its border is look-through: accepted windows, or thin and structure pixels outside a part twice the thin square wide (spokes, not tread on a tyre);
-     - it links to an accepted window across gaps of at most 14 px (a spoke or another thin line in between). Linking is transitive: the accepted windows and the window cells are each grown by 7 px and labelled together.
+     - it links to an accepted window across gaps of at most 14 px (a spoke or another thin line in between). Linking is transitive: the accepted windows and the window cells are each grown by 7 px and labelled together;
+     - **pocket guard:** less than half of it lies in a pocket of solid kept parts. Solid kept parts are kept structure, dense line work (thin pixels with at least 60% thin pixels in the 25x25 box around them: a chain, reflector prisms) and the outer band, opened with the thin square so spokes drop out. Pockets are what a closing with a square of 0.42% of the bbox diagonal (24 px on IMG_1443) adds to them. The cog between the rear chain and the dropout is such a pocket and stays.
    - **Release.** Windows are released whole, colour-proven or not. They join the carve after the line release and the specks below, which judge only the colour-proven windows. So a background-coloured spoke, a spoke nipple or a chain plate next to a completed window keeps the status the colour-only carve gave it.
 5. **Finish.**
+   - **Pale-part guard** (`restore_pale_parts`, after the specks). Pale pixels (luma at least 120, channel spread at most 50) are opened with the thin square. They are labelled twice: with pieces split by a spoke joined (closing of 0.14% of diag, 8 px here) and with pieces split by a bolt joined (0.42% of diag, 24 px). A part is product when the carve kept at least 60% of its pale pixels and it fills at least 70% of its convex hull. Every carved candidate inside the hull goes back to the product, plus pale pixels within the thin radius of the hull (a sliver beyond a spoke at the end of the part). This keeps a reflector whole: its frayed pale edge (which the colour test reads as sunlit wall) and the brass bolt on it. Sunlit paving is warmer than the spread limit and is carved; a pale rim arc is not compact. `pale_part_pixels_kept` counts these pixels.
    - **Released.** A line-contrast pixel of BACKGROUND colour inside a window is carved, up to 6 rounds. Examples are wall grain or a spoke's cast shadow next to a spoke. The rule: at least 50% of the 25x25 box around it is carved window, and it is not part of a solid kept part. Line pixels of product colour are never released.
    - **Specks.** An uncarved patch that is not thin structure and is fully surrounded by carved or thin pixels is carved too. The size cap is max(64 px, 0.02% of the component).
    - **Gaps.** 1 px gaps along kept structures are closed back to product.
@@ -92,6 +94,12 @@ All thresholds are `pub const` in src/segmentation.rs.
 | `CARVE_COMPLETE_CORE_MIN_PX` / `_DIAG_FRAC` | 4 / 0.0015 | completed window core |
 | `CARVE_COMPLETE_LINK_RADIUS` | 7 | link across gaps of at most 14 px |
 | `CARVE_GATE_MAX_REMAINDER_FRAC` | 0.10 | gate: largest share of the enclosed window area left unreleased |
+| `CARVE_POCKET_MIN_PX` / `_DIAG_FRAC` / `CARVE_POCKET_FRAC` | 2 / 0.0042 / 0.5 | pocket guard: closing radius, share of the cell in a pocket |
+| `CARVE_DENSE_THIN_FRAC` | 0.6 | dense line work counts as a solid part |
+| `CARVE_PALE_MIN_LUMA` / `_MAX_CHROMA` | 120 / 50 | pale pixels |
+| `CARVE_PALE_KEPT_FRAC` / `_SOLIDITY` | 0.6 / 0.7 | pale part: kept share, share of its convex hull |
+| `CARVE_PALE_SPOKE_JOIN_MIN_PX` / `_DIAG_FRAC` | 1 / 0.0014 | pale pieces joined across a spoke |
+| `CARVE_PALE_JOIN_MIN_PX` / `_DIAG_FRAC` | 2 / 0.0042 | pale pieces joined across a bolt |
 
 ## The `hole_carve` record
 `cut_out` returns `hole_carve` beside `mask_review`. It is additive: no existing field changes.
@@ -102,32 +110,34 @@ All thresholds are `pub const` in src/segmentation.rs.
   "applied": true,
   "reason": "open frame (concept names 'bike'): enclosed background 10.30% of the component (needs 2%)",
   "regions": 3,
-  "carved_pixels": 1138074,
-  "protected_thin_pixels": 157940,
-  "soft_edge_pixels": 48652,
+  "carved_pixels": 1093228,
+  "protected_thin_pixels": 144098,
+  "soft_edge_pixels": 44593,
   "speck_pixels": 9354,
   "released_line_pixels": 711,
   "appendage_pixels_kept": 0,
+  "pale_part_pixels_kept": 19456,
   "product_pixels_before": 5660280,
-  "product_pixels_after": 4522206,
+  "product_pixels_after": 4567052,
   "open_frame_keyword": "bike",
   "open_frame": {"keyword": "bike", "enclosed_background_fraction": 0.10302,
                  "enclosed_candidate_fraction": 0.110044,
                  "min_enclosed_background_fraction": 0.02, "min_open_frame_fraction": 0.1},
   "outer_band_px": 34,
   "product_pixels_written": 0,
-  "completion": {"enabled": true, "released_pixels": 554993, "cells_released": 62,
+  "completion": {"enabled": true, "released_pixels": 528077, "cells_released": 55,
                  "depth_floor_px": 238, "core_depth_px": 9, "link_radius_px": 7},
   "gate": {"applies": true, "pass": true, "accepted_window_pixels": 583123,
-           "completed_window_pixels": 554993, "remainder_pixels": 35666,
+           "completed_window_pixels": 528077, "remainder_pixels": 62582,
            "enclosed_candidate_pixels": 1173782, "enclosed_cells": 96,
-           "remainder_fraction": 0.030386, "max_remainder_fraction": 0.1}
+           "remainder_fraction": 0.053317, "max_remainder_fraction": 0.1}
 }
 ```
 
 Fields:
 - `carved_pixels` is the number of pixels that were 255 and now are not (soft edge included). `product_pixels_before - product_pixels_after == carved_pixels`.
 - `protected_thin_pixels` is the count of thin-structure pixels inside the candidates (spokes, chain, cables).
+- `pale_part_pixels_kept` is the count of carved pixels the pale-part guard returned to the product.
 - `completion.released_pixels` is what the completion pass released (step 4e), counted before the 1 px gap closing and the soft edge. `completion.enabled` is false when `AGENTHAND_HOLE_COMPLETE=off` or the carve is off.
 - `gate` is the enclosed-remainder gate. `accepted_window_pixels` are the colour-proven windows, `completed_window_pixels` the completed ones, `remainder_pixels` the enclosed window area left unreleased; `enclosed_candidate_pixels` is their sum. `pass` is false when `remainder_fraction` is above `max_remainder_fraction`.
 - Version 2 adds `completion` and `gate`; the other fields keep their meaning.
@@ -143,7 +153,7 @@ Fields:
 
 ## Kill switches
 - `AGENTHAND_HOLE_CARVE=off` (also `0`, `false` or `no`, in upper or lower case) returns SAM's mapped mask byte-for-byte. `hole_carve.applied` is then false with the reason "disabled (AGENTHAND_HOLE_CARVE=off)", the completion is off too, and the gate does not apply. Unset or another value means the carve runs.
-- `AGENTHAND_HOLE_COMPLETE=off` (same values) turns off only the completion pass. The mask is then byte-identical to the 0e338ba carve (checked on IMG_1443). The gate still runs on the result, so a photo whose wheels hold shaded background is refused with the completion off (IMG_1443: 50.3% remainder). To stage such a photo with SAM's uncarved disc instead, use `AGENTHAND_HOLE_CARVE=off`.
+- `AGENTHAND_HOLE_COMPLETE=off` (same values) turns off only the completion pass. The mask is then the 0e338ba carve with the pale-part guard applied (on IMG_1443 the guard returns 13,170 reflector-edge pixels to the product; without the guard the output was byte-identical to 0e338ba). The gate still runs on the result, so a photo whose wheels hold shaded background is refused with the completion off (IMG_1443: 50.3% remainder). To stage such a photo with SAM's uncarved disc instead, use `AGENTHAND_HOLE_CARVE=off`.
 
 ## Enclosed-remainder gate
 A partial carve inside an open frame (old background left in the wheels) must fail loudly in a live run. After carving, the completion pass's bookkeeping gives the frame interior: the accepted windows, the completed windows, and every enclosed cell (not touching the band, at least the cell floor, deeper than the depth floor) linked to an accepted window through enclosed cells. The linked enclosed cells left unreleased are the **remainder**.
@@ -164,16 +174,16 @@ Why 10%. Remainder fractions measured offline:
 
 | Photo / mask | Completion on | Colour-only carve (completion off) |
 |---|---|---|
-| IMG_1443, run-1443-fixed mask | 3.04% | 50.3% |
-| IMG_1443, 19:06 recorded take mask | 3.08% | 51.4% |
-| IMG_1443, run-1443-merged mask | 2.90% | 50.1% |
+| IMG_1443, run-1443-fixed mask | 5.33% | 50.3% |
+| IMG_1443, 19:06 recorded take mask | 5.56% | 51.4% |
+| IMG_1443, run-1443-merged mask | 5.39% | 50.1% |
 | IMG_1443 (older decode), box-fixed mask | 2.83% | 36.8% |
 | P12 blue bike frame (1920x1080) | 2.83% | 14.2% |
 
-The largest passing value is 3.08% and the smallest failing value is 14.2%. A 10% limit leaves 6.9 points (3.2x) of margin on the hero photo and still refuses every colour-only carve measured. P12 barbecue, P12 patio set, both P18 jacket masks, the P17 card and both P16 car frames do not apply the carve, so the gate does not apply to them.
+The pocket guard keeps cells such as the cog, and they count as remainder, so the hero values rose from about 3% to about 5.5%. The largest passing value is 5.56% and the smallest failing value is 14.2%. A 10% limit leaves 4.4 points (1.8x) of margin on the hero photo and still refuses every colour-only carve measured. P12 barbecue, P12 patio set, both P18 jacket masks, the P17 card and both P16 car frames do not apply the carve, so the gate does not apply to them.
 
 ## Evidence
-`tests/hole_carve.rs` (`cargo test --release --test hole_carve`) has 10 tests plus 1 opt-in.
+`tests/hole_carve.rs` (`cargo test --release --test hole_carve`) has 11 tests plus 1 opt-in.
 
 | Test | Asserts |
 |---|---|
@@ -185,6 +195,7 @@ The largest passing value is 3.08% and the smallest failing value is 14.2%. A 10
 | `open_frame_keywords_match_whole_word_prefixes`, `empty_and_mismatched_masks_are_no_ops` | small contract pieces |
 | `shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay` | The wheel with its lower part in a cast shadow (dark, nearly neutral paving a few levels above the tyre). Colour-only carve: 2.4% of the shaded interior removed. With the completion: 78.2% removed, 100% of spoke pixels kept (also in the shade), hub kept, tyre and outside unchanged, nothing raised, counts match, gate passes, deterministic |
 | `completion_kill_switch_keeps_the_colour_proven_carve` | `AGENTHAND_HOLE_COMPLETE` off / OFF / 0 / false / no: the colour-only mask and record, completion disabled, gate still measured; unset or "on": the completed carve; `AGENTHAND_HOLE_CARVE=off` still returns the identical input mask |
+| `reflector_and_bolt_stay_product_inside_a_completed_wheel` | A pale, prism-textured plate with a brass bolt between two spokes, half over sun and half over the shade of the shaded wheel: 0 plate and 0 bolt pixels released, the shade still completes, spokes kept, gate passes |
 | `gate_refuses_a_partial_open_frame_carve_with_a_retake` | The colour-only carve of the shaded wheel fails the gate (40% remainder); `hole_carve_gate_refusal` returns `HOLE_CARVE_INCOMPLETE` with the remainder numbers, three retake changes and the operator override. The completed carve, the sunlit wheel and a carve that did not apply return no refusal |
 | `real_fixture` (`#[ignore]`) | real cut_out: writes `bike_carve_record.json`, `mask_carved.png` and `bike_carve_before_after.jpg` |
 
@@ -207,18 +218,21 @@ IMG_1443 bike (run-1443-fixed, 5712x4284, concept "blue kids BMX bike") in 5.2 s
 
 The spokes stay continuous across every carved window. The reflector, hub, chain and rims stay. The wall, the pavers and the spokes' own cast shadows on the stone go to the plate.
 
-With the completion pass (same fixture, 6.5 s here against 5.2 s for the colour-only carve on the same machine):
-- 1,138,074 px carved; product pixels went from 5,660,280 to 4,522,206;
-- the completion released 554,993 px in 62 windows; gate remainder 3.04%;
-- rear wheel, r = 760 px disc at the fitted centre: 172,123 -> 528,579 px transparent; front: 418,185 -> 612,253;
-- outside the completed windows the mask differs from the colour-only carve only in soft-edge alpha (1,960 px) and in 1,178 px that the colour-only carve closed as 1 px gaps and that now border a completed window. No pixel is added to the product, the outer band is untouched, no completed pixel lies shallower than the depth floor.
+With the completion pass and both guards (same fixture):
+- 1,093,228 px carved; product pixels went from 5,660,280 to 4,567,052;
+- the completion released 528,077 px; the pale-part guard returned 19,456 px; gate remainder 5.33%;
+- rear wheel, r = 760 px disc at the fitted centre: 172,123 -> 494,655 px transparent; front: 418,185 -> 601,331;
+- reflectors (polygons drawn from the source, harness only): pixels released against SAM's mask, rear 5,888 (colour-only carve) -> 211, front 2,088 -> 329. All of them lie on the reflector outline (58 and 79 inside the outline eroded by 3 px). The bolts and the cog are product;
+- against the colour-only carve, the changes are the completed windows, soft-edge alpha next to them, and the pixels the two guards returned to the product. Against round 1 (completion without the guards), round 2 only returns pixels to the product: 45,804 px, none above SAM's mask, none in the outer band. No pixel is added beyond SAM's mask, the outer band is untouched, no completed pixel lies shallower than the depth floor.
 
 ## Limits
 - **Background the inside model calls product stays.** The completion releases shaded background the colour test could not prove, but a pixel the second colour model proves product is kept structure. On IMG_1443 the darkest paver joints in the lower front wheel stay as dark lines across the window, and the synthetic test leaves about 22% of its shade (a band next to the shadow edge). The gate counts unreleased open cells, not structure, so it does not see this residue.
-- **Background-coloured parts inside a completed window can go.** On IMG_1443 the rear reflector's brass bolt and part of its pale edge band (about 4,100 px) lie in a completed window and are released; the colour-only carve kept them. The dark band between the rear chain and the dropout (about 18,000 px) is released too; most of it is shaded background between the chain and the chainstay, its end next to the axle may include the edge of the cog.
+- **Dark parts are protected by shape only.** The pocket guard keeps the cog because the chain and the dropout enclose it. A dark product part that no solid part encloses (a dark sticker on a shaded window) has no colour evidence against the shade and can be completed. The pocket guard also keeps about 8,000 px of small background slivers on IMG_1443 (next to the dropout, the front hub nut and the rim).
+- **Pale parts only.** The pale-part guard covers pale, compact parts (reflectors, light plates). A brass part on its own is not covered; on a reflector the hull covers it.
+- **Dark paver joints and shaded patches can stay.** The darkest paver joint bands across the front wheel's lower sector are proven product by the inside colour model and stay as dark bars. Shaded patches in the rear wheel's lower right sector and behind the frame tubes are not linked to an accepted window and stay. The gate does not count either kind.
 - **Windows behind the frame.** Cells separated from every accepted window by a frame tube (over 14 px) are not linked and stay. On IMG_1443, 78,585 px of open cells in the rear wheel are unlinked or below the cell floor; most lie between the chainstay and the seat stay.
 - **Window size.** Spaces between spokes narrower than about 13 px, or under the cell floor, are left. The very centre of a dense spoke cross, near the hub, usually stays.
 - **One colour model per neighbourhood.** A background that looks nothing like the 6 to 30 px ring around the mask is not seen as background. For example, a sunlit patch visible only through the wheel.
 - **Open frames without a keyword.** These need >= 10% enclosed candidate area, so a chair photographed tight may need the concept to name it. Solid products are never carved: they have no enclosed background, or less than 2%.
 - **`mask_review`.** A heavily carved frame can push `bbox_fill` under 0.25 and raise its "scattered or frame-like" warning. Read the overlay as usual.
-- **Cost.** Time is linear in the bbox area: about 5 s for a 24 MP frame on one core for the colour-only carve; the completion pass and the gate add about 1.3 s (measured 5.2 s -> 6.5 s on the offline machine).
+- **Cost.** Time is linear in the bbox area. Measured back to back on the offline machine under the same load: 5.3 s for the colour-only carve (0e338ba), 7.7 s with the completion, 9.5 s with the completion and both guards. The guards cost about 1.8 s: two full-window labellings and about a dozen square filters.

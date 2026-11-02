@@ -14,21 +14,22 @@
   (Euclidean depth floor), framed by look-through structure and linked to
   an accepted window across a spoke, are released whole. Completed windows
   join after the line release and the specks, so spokes, nipples and chain
-  plates keep the colour-only status. IMG_1443: 554,993 px released in 62
-  windows; rear r = 760 disc 172,123 -> 528,579 px transparent, front
-  418,185 -> 612,253; product 5,660,280 -> 4,522,206 px; spokes, tyre,
-  rim, hub, fork and chain stay; nothing is added to the product and the
-  outer band is untouched. Carve time 5.2 s -> 6.5 s on the offline
-  machine.
+  plates keep the colour-only status. IMG_1443 (with the guards below):
+  528,077 px released; rear r = 760 disc 172,123 -> 494,655 px
+  transparent, front 418,185 -> 601,331; product 5,660,280 -> 4,567,052
+  px; spokes, tyre, rim, hub, fork, chain, cog and reflectors stay;
+  nothing is added to the product and the outer band is untouched. Carve
+  time 5.3 s -> 9.5 s on the offline machine (7.7 s without the guards).
 - **Kill switch `AGENTHAND_HOLE_COMPLETE=off`** (0/false/no) turns off the
-  completion alone; the mask is then byte-identical to the 0e338ba carve.
+  completion alone; the mask is then the 0e338ba carve with the pale-part
+  guard applied (reflector edges kept).
   `AGENTHAND_HOLE_CARVE=off` still turns all carving off.
 - **Enclosed-remainder gate.** When the open-frame carve applied and more
   than 10% of the enclosed window area (accepted + completed + linked
   enclosed cells left) stays unreleased, `cut_out` returns
   `HOLE_CARVE_INCOMPLETE` in its usual error shape with the remainder,
   three retake changes (decision 114), the operator override and the
-  settled SAM cost; nothing is stored. Measured remainder: 2.83% to 3.08%
+  settled SAM cost; nothing is stored. Measured remainder: 2.83% to 5.56%
   on four IMG_1443 masks and the P12 blue bike frame; colour-only carves
   14.2% to 51.4%. Solid items (barbecue, patio set, jackets, card, cars)
   do not apply the carve and are not gated.
@@ -38,12 +39,24 @@
   completed_window_pixels, remainder_pixels, enclosed_candidate_pixels,
   enclosed_cells, remainder_fraction, max_remainder_fraction}`. Other
   fields keep their meaning.
-- Known residue, stated in docs/HOLE-CARVE.md Limits: dark paver joints
-  the inside model calls product stay (the gate does not see them); the
-  rear reflector's brass bolt and part of its pale edge (about 4,100 px)
-  are released on IMG_1443.
-- Tests: three new tests in `tests/hole_carve.rs` (shaded wheel
-  completed, completion kill switch, gate refusal).
+- Tests: four new tests in `tests/hole_carve.rs` (shaded wheel
+  completed, completion kill switch, gate refusal, reflector and bolt
+  kept).
+- **Pocket guard and pale-part guard** (review round 2). The completion
+  had released the rear cog between the chain and the dropout (17,640
+  px) and the rear reflector's bolt; the colour-only carve already frayed
+  both reflectors' pale edges. A completion cell lying at least half in a
+  pocket of solid kept parts (structure, dense line work such as a chain,
+  the outer band; closing of 0.42% of the bbox diagonal) is no longer
+  completed. Compact pale parts the carve mostly kept (reflectors) get
+  every carved pixel inside their convex hull back. Both only return
+  pixels to the product. IMG_1443: cog 17,640 -> 0 px released;
+  reflector pixels released against SAM's mask, rear 10,979 -> 211,
+  front 2,469 -> 329 (all on the outline); rear disc 494,655 px
+  transparent, front 601,331; gate 5.33% / 5.56%. Record field
+  `pale_part_pixels_kept`. The dark paver joint bars in the front wheel
+  and the shaded patches in the rear lower right still ship as product,
+  and the gate does not count them yet (docs/HOLE-CARVE.md Limits).
 
 ## Unreleased: Proof Graph CLI (`agenthand evidence`)
 
