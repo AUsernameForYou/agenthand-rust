@@ -538,6 +538,9 @@ struct Side {
     armpit: Vec<Option<usize>>,
     hps: Vec<Option<usize>>,
     cuff: Vec<Option<usize>>,
+    /// Inner cuff corner per CUFF_SCALES, reached from the underarm
+    /// along the sleeve's underside.
+    cuff_inner: Vec<Option<usize>>,
     /// Direction (+1 / -1 in contour index) from the shoulder into the
     /// sleeve along its top edge.
     dir_s: isize,
@@ -1028,6 +1031,29 @@ pub fn analyse(
             }
             side.cuff.push(found);
         }
+        // Inner cuff corner: from the underarm along the underside
+        // (into the sleeve, against dir_s), the first strong convex
+        // corner before the far end.
+        if let Some(ai) = side.armpit[ARMPIT_MAIN] {
+            let a_uv = uv[ai];
+            let mut far_u = (0isize, -1.0f64);
+            for t in 0..span {
+                let i = at(ai, t, -dir_s);
+                if labels[i] != lab && labels[i] != 0 {
+                    continue;
+                }
+                let d = dist(uv[i], a_uv);
+                if d > far_u.1 {
+                    far_u = (t, d);
+                }
+            }
+            for &sc in CUFF_SCALES.iter() {
+                side.cuff_inner
+                    .push(first_corner(&uv, conv, ai, -dir_s, far_u.0, k_of(sc)));
+            }
+        } else {
+            side.cuff_inner = vec![None; CUFF_SCALES.len()];
+        }
         // Sleeve width near the cuff, from the silhouette.
         if let Some(ci) = side.cuff[CUFF_MAIN] {
             let cm = outline[ci];
@@ -1250,11 +1276,13 @@ pub fn analyse(
             (sides[0].armpit[ARMPIT_MAIN], sides[1].armpit[ARMPIT_MAIN])
         {
             let (pl, pr) = (uv[al], uv[ar]);
-            let v_arm = 0.5 * (pl[1] + pr[1]);
+            // Below the lower of the two underarm points, so an uneven
+            // lay does not put the line through a sleeve.
+            let v_arm = pl[1].max(pr[1]);
             let check = |v: f64| -> Result<(f64, f64, f64), String> {
                 let (ul, ll, ur, lr) = span_at(v)
                     .ok_or_else(|| "The chest line does not cross the body cleanly.".to_string())?;
-                if ll != 0 || lr != 0 || (ul - pl[0]).abs() > 40.0 || (ur - pr[0]).abs() > 40.0 {
+                if ll != 0 || lr != 0 || (ul - pl[0]).abs() > 60.0 || (ur - pr[0]).abs() > 60.0 {
                     return Err(
                         "A sleeve lies against the body side below the underarm, so the \
                                 side seam is not visible at the chest line."
@@ -1274,12 +1302,15 @@ pub fn analyse(
                     }
                     for k in 0..ARMPIT_SCALES.len() {
                         if let (Some(a), Some(b)) = (sides[0].armpit[k], sides[1].armpit[k]) {
-                            let va = 0.5 * (uv[a][1] + uv[b][1]);
+                            let va = uv[a][1].max(uv[b][1]);
                             if let Ok((w, _, _)) = check(va + CHEST_OFFSETS[CHEST_MAIN]) {
                                 dev = dev.max((w - w0).abs());
                             }
                         }
                     }
+                    // The direct underarm-to-underarm distance is the other
+                    // common reading of "pit to pit".
+                    dev = dev.max((dist(pl, pr) - w0).abs());
                     let vc = v_arm + CHEST_OFFSETS[CHEST_MAIN];
                     let mut m = blank(
                         key,
@@ -1292,9 +1323,17 @@ pub fn analyse(
                         ),
                     );
                     m.line = vec![[ul, vc], [ur, vc]];
+                    if (pl[1] - pr[1]).abs() > 20.0 {
+                        m.notes.push(format!(
+                            "The underarm points sit {:.1} cm apart along the body (uneven \
+                             lay); the line runs below the lower one.",
+                            (pl[1] - pr[1]).abs() / 10.0
+                        ));
+                    }
                     m.notes.push(format!(
-                        "Landmark term: the spread across {:.1} to {:.1} cm below the underarm \
-                         and across corner scales.",
+                        "Landmark term: the spread across {:.1} to {:.1} cm below the underarm, \
+                         across corner scales, and against the direct underarm-to-underarm \
+                         distance.",
                         CHEST_OFFSETS[0] / 10.0,
                         CHEST_OFFSETS[CHEST_OFFSETS.len() - 1] / 10.0
                     ));
@@ -1508,6 +1547,106 @@ pub fn analyse(
     }
     measurements.extend(sleeve_ms);
 
+    // Underarm sleeve length: underarm point to the inner cuff corner
+    // along the sleeve's underside (the sleeve's underarm seam). It
+    // needs no shoulder seam, so it holds on dropped shoulders.
+    let mut under_ms: Vec<Measurement> = Vec::new();
+    for s in 0..2 {
+        let key: &'static str = if s == 0 {
+            "underarm_sleeve_left"
+        } else {
+            "underarm_sleeve_right"
+        };
+        let label: &'static str = if s == 0 {
+            "Underarm sleeve (left)"
+        } else {
+            "Underarm sleeve (right)"
+        };
+        let sd = &sides[s];
+        if no_orientation {
+            under_ms.push(Measurement::missing(key, label, orient_reason.clone()));
+            continue;
+        }
+        if !sd.present {
+            under_ms.push(Measurement::missing(key, label, no_sleeve_reason(s)));
+            continue;
+        }
+        let (Some(ai), Some(ci)) = (sd.armpit[ARMPIT_MAIN], sd.cuff_inner[CUFF_MAIN]) else {
+            let reason = if sd.armpit[ARMPIT_MAIN].is_none() {
+                "The underarm point has no visible corner in the outline (the sleeve hangs \
+                 against the body or the armhole is folded)."
+            } else {
+                "The cuff end has no distinct inner corner in the outline (rolled, folded back, \
+                 or tucked under)."
+            };
+            under_ms.push(Measurement::missing(key, label, reason.to_string()));
+            continue;
+        };
+        let walk = |a: usize, b: usize| -> Option<(f64, Vec<Pt>)> {
+            let steps = ((b as isize - a as isize) * -sd.dir_s).rem_euclid(n as isize);
+            if steps <= 0 || steps as usize > n / 2 {
+                return None;
+            }
+            let mut pts: Vec<Pt> = Vec::with_capacity(steps as usize + 1);
+            let mut len = 0.0;
+            for t in 0..=steps {
+                let i = wrap(a as isize - t * sd.dir_s, n);
+                if t > 0 {
+                    len += dist(uv[i], *pts.last().unwrap());
+                }
+                pts.push(uv[i]);
+            }
+            Some((len, pts))
+        };
+        let Some((len, path)) = walk(ai, ci) else {
+            under_ms.push(Measurement::missing(
+                key,
+                label,
+                "The sleeve's underside could not be followed from the underarm to the cuff."
+                    .to_string(),
+            ));
+            continue;
+        };
+        let mut dev = 0.0f64;
+        for &a in sd.armpit.iter().flatten() {
+            for &b in sd.cuff_inner.iter().flatten() {
+                if let Some((l2, _)) = walk(a, b) {
+                    dev = dev.max((l2 - len).abs());
+                }
+            }
+        }
+        let k15 = ((150.0 / DS) as usize).min(path.len() / 3).max(1);
+        let d_start = sub(path[k15], path[0]);
+        let d_end = sub(path[path.len() - 1], path[path.len() - 1 - k15]);
+        let bend = cross(d_start, d_end).atan2(dot(d_start, d_end)).abs();
+        let mut m = blank(
+            key,
+            label,
+            "Along the sleeve's underside (the underarm seam), from the underarm point to the \
+             inner corner of the cuff."
+                .to_string(),
+        );
+        let mut lmk = dev;
+        if bend.to_degrees() > 10.0 {
+            let bend_term = 0.5 * sd.cuff_width_mm * bend;
+            lmk = (lmk * lmk + bend_term * bend_term).sqrt();
+            m.notes.push(format!(
+                "The sleeve bends {:.0} degrees in this photo; the underside and the sleeve's \
+                 centre line differ by about {:.1} cm, included in the landmark term.",
+                bend.to_degrees(),
+                bend_term / 10.0
+            ));
+        }
+        m.line = path.clone();
+        let (a, b) = (path[0], path[path.len() - 1]);
+        let mut m = finish(m, len, a, b, lmk);
+        m.card_mm = plane.card_half_range_mm(len, to_mm(scale(add(a, b), 0.5)));
+        m.plus_minus_mm =
+            m.card_mm + (m.mask_mm.powi(2) + m.step_mm.powi(2) + m.landmark_mm.powi(2)).sqrt();
+        under_ms.push(m);
+    }
+    measurements.extend(under_ms);
+
     // Hem width.
     {
         let key = "hem_width";
@@ -1544,7 +1683,30 @@ pub fn analyse(
                     "The hem edge is not found below the body.".to_string(),
                 ));
             } else {
-                let v_hem = median(&mut vs);
+                let v_med = median(&mut vs);
+                // A gathered or uneven hem: put the line above the
+                // highest point of the bottom edge across the middle 80%
+                // of the hem, so it crosses the two sides and not the
+                // bottom edge.
+                let mut v_hem = v_med;
+                let mut hem_spread = 0.0;
+                if let Some((ul, _, ur, _)) = span_at(v_med - 30.0) {
+                    let w = ur - ul;
+                    let mut bottoms: Vec<f64> = Vec::new();
+                    let mut u = ul + 0.1 * w;
+                    while u <= ur - 0.1 * w {
+                        if let Some(v) = v_hem_at(u) {
+                            bottoms.push(v);
+                        }
+                        u += 5.0;
+                    }
+                    if !bottoms.is_empty() {
+                        let lo = bottoms.iter().cloned().fold(f64::INFINITY, f64::min);
+                        let hi = bottoms.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                        v_hem = lo;
+                        hem_spread = hi - lo;
+                    }
+                }
                 let check = |v: f64| -> Result<(f64, f64, f64), String> {
                     let (ul, ll, ur, lr) = span_at(v).ok_or_else(|| {
                         "The hem line does not cross the body cleanly.".to_string()
@@ -1572,12 +1734,19 @@ pub fn analyse(
                             key,
                             label,
                             format!(
-                                "Straight across the bottom of the body {:.0} cm above the hem \
-                                 edge (the median hem line across the middle of the body), side \
+                                "Straight across the bottom of the body {:.0} cm above the \
+                                 highest point of the hem edge (middle 80% of its width), side \
                                  edge to side edge.",
                                 HEM_OFFSETS[HEM_MAIN] / 10.0
                             ),
                         );
+                        if hem_spread > 10.0 {
+                            m.notes.push(format!(
+                                "The hem edge is uneven in this photo (it varies {:.1} cm along \
+                                 the width: gathered or not pulled straight).",
+                                hem_spread / 10.0
+                            ));
+                        }
                         m.line = vec![[ul, vl], [ur, vl]];
                         measurements.push(finish(m, w0, [ul, vl], [ur, vl], dev));
                     }
@@ -1594,6 +1763,8 @@ pub fn analyse(
         "sleeve_length",
         "sleeve_length_left",
         "sleeve_length_right",
+        "underarm_sleeve_left",
+        "underarm_sleeve_right",
         "hem_width",
     ];
     measurements.sort_by_key(|m| order.iter().position(|k| *k == m.key).unwrap_or(99));
@@ -1616,6 +1787,35 @@ pub fn analyse(
         mm_per_px,
         notes,
     })
+}
+
+/// The first strong convex corner met walking from `base` in `dir`,
+/// searched within 250 mm before (and 30 mm past) the far point at step
+/// `far_t`.
+fn first_corner(
+    uv: &[Pt],
+    conv: f64,
+    base: usize,
+    dir: isize,
+    far_t: isize,
+    kk: usize,
+) -> Option<usize> {
+    let n = uv.len();
+    let lo = (far_t - (250.0 / DS) as isize).max(1);
+    let hi = far_t + (30.0 / DS) as isize;
+    let mut cur_peak: Option<(isize, f64)> = None;
+    for t in lo..=hi {
+        let i = wrap(base as isize + t * dir, n);
+        let tv = turn_at(uv, i as isize, kk, conv);
+        if tv >= CUFF_MIN_TURN {
+            if cur_peak.is_none_or(|p| tv > p.1) {
+                cur_peak = Some((t, tv));
+            }
+        } else if let Some(p) = cur_peak {
+            return Some(wrap(base as isize + p.0 * dir, n));
+        }
+    }
+    cur_peak.map(|p| wrap(base as isize + p.0 * dir, n))
 }
 
 /// Longest circular run of `true`, merging runs split by gaps of at
@@ -1863,6 +2063,7 @@ fn colour_of(key: &str) -> u32 {
         "chest_width" => 0xC2410C,
         "shoulder_width" => 0x047857,
         "sleeve_length" | "sleeve_length_left" | "sleeve_length_right" => 0x7E22CE,
+        "underarm_sleeve_left" | "underarm_sleeve_right" => 0x0E7490,
         "hem_width" => 0xB91C1C,
         _ => 0x111827,
     }
@@ -1963,7 +2164,7 @@ pub fn render_diagram(g: &Garment, card_id: &str, note: Option<&str>) -> RgbaIma
                     c,
                 ));
             }
-            k if k.starts_with("sleeve_length_") => {
+            k if k.starts_with("sleeve_length_") || k.starts_with("underarm_sleeve_") => {
                 cv.polyline(&pts, 3.0, c);
                 let mid = pts[pts.len() / 2];
                 label_boxes.push((mid, format!("{:.1} cm", m.value_cm().unwrap()), c));

@@ -89,6 +89,10 @@ struct Truth {
     sleeve_right_ends: [Pt; 2],
     sleeve_left_ends: [Pt; 2],
     hem_ends: [Pt; 2],
+    /// Underarm sleeve: underarm point to the inner cuff corner.
+    underarm: f64,
+    underarm_right_ends: [Pt; 2],
+    underarm_left_ends: [Pt; 2],
 }
 
 fn tee(fold_left_sleeve: bool) -> Tee {
@@ -149,6 +153,9 @@ fn tee(fold_left_sleeve: bool) -> Tee {
             sleeve_right_ends: [sp, co],
             sleeve_left_ends: [mirror(sp), mirror(co)],
             hem_ends: [[-side_u(590.0), 590.0], [side_u(590.0), 590.0]],
+            underarm: t,
+            underarm_right_ends: [arm, ci],
+            underarm_left_ends: [mirror(arm), mirror(ci)],
         },
     }
 }
@@ -418,6 +425,20 @@ fn tee_flat_lay_measures_every_landmark() {
         tr.sleeve_right_ends,
     );
     check(&g, &plane, "hem_width", tr.hem, tr.hem_ends);
+    check(
+        &g,
+        &plane,
+        "underarm_sleeve_left",
+        tr.underarm,
+        tr.underarm_left_ends,
+    );
+    check(
+        &g,
+        &plane,
+        "underarm_sleeve_right",
+        tr.underarm,
+        tr.underarm_right_ends,
+    );
     // The headline sleeve is the mean of both sides.
     let (v, pm) = measured(&g, "sleeve_length");
     assert!(
