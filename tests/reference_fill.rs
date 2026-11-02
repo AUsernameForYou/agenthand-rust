@@ -289,7 +289,7 @@ fn grey_env_restores_the_legacy_fill_and_the_record_says_which() {
     assert_eq!(grey.hole_pixels, legacy_hole);
     assert_eq!(
         grey.fill_record(),
-        json!({"fill": "grey", "fill_rgb": [128, 128, 128], "fill_iterations": 0, "fill_texture": null})
+        json!({"fill": "grey", "fill_rgb": [128, 128, 128], "fill_iterations": 0, "fill_texture": null, "dilate_px": 8})
     );
     assert!(grey.product_region_note().contains("filled grey"));
 

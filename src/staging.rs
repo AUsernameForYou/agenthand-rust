@@ -5,10 +5,11 @@
 //! ground plane and light already match the product, which never
 //! moves or scales:
 //! - `edit_reference`: the photo at the edit size with every visible
-//!   product pixel (alpha > 0) plus an 8 px ring removed and filled
-//!   from the pixels OUTSIDE that footprint (`inpaint_diffusion`: a
-//!   coarse-to-fine harmonic fill plus a faint copy of the surround's
-//!   fine texture), so the model sees no object-shaped silhouette.
+//!   product pixel (alpha > 0) plus an 8 px ring (wider for upscaled
+//!   small sources) removed and filled from the pixels OUTSIDE that
+//!   footprint (`inpaint_diffusion`: a coarse-to-fine harmonic fill
+//!   plus a faint copy of the surround's fine texture), so the model
+//!   sees no object-shaped silhouette.
 //!   This is the only image the edit model receives; product pixels
 //!   are never sent. `AGENTHAND_REFERENCE_FILL=grey` restores the
 //!   legacy flat-grey hole (`masked_reference`) for comparison.
@@ -49,7 +50,9 @@ pub const THIN_FRACTION: f64 = 0.01;
 pub const MATTE_PX: u32 = 2;
 pub const MATTE_PX_THIN: u32 = 1;
 /// Grey fill of the legacy masked reference (`AGENTHAND_REFERENCE_FILL=grey`)
-/// and the product footprint's dilation (reference px, both fills).
+/// (also the product pixels' stand-in before the resize, both fills)
+/// and the product footprint's minimum dilation (reference px, both
+/// fills; `reference_dilate_px` widens it for upscaled sources).
 pub const REFERENCE_GREY: [u8; 3] = [128, 128, 128];
 pub const REFERENCE_DILATE_PX: usize = 8;
 /// Reference fill switch: `grey` (or `gray`) restores the flat-grey
@@ -411,38 +414,108 @@ pub fn check_stageable(geometry: &SubjectGeometry) -> Result<(), String> {
     Ok(())
 }
 
+/// The footprint's dilation (reference px) for a `src_w` x `src_h`
+/// source sent at `out_w` x `out_h`: `REFERENCE_DILATE_PX`, widened
+/// when the source is UPSCALED so it always covers the Lanczos resize
+/// support (3 source px = 3 x upscale reference px past a product
+/// pixel's covered area) plus 2 px: max(8, ceil(3 x upscale) + 2).
+/// Edit sizes are at least 1024 px, so a small web photo (300x225 at
+/// 1536x1024 is a 5.1x upscale) gets 18 px; at a 2x upscale or any
+/// downscale it is the plain 8.
+pub fn reference_dilate_px(src_w: u32, src_h: u32, out_w: u32, out_h: u32) -> usize {
+    let upscale = (out_w as f64 / src_w.max(1) as f64).max(out_h as f64 / src_h.max(1) as f64);
+    REFERENCE_DILATE_PX.max((3.0 * upscale).ceil() as usize + 2)
+}
+
 /// The product footprint at (out_w, out_h): a reference pixel is in
-/// the hole when any source pixel under it is visible product
-/// (alpha > 0), then grown by `dilate` px.
+/// the hole when any visible product pixel (alpha > 0) lies under it,
+/// then grown by `dilate` px. Along an axis that is downscaled a
+/// source pixel marks the reference pixel under its leading edge; along
+/// an upscaled axis it marks every reference pixel it overlaps (a
+/// 300 px source at 1536 covers 5-6 reference px per source px).
 fn footprint(foreground: &RgbaImage, out_w: u32, out_h: u32, dilate: usize) -> Vec<u8> {
     let (w, h) = (foreground.width as u64, foreground.height as u64);
+    // Half-open reference span covered by source index i of n at size out.
+    let span = |i: u64, n: u64, out: u64| -> (usize, usize) {
+        let a = i * out / n;
+        let b = if out > n {
+            ((i + 1) * out).div_ceil(n)
+        } else {
+            a + 1
+        };
+        (a as usize, b.min(out) as usize)
+    };
+    let ow = out_w as usize;
+    let cols: Vec<(usize, usize)> = (0..w).map(|x| span(x, w, out_w as u64)).collect();
     let mut hole = vec![0u8; (out_w * out_h) as usize];
     for y in 0..h {
-        let ry = (y * out_h as u64 / h) as usize;
+        let (ry0, ry1) = span(y, h, out_h as u64);
         for x in 0..w {
             if foreground.pixels[((y * w + x) * 4 + 3) as usize] > 0 {
-                hole[ry * out_w as usize + (x * out_w as u64 / w) as usize] = 1;
+                let (rx0, rx1) = cols[x as usize];
+                for ry in ry0..ry1 {
+                    hole[ry * ow + rx0..ry * ow + rx1].fill(1);
+                }
             }
         }
     }
-    dilate_square(&hole, out_w as usize, out_h as usize, dilate)
+    dilate_square(&hole, ow, out_h as usize, dilate)
+}
+
+/// The source with every visible product pixel (alpha > 0) replaced by
+/// opaque `REFERENCE_GREY` BEFORE any resize: the reference is resized
+/// from this copy, so no product value can reach it whatever the
+/// resampling support. (The dilated footprint then also keeps this
+/// constant out of the ring the inpaint reads.)
+fn product_blanked(source: &RgbaImage, foreground: &RgbaImage) -> RgbaImage {
+    let mut blanked = source.clone();
+    let stand_in = [REFERENCE_GREY[0], REFERENCE_GREY[1], REFERENCE_GREY[2], 255];
+    for (p, f) in blanked
+        .pixels
+        .chunks_exact_mut(4)
+        .zip(foreground.pixels.chunks_exact(4))
+    {
+        if f[3] > 0 {
+            p.copy_from_slice(&stand_in);
+        }
+    }
+    blanked
+}
+
+/// Shared by both fills: the product-blanked source resized to
+/// (out_w, out_h) with Lanczos, the dilated footprint, and its
+/// dilation.
+fn reference_base(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+    out_w: u32,
+    out_h: u32,
+) -> (RgbaImage, Vec<u8>, usize) {
+    let dilate = reference_dilate_px(source.width, source.height, out_w, out_h);
+    let mut reference = resize_rgba(
+        &product_blanked(source, foreground),
+        out_w,
+        out_h,
+        ResampleFilter::Lanczos,
+    );
+    reference.icc_profile = None;
+    let hole = footprint(foreground, out_w, out_h, dilate);
+    (reference, hole, dilate)
 }
 
 /// The legacy edit reference (`AGENTHAND_REFERENCE_FILL=grey`): the
-/// source at (out_w, out_h) with the product footprint plus
-/// `REFERENCE_DILATE_PX` filled `REFERENCE_GREY`. The edit model reads
-/// that object-shaped grey silhouette as a shadow and paints it
-/// (docs/REFERENCE-FILL.md), so it is kept for comparison only.
-/// Returns (reference, hole pixel count).
+/// source at (out_w, out_h) with the product footprint plus its
+/// dilation (`reference_dilate_px`) filled `REFERENCE_GREY`. The edit
+/// model reads that object-shaped grey silhouette as a shadow and
+/// paints it (docs/REFERENCE-FILL.md), so it is kept for comparison
+/// only. Returns (reference, hole pixel count).
 pub fn masked_reference(
     source: &RgbaImage,
     foreground: &RgbaImage,
     out_w: u32,
     out_h: u32,
 ) -> (RgbaImage, u64) {
-    let mut reference = resize_rgba(source, out_w, out_h, ResampleFilter::Lanczos);
-    reference.icc_profile = None;
-    let hole = footprint(foreground, out_w, out_h, REFERENCE_DILATE_PX);
+    let (mut reference, hole, _) = reference_base(source, foreground, out_w, out_h);
     let mut hole_px = 0u64;
     for (i, px) in reference.pixels.chunks_exact_mut(4).enumerate() {
         if hole[i] != 0 {
@@ -494,6 +567,9 @@ pub struct EditReference {
     pub image: RgbaImage,
     /// Reference pixels in the dilated product footprint.
     pub hole_pixels: u64,
+    /// The footprint's dilation in reference px (`reference_dilate_px`:
+    /// 8, wider for upscaled small sources).
+    pub dilate_px: usize,
     pub fill: ReferenceFill,
     /// Total Gauss-Seidel sweeps over all pyramid levels (0 for grey,
     /// or when nothing outside the footprint was left to fill from).
@@ -502,7 +578,9 @@ pub struct EditReference {
 
 impl EditReference {
     /// The fill fields of the receipt's `backdrop.reference` block
-    /// (additive: `fill_rgb` stays, `null` for the inpaint).
+    /// (additive: `fill_rgb` stays, `null` for the inpaint), plus the
+    /// dilation actually used: the server merges these over its own
+    /// keys, so `dilate_px` reports 18 for a 300x225 source, not 8.
     pub fn fill_record(&self) -> Value {
         match self.fill {
             ReferenceFill::Grey => json!({
@@ -510,11 +588,13 @@ impl EditReference {
                 "fill_rgb": REFERENCE_GREY,
                 "fill_iterations": 0,
                 "fill_texture": Value::Null,
+                "dilate_px": self.dilate_px,
             }),
             ReferenceFill::InpaintDiffusion => json!({
                 "fill": self.fill.name(),
                 "fill_rgb": Value::Null,
                 "fill_iterations": self.fill_iterations,
+                "dilate_px": self.dilate_px,
                 "fill_texture": {
                     "kind": "row_mirror_residual",
                     "radius_px": INPAINT_TEXTURE_RADIUS,
@@ -535,10 +615,14 @@ impl EditReference {
 }
 
 /// The edit reference for `fill`: the source at (out_w, out_h) with
-/// the product footprint plus `REFERENCE_DILATE_PX` replaced. The
-/// inpaint reads ONLY reference pixels outside that footprint (the
-/// Lanczos resize support, 3 output px when downscaling, sits inside
-/// the 8 px dilation), so no product pixel reaches the image.
+/// the product footprint plus its dilation replaced. No product pixel
+/// reaches the image, at any source size:
+/// - the reference is resized from a copy of the source whose product
+///   pixels (alpha > 0) are already the constant `REFERENCE_GREY`;
+/// - the dilation (`reference_dilate_px`) covers the Lanczos support
+///   (3 output px when downscaling, 3 x upscale when upscaling), so
+///   that constant does not reach the ring outside the footprint;
+/// - the inpaint reads ONLY reference pixels outside the footprint.
 pub fn edit_reference(
     source: &RgbaImage,
     foreground: &RgbaImage,
@@ -546,18 +630,18 @@ pub fn edit_reference(
     out_h: u32,
     fill: ReferenceFill,
 ) -> EditReference {
+    let dilate_px = reference_dilate_px(source.width, source.height, out_w, out_h);
     if fill == ReferenceFill::Grey {
         let (image, hole_pixels) = masked_reference(source, foreground, out_w, out_h);
         return EditReference {
             image,
             hole_pixels,
+            dilate_px,
             fill,
             fill_iterations: 0,
         };
     }
-    let mut reference = resize_rgba(source, out_w, out_h, ResampleFilter::Lanczos);
-    reference.icc_profile = None;
-    let hole = footprint(foreground, out_w, out_h, REFERENCE_DILATE_PX);
+    let (mut reference, hole, _) = reference_base(source, foreground, out_w, out_h);
     let (w, h) = (out_w as usize, out_h as usize);
     let known: Vec<bool> = hole.iter().map(|&v| v == 0).collect();
     let hole_pixels = known.iter().filter(|&&k| !k).count() as u64;
@@ -606,6 +690,7 @@ pub fn edit_reference(
     EditReference {
         image: reference,
         hole_pixels,
+        dilate_px,
         fill,
         fill_iterations,
     }

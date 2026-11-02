@@ -14,23 +14,24 @@ The reference must carry no silhouette.
 ## What the fill is now (`inpaint_diffusion`, default)
 
 `staging::edit_reference(source, foreground, w, h, fill)` builds the reference in five steps:
-1. The source is resized to (w, h) with Lanczos, exactly as before.
-2. The hole is the same footprint as before: alpha > 0, mapped to the reference grid and dilated 8 px. `hole_pixels` is unchanged (434,072 on IMG_1443).
+1. Every visible product pixel (alpha > 0) of a copy of the source is set to the constant `[128, 128, 128]`, then that copy is resized to (w, h) with Lanczos. No product value enters the resize at all.
+2. The hole is the footprint: alpha > 0, mapped to the reference grid (along an upscaled axis a source pixel marks every reference pixel it overlaps) and dilated by `reference_dilate_px` = max(8, ceil(3 x upscale) + 2) px. A downscaled source (every phone photo) keeps 8 px and the same footprint: `hole_pixels` is unchanged (434,072 on IMG_1443). A 300x225 web photo sent at 1536x1024 (5.1x upscale) gets 18 px.
 3. Hole values are zeroed, then filled ONLY from reference pixels outside the hole, using a coarse-to-fine harmonic (Laplace) fill:
    - A pyramid is built from known-weighted 2x2 means down to a long side of at most 8 px.
    - The coarsest level starts from the mean of its known pixels.
    - Each finer level starts its unknowns from the bilinear upsample of the level below.
    - Every level runs over-relaxed Gauss-Seidel (omega 1.5, 4-neighbour mean, known pixels fixed, image borders reflecting). It runs at most 200 sweeps per level and stops early once no hole value moves more than 0.02 (0-255 units) in a sweep.
 4. Texture is added on top: the surround's fine grain (pixel minus its known-only 5x5 box mean), clamped to +-10, is mirrored into each hole row from both ends of the run (x -> 2a-1-x and 2b-1-x, used only where that pixel is known), cross-faded by distance and variance-normalised, at gain 1.0. Mirroring keeps the grain continuous at the hole edge and on the same image row, which is the same depth on a ground plane.
-5. The pixels outside the hole are exactly the Lanczos-resized photo, byte for byte. Only the hole changes.
+5. The pixels outside the hole are exactly the Lanczos-resized photo, byte for byte (the dilation keeps the constant's resize support inside the hole). Only the hole changes.
 
 The fill is deterministic: the same input gives the same bytes.
 
-Why "no product pixel was sent" stays literally true:
+Why "no product pixel was sent" stays literally true, at every source size:
+- The reference is resized from a copy whose product pixels are already the constant, so no product value can reach it whatever the resize support.
 - The fill never reads a hole pixel.
-- The Lanczos support is 3 output px when downscaling, and every pixel outside the hole is at least 8 px from any product pixel.
-- `tests/reference_fill.rs` proves it on synthetic images (same size, 2x down, a stretch) and on the real IMG_1443 run. Two sources that differ only in their product pixels (the real bike vs flat magenta) give bit-identical references.
-- Bound: an upscale of more than ~2.6x (a source under ~580 px on the long side sent at 1536) widens the Lanczos support past the 8 px dilation. That case existed with the grey fill too.
+- The dilation covers the Lanczos support: 3 output px when downscaling, 3 x upscale output px when upscaling (edit sizes are at least 1024 px, so small sources ARE upscaled). The constant therefore never reaches the ring the inpaint reads.
+- `tests/reference_leak.rs` proves it differentially (two sources that differ only in their alpha > 0 pixels give byte-identical references, both fills) at 300x225, 512x384, 600x450 and 1024x768 (upscaled) and 2856x2142 (downscaled), with centred, edge-touching and frame-filling masks; outside the hole the reference equals the plain resized photo. `tests/reference_fill.rs` does the same on synthetic bikes (same size, 2x down, a stretch) and on the real IMG_1443 run.
+- Fixed in the aaa44dc review (defect 1): before, the source was resized with its product pixels in place and the dilation was a flat 8 px. At a 300x225 source 244k reference pixels (max 37/255) depended on product pixels with the inpaint, 8k with the grey fill; at 512x384, 32-45k (max 6); at 600x450, 858 (max 2); at 640 px and up, none.
 
 Edge case: a footprint that covers the whole frame has nothing outside it to fill from. The hole is then neutral grey and `fill_iterations` is 0.
 
@@ -57,7 +58,8 @@ Cost: 1536x1024 on IMG_1443 takes 397 sweeps over 8 levels, ~2.5 s in a release 
 | `fill_rgb` | `null` (key kept) | `[128, 128, 128]` |
 | `fill_iterations` | total Gauss-Seidel sweeps, all levels | `0` |
 | `fill_texture` | `{"kind": "row_mirror_residual", "radius_px": 2, "clamp": 10.0, "gain": 1.0}` | `null` |
-| `hole_pixels`, `dilate_px`, `size`, `sha256` | as before | as before |
+| `hole_pixels`, `size`, `sha256` | as before | as before |
+| `dilate_px` | the dilation used: 8, wider for upscaled small sources (`reference_dilate_px`) | same |
 | `product_region` | "...filled from the photo pixels outside it before upload; no product pixel was sent" | the old grey sentence |
 
 No key was removed and none changed meaning; verification is unaffected.
