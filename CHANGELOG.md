@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased: hole carve completion pass and enclosed-remainder gate
+
+- **Completion pass** (`segmentation::complete_windows`, step 4e in
+  docs/HOLE-CARVE.md). The colour-proven carve left shaded background
+  inside IMG_1443's wheels as product (rear disc 172,123 px transparent
+  against 1,642,455 opaque): pavers in the bike's own shadow read like the
+  tyre, so they did not clear the e margin. Once windows are accepted, the
+  rest of the frame interior is judged by structure: a second colour model
+  sampled inside the frame (ring plus accepted windows against band plus
+  proven product) marks the kept structure (rim, tubes, fork, hub,
+  chainguard); open cells deeper than the accepted windows reach
+  (Euclidean depth floor), framed by look-through structure and linked to
+  an accepted window across a spoke, are released whole. Completed windows
+  join after the line release and the specks, so spokes, nipples and chain
+  plates keep the colour-only status. IMG_1443: 554,993 px released in 62
+  windows; rear r = 760 disc 172,123 -> 528,579 px transparent, front
+  418,185 -> 612,253; product 5,660,280 -> 4,522,206 px; spokes, tyre,
+  rim, hub, fork and chain stay; nothing is added to the product and the
+  outer band is untouched. Carve time 5.2 s -> 6.5 s on the offline
+  machine.
+- **Kill switch `AGENTHAND_HOLE_COMPLETE=off`** (0/false/no) turns off the
+  completion alone; the mask is then byte-identical to the 0e338ba carve.
+  `AGENTHAND_HOLE_CARVE=off` still turns all carving off.
+- **Enclosed-remainder gate.** When the open-frame carve applied and more
+  than 10% of the enclosed window area (accepted + completed + linked
+  enclosed cells left) stays unreleased, `cut_out` returns
+  `HOLE_CARVE_INCOMPLETE` in its usual error shape with the remainder,
+  three retake changes (decision 114), the operator override and the
+  settled SAM cost; nothing is stored. Measured remainder: 2.83% to 3.08%
+  on four IMG_1443 masks and the P12 blue bike frame; colour-only carves
+  14.2% to 51.4%. Solid items (barbecue, patio set, jackets, card, cars)
+  do not apply the carve and are not gated.
+- **`hole_carve` record version 2**: adds `completion {enabled,
+  released_pixels, cells_released, depth_floor_px, core_depth_px,
+  link_radius_px}` and `gate {applies, pass, accepted_window_pixels,
+  completed_window_pixels, remainder_pixels, enclosed_candidate_pixels,
+  enclosed_cells, remainder_fraction, max_remainder_fraction}`. Other
+  fields keep their meaning.
+- Known residue, stated in docs/HOLE-CARVE.md Limits: dark paver joints
+  the inside model calls product stay (the gate does not see them); the
+  rear reflector's brass bolt and part of its pale edge (about 4,100 px)
+  are released on IMG_1443.
+- Tests: three new tests in `tests/hole_carve.rs` (shaded wheel
+  completed, completion kill switch, gate refusal).
+
 ## Unreleased: Proof Graph CLI (`agenthand evidence`)
 
 - **New subcommand `agenthand evidence`** over the evidence database
