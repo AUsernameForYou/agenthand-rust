@@ -8,7 +8,14 @@
 //!     pixels kept, the outer silhouette unchanged;
 //! (b) a solid box: no-op;
 //! (c) `AGENTHAND_HOLE_CARVE=off`: the identical mask;
-//! (d) a ring whose interior matches the product colour: no-op.
+//! (d) a ring whose interior matches the product colour: no-op;
+//! (e) the completion pass (step 4e): a wheel whose lower interior is
+//!     shaded paving, dark and close to the tyre in colour, so the colour
+//!     test proves almost none of it; the completion releases it while the
+//!     spokes, the tyre and the hub stay;
+//! (f) `AGENTHAND_HOLE_COMPLETE=off`: the colour-proven carve only;
+//! (g) the enclosed-remainder gate: the colour-only carve of (e) leaves
+//!     most of the shaded interior and is refused with a retake.
 //!
 //! Plus an opt-in run on a real cut_out (mask.png + source.png):
 //!
@@ -20,7 +27,8 @@
 
 use agenthand::image::{GrayImage, RgbaImage};
 use agenthand::segmentation::{
-    carve_holes, carve_holes_with, open_frame_keyword, HOLE_CARVE_ENV,
+    carve_holes, carve_holes_opts, carve_holes_with, hole_carve_gate_refusal, open_frame_keyword,
+    HOLE_CARVE_ENV, HOLE_CARVE_GATE_CODE, HOLE_COMPLETE_ENV,
 };
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -333,6 +341,271 @@ fn ring_with_product_coloured_interior_is_a_no_op() {
     assert_eq!(record["applied"], json!(false), "{record:#}");
     assert_eq!(record["carved_pixels"], json!(0));
     assert_eq!(out.pixels, mask.pixels);
+}
+
+// ---------------------------------------------------------------------------
+// (e) Completion pass: a wheel half in shade.
+// ---------------------------------------------------------------------------
+
+/// Rows at or below this y are in a cast shadow, inside and outside the
+/// wheel (the ring outside the tyre sees the shaded paving too).
+const SHADE_Y: u32 = 340;
+
+fn shaded(x: u32, y: u32) -> bool {
+    y >= SHADE_Y
+}
+
+/// Shaded paving: dark, nearly neutral, textured, a few levels above the
+/// tyre (28, 28, 32). The colour test cannot prove it background.
+fn shade(x: u32, y: u32) -> [u8; 4] {
+    let tex = 8.0;
+    let n = noise(x, y, 11) * tex + noise(x / 4, y / 4, 12) * tex * 0.6;
+    [
+        (40.0 + n).clamp(0.0, 255.0) as u8,
+        (38.0 + n).clamp(0.0, 255.0) as u8,
+        (39.0 + n * 0.9).clamp(0.0, 255.0) as u8,
+        255,
+    ]
+}
+
+fn shaded_wheel_scene() -> (RgbaImage, GrayImage) {
+    let mut px = Vec::with_capacity((W * H * 4) as usize);
+    let mut mask = Vec::with_capacity((W * H) as usize);
+    for y in 0..H {
+        for x in 0..W {
+            let n = noise(x, y, 7) * 4.0;
+            let ground = if shaded(x, y) { shade(x, y) } else { background(x, y) };
+            let c = match part(x, y) {
+                Part::Background | Part::Enclosed => ground,
+                Part::Tyre => [(28.0 + n) as u8, (28.0 + n) as u8, (32.0 + n) as u8, 255],
+                Part::Hub => [(70.0 + n) as u8, (72.0 + n) as u8, (82.0 + n) as u8, 255],
+                Part::Spoke => [(88.0 + n) as u8, (90.0 + n) as u8, (96.0 + n) as u8, 255],
+            };
+            px.extend_from_slice(&c);
+            let (r, _) = polar(x, y);
+            mask.push(if r <= TYRE_OUT + 2.0 { 255 } else { 0 });
+        }
+    }
+    (
+        RgbaImage::new(W, H, px),
+        GrayImage { width: W, height: H, pixels: mask, icc_profile: None },
+    )
+}
+
+/// Share of the enclosed (seen-through) pixels on the shaded / sunlit side
+/// that the carve removed (alpha below 255).
+fn removed_share(out: &GrayImage, want_shade: bool) -> f64 {
+    let total = count_where(out, |x, y, _| part(x, y) == Part::Enclosed && shaded(x, y) == want_shade);
+    let removed =
+        count_where(out, |x, y, v| part(x, y) == Part::Enclosed && shaded(x, y) == want_shade && v < 255);
+    removed as f64 / total as f64
+}
+
+fn kept_share(out: &GrayImage, which: Part) -> f64 {
+    let total = count_where(out, |x, y, _| part(x, y) == which);
+    let kept = count_where(out, |x, y, v| part(x, y) == which && v == 255);
+    kept as f64 / total as f64
+}
+
+#[test]
+fn shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay() {
+    let (source, mask) = shaded_wheel_scene();
+
+    // The colour-proven carve alone (completion off): the sunlit windows
+    // go, the shaded paving stays product.
+    let (base, base_rec) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
+    assert_eq!(base_rec["applied"], json!(true), "{base_rec:#}");
+    assert_eq!(base_rec["completion"]["enabled"], json!(false));
+    assert_eq!(base_rec["completion"]["released_pixels"], json!(0));
+    let base_shade = removed_share(&base, true);
+    assert!(base_shade <= 0.10, "colour-only carve removed {:.1}% of the shade", base_shade * 100.0);
+    assert!(removed_share(&base, false) >= 0.95, "{base_rec:#}");
+
+    // With the completion pass.
+    let (out, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(record["applied"], json!(true), "{record:#}");
+    assert_never_raised(&mask, &out);
+    let shade_removed = removed_share(&out, true);
+    assert!(
+        shade_removed >= 0.70,
+        "completion removed only {:.1}% of the shaded interior (colour-only: {:.1}%): {record:#}",
+        shade_removed * 100.0,
+        base_shade * 100.0
+    );
+    assert!(removed_share(&out, false) >= 0.95, "{record:#}");
+    let released = record["completion"]["released_pixels"].as_u64().unwrap();
+    assert!(released > 0 && record["completion"]["enabled"] == json!(true), "{record:#}");
+    assert!(record["completion"]["cells_released"].as_u64().unwrap() >= 1, "{record:#}");
+
+    // Structure stays: spokes (also the ones crossing the shade), the hub,
+    // and the tyre and everything outside it byte for byte.
+    let spokes = kept_share(&out, Part::Spoke);
+    assert!(spokes >= 0.98, "only {:.2}% of spoke pixels kept: {record:#}", spokes * 100.0);
+    let shaded_spokes = count_where(&out, |x, y, _| part(x, y) == Part::Spoke && shaded(x, y));
+    let shaded_spokes_kept =
+        count_where(&out, |x, y, v| part(x, y) == Part::Spoke && shaded(x, y) && v == 255);
+    assert!(shaded_spokes_kept as f64 >= 0.98 * shaded_spokes as f64, "{shaded_spokes_kept}/{shaded_spokes}");
+    assert!(kept_share(&out, Part::Hub) >= 0.98, "{record:#}");
+    for y in 0..H {
+        for x in 0..W {
+            let i = (y * W + x) as usize;
+            if matches!(part(x, y), Part::Tyre | Part::Background) {
+                assert_eq!(out.pixels[i], mask.pixels[i], "tyre/outside pixel ({x},{y}) changed");
+            }
+        }
+    }
+    // The completion only adds windows to the colour-only carve: every
+    // pixel the colour-only carve removed outside the soft inner edge is
+    // removed here too.
+    for (i, (&b, &a)) in base.pixels.iter().zip(out.pixels.iter()).enumerate() {
+        if b == 0 {
+            assert!(a < 255, "pixel {i} carved by the colour-only pass is product again");
+        }
+    }
+
+    // The record counts match the mask; the gate passes.
+    let carved = count_where(&out, |_, _, v| v < 255) - count_where(&mask, |_, _, v| v < 255);
+    assert_eq!(record["carved_pixels"].as_u64().unwrap(), carved, "{record:#}");
+    assert_eq!(
+        record["product_pixels_after"].as_u64().unwrap(),
+        count_where(&out, |_, _, v| v == 255)
+    );
+    assert_eq!(record["gate"]["applies"], json!(true), "{record:#}");
+    assert_eq!(record["gate"]["pass"], json!(true), "{record:#}");
+    assert!(hole_carve_gate_refusal(&record).is_none());
+
+    eprintln!(
+        "shaded wheel: colour-only carve removed {:.1}% of the shade (gate {}), completion {:.1}% (gate {}); spokes kept {:.2}%",
+        base_shade * 100.0,
+        base_rec["gate"]["remainder_fraction"],
+        shade_removed * 100.0,
+        record["gate"]["remainder_fraction"],
+        spokes * 100.0
+    );
+
+    // Deterministic.
+    let (again, record2) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(again.pixels, out.pixels);
+    assert_eq!(record2, record);
+}
+
+// ---------------------------------------------------------------------------
+// (f) The completion kill switch.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn completion_kill_switch_keeps_the_colour_proven_carve() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let prev_carve = std::env::var(HOLE_CARVE_ENV).ok();
+    let prev_complete = std::env::var(HOLE_COMPLETE_ENV).ok();
+    std::env::remove_var(HOLE_CARVE_ENV);
+    let (source, mask) = shaded_wheel_scene();
+    let (colour_only, colour_rec) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
+    let (complete, complete_rec) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_ne!(colour_only.pixels, complete.pixels);
+
+    for off in ["off", "OFF", "0", "false", "no"] {
+        std::env::set_var(HOLE_COMPLETE_ENV, off);
+        let (out, record) = carve_holes(&source, &mask, "bicycle wheel");
+        assert_eq!(out.pixels, colour_only.pixels, "{off}");
+        assert_eq!(record, colour_rec, "{off}");
+        assert_eq!(record["applied"], json!(true));
+        assert_eq!(record["completion"]["enabled"], json!(false));
+        assert_eq!(record["completion"]["released_pixels"], json!(0));
+        // The gate still measures the colour-only carve (and fails it).
+        assert_eq!(record["gate"]["applies"], json!(true));
+        assert_eq!(record["gate"]["pass"], json!(false), "{record:#}");
+    }
+    // Unset or "on": the completion runs.
+    for on in ["on", ""] {
+        if on.is_empty() {
+            std::env::remove_var(HOLE_COMPLETE_ENV);
+        } else {
+            std::env::set_var(HOLE_COMPLETE_ENV, on);
+        }
+        let (out, record) = carve_holes(&source, &mask, "bicycle wheel");
+        assert_eq!(out.pixels, complete.pixels, "{on:?}");
+        assert_eq!(record, complete_rec, "{on:?}");
+        assert_eq!(record["completion"]["enabled"], json!(true));
+    }
+    // AGENTHAND_HOLE_CARVE=off still turns all carving off, completion too.
+    std::env::remove_var(HOLE_COMPLETE_ENV);
+    std::env::set_var(HOLE_CARVE_ENV, "off");
+    let (out, record) = carve_holes(&source, &mask, "bicycle wheel");
+    assert_eq!(out.pixels, mask.pixels);
+    assert_eq!(record["applied"], json!(false));
+    assert_eq!(record["completion"]["enabled"], json!(false));
+    assert_eq!(record["gate"]["applies"], json!(false));
+
+    for (name, prev) in [(HOLE_CARVE_ENV, prev_carve), (HOLE_COMPLETE_ENV, prev_complete)] {
+        match prev {
+            Some(v) => std::env::set_var(name, v),
+            None => std::env::remove_var(name),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// (g) The enclosed-remainder gate.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gate_refuses_a_partial_open_frame_carve_with_a_retake() {
+    let (source, mask) = shaded_wheel_scene();
+    // The partial carve: windows proven by colour only, the shaded half of
+    // the wheel left as product.
+    let (_, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
+    let gate = &record["gate"];
+    assert_eq!(gate["applies"], json!(true), "{record:#}");
+    assert_eq!(gate["pass"], json!(false), "{record:#}");
+    let fraction = gate["remainder_fraction"].as_f64().unwrap();
+    let limit = gate["max_remainder_fraction"].as_f64().unwrap();
+    assert!(fraction > limit, "{record:#}");
+    let remainder = gate["remainder_pixels"].as_u64().unwrap();
+    let enclosed = gate["enclosed_candidate_pixels"].as_u64().unwrap();
+    assert_eq!(
+        enclosed,
+        gate["accepted_window_pixels"].as_u64().unwrap()
+            + gate["completed_window_pixels"].as_u64().unwrap()
+            + remainder
+    );
+    // Most of the shaded seen-through area is the remainder.
+    let shade_px = count_where(&mask, |x, y, _| part(x, y) == Part::Enclosed && shaded(x, y));
+    assert!(remainder as f64 >= 0.5 * shade_px as f64, "{remainder} of {shade_px}: {record:#}");
+
+    // The structured refusal cut_out returns (decision 114: the failure
+    // names the remainder and the retake that fixes it).
+    let (code, message, extra) = hole_carve_gate_refusal(&record).expect("the gate failed");
+    assert_eq!(code, HOLE_CARVE_GATE_CODE);
+    assert_eq!(code, "HOLE_CARVE_INCOMPLETE");
+    assert!(message.contains(&format!("{remainder} px")), "{message}");
+    assert!(message.contains(&format!("{enclosed} px")), "{message}");
+    assert!(message.contains("refused"), "{message}");
+    assert!(message.contains("Retake:"), "{message}");
+    assert!(message.contains("shade"), "{message}");
+    assert_eq!(extra["remainder"]["remainder_pixels"], json!(remainder));
+    assert_eq!(extra["remainder"]["enclosed_candidate_pixels"], json!(enclosed));
+    assert_eq!(extra["remainder"]["remainder_fraction"], gate["remainder_fraction"]);
+    assert_eq!(extra["remainder"]["max_remainder_fraction"], json!(limit));
+    let retake = extra["retake"].as_array().unwrap();
+    assert_eq!(retake.len(), 3);
+    assert!(retake.iter().all(|r| r.as_str().is_some_and(|t| !t.is_empty())));
+    assert!(extra["operator_override"].as_str().unwrap().contains(HOLE_CARVE_ENV));
+
+    // The completed carve of the same photo passes; so does the sunlit
+    // wheel; a carve that did not apply has no gate to fail.
+    let (_, done) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(done["gate"]["pass"], json!(true), "{done:#}");
+    assert!(hole_carve_gate_refusal(&done).is_none());
+    let (bright_src, bright_mask) = wheel_scene(false);
+    let (_, bright) = carve_holes_opts(&bright_src, &bright_mask, "bicycle wheel", true, true);
+    assert_eq!(bright["gate"]["pass"], json!(true), "{bright:#}");
+    assert!(hole_carve_gate_refusal(&bright).is_none());
+    let (ring_src, ring_mask) = wheel_scene(true);
+    let (_, ring) = carve_holes_opts(&ring_src, &ring_mask, "bicycle wheel", true, true);
+    assert_eq!(ring["applied"], json!(false));
+    assert_eq!(ring["gate"]["applies"], json!(false));
+    assert!(hole_carve_gate_refusal(&ring).is_none());
 }
 
 // ---------------------------------------------------------------------------
