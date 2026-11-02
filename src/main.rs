@@ -8,7 +8,9 @@
 //!   file checker (port of `agenthand-verify`); exit 0/1.
 //! - `agenthand measure <image> <card> [--profile <path>]
 //!   [--bbox x,y,w,h]` — the scale-card size estimator (port of
-//!   `python -m agenthand.measure`); JSON on stdout, errors as
+//!   `python -m agenthand.measure`); `<card>` is the id printed on the
+//!   card in the photo (e.g. `AH-57`), `--bbox` is x,y,w,h in source
+//!   pixels; JSON on stdout, errors as
 //!   `{"error": ...}` on stderr with exit 1.
 //! - `agenthand heic-extract <file> [--out <dir>] [--hash-only]` —
 //!   the rust-100 M1 HEIF container inspector/extractor: parses the

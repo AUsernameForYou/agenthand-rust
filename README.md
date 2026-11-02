@@ -120,7 +120,7 @@ that ingests, calls one policy function, and shapes the result JSON.
 | `ingest`, `assets` | Ingest limits and the on-disk asset store behind `asset://` handles |
 | `billing`, `ledger`, `sqlledger` | The single billed-call choke point; two ledger stores (JSONL, SQLite) with identical accounting |
 | `pricing`, `config` | The model price table; environment configuration and the spend cap |
-| `measure` | Prototype scale-card size estimator (not a fourth tool) |
+| `measure` | Prototype scale-card size estimator (not a fourth tool). `<card>` must be the id printed on the card in the photo (for example `AH-57`); a different id gives a different scale. `--bbox` is `x,y,w,h` in source pixels |
 | `roomrun` | The room run: photos, video frames, and narration in; one staged, receipted listing per item out, plus the priced table |
 | `backdrop`, `market_pricing` | The code-rendered stage plates (wallpaper, studio gray) and the deterministic comp-pricing rule behind the priced table |
 | `heic` | From-scratch HEIC decoder, integrated into ingest: no external decoding library anywhere in the shipped path |
