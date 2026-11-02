@@ -776,9 +776,12 @@ fn planned_verbs_are_separated_and_exit_3() {
     let implemented = help.stdout.find("Implemented:").unwrap();
     let planned = help.stdout.find("Planned, not implemented:").unwrap();
     assert!(implemented < planned);
-    assert!(help.stdout[planned..].contains("parity"));
+    // The Planned section ends where the chapter-selector notes begin
+    // (the exit-code notes after it may name export).
+    let planned_end = planned + help.stdout[planned..].find("Chapter selectors").unwrap();
+    assert!(help.stdout[planned..planned_end].contains("parity"));
     assert!(help.stdout[implemented..planned].contains("export"));
-    assert!(!help.stdout[planned..].contains("export"));
+    assert!(!help.stdout[planned..planned_end].contains("export"));
     let o = run_with_env(&["parity"], &[]);
     assert_eq!(o.code, 3, "parity");
     assert!(
@@ -809,9 +812,11 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     let db_before = file_sha(&f.db);
     let target = export_target("partial");
     let o = run_db(&f.db, &["export", target.to_str().unwrap()]);
-    assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
+    // PARTIAL exits 4, like verify's INCOMPLETE.
+    assert_eq!(o.code, 4, "{}{}", o.stdout, o.stderr);
     assert!(
-        o.stdout.contains("EXPORT: PARTIAL (2 of 4 receipt files included)"),
+        o.stdout
+            .contains("EXPORT: PARTIAL (2 of 4 receipt files included, 2 missing)"),
         "{}",
         o.stdout
     );
@@ -820,7 +825,33 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
         "{}",
         o.stdout
     );
-    assert_eq!(file_sha(&f.db), db_before, "export must not write the source db");
+    assert_eq!(
+        file_sha(&f.db),
+        db_before,
+        "export must not write the source db"
+    );
+    let beside_db: Vec<_> = std::fs::read_dir(f.db.parent().unwrap())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        beside_db,
+        ["evidence.db"],
+        "export wrote beside the source db"
+    );
+    let pack_md_reasons = std::fs::read_to_string(target.join("PACK.md")).unwrap();
+    assert!(
+        pack_md_reasons
+            .contains("receipt 3: not included (the named file was not present locally: "),
+        "{}",
+        pack_md_reasons
+    );
+    assert!(
+        pack_md_reasons
+            .contains("receipt 4: not included (the database names no receipt file for it)"),
+        "{}",
+        pack_md_reasons
+    );
 
     // The database copy is byte-identical to the source.
     let pack_db = target.join("evidence.db");
@@ -831,7 +862,10 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     for i in 1..=2 {
         let packed = target.join("receipts").join(format!("{i}.json"));
         let original = f.root.join("pkg").join(format!("r{i}.json"));
-        assert_eq!(std::fs::read(&packed).unwrap(), std::fs::read(&original).unwrap());
+        assert_eq!(
+            std::fs::read(&packed).unwrap(),
+            std::fs::read(&original).unwrap()
+        );
     }
     assert!(!target.join("receipts").join("3.json").exists());
     assert!(!target.join("receipts").join("4.json").exists());
@@ -841,7 +875,11 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     assert!(pack_md.contains("counts"), "{}", pack_md);
     assert!(pack_md.contains("receipt 3: not included"), "{}", pack_md);
     assert!(pack_md.contains("receipt 4: not included"), "{}", pack_md);
-    assert!(pack_md.contains("agenthand evidence verify --all"), "{}", pack_md);
+    assert!(
+        pack_md.contains("agenthand evidence verify --all"),
+        "{}",
+        pack_md
+    );
 
     // manifest.json agrees with the files on disk.
     let manifest: serde_json::Value =
@@ -860,7 +898,11 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
         assert_eq!(entry["receipt_id"], id);
         assert_eq!(entry["file"], format!("receipts/{id}.json"));
         let packed = target.join("receipts").join(format!("{id}.json"));
-        assert_eq!(entry["sha256"], file_sha(&packed), "manifest sha for receipt {id}");
+        assert_eq!(
+            entry["sha256"],
+            file_sha(&packed),
+            "manifest sha for receipt {id}"
+        );
     }
     // The manifest root is the root the `root` verb recomputes.
     let r = run_db(&f.db, &["root", "--json"]);
@@ -880,8 +922,11 @@ fn export_complete_pack_verifies_from_its_own_copy() {
         let con = Connection::open(&f.db).unwrap();
         con.execute("DELETE FROM receipts WHERE receipt_id IN (3, 4)", [])
             .unwrap();
-        con.execute("DELETE FROM edges WHERE to_node IN ('receipt:3', 'receipt:4')", [])
-            .unwrap();
+        con.execute(
+            "DELETE FROM edges WHERE to_node IN ('receipt:3', 'receipt:4')",
+            [],
+        )
+        .unwrap();
         // Recompute the stored root over the remaining digests, as the
         // importer would, so the trimmed database still verifies.
         let mut digests: Vec<String> = con
@@ -907,7 +952,8 @@ fn export_complete_pack_verifies_from_its_own_copy() {
     let o = run_db(&f.db, &["export", target.to_str().unwrap()]);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     assert!(
-        o.stdout.contains("EXPORT: COMPLETE (2 receipt files)"),
+        o.stdout
+            .contains("EXPORT: COMPLETE (2 of 2 receipt files included, 0 missing)"),
         "{}",
         o.stdout
     );
@@ -959,7 +1005,10 @@ fn export_refuses_a_nonempty_target_and_a_missing_dir() {
     let o = run_db(&f.db, &["export", target.to_str().unwrap()]);
     assert_eq!(o.code, 2, "{}{}", o.stdout, o.stderr);
     assert!(o.stderr.contains("not empty"), "{}", o.stderr);
-    assert!(target.join("keep.txt").exists(), "export must not touch a refused target");
+    assert!(
+        target.join("keep.txt").exists(),
+        "export must not touch a refused target"
+    );
     let none = run_db(&f.db, &["export"]);
     assert_eq!(none.code, 2);
     let _ = std::fs::remove_dir_all(&target);

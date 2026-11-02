@@ -86,6 +86,7 @@ Implemented:
 | `rubric` | `evidence_map` rows grouped by rubric criterion. |
 | `calls [--by-model] [--run <id>]` | `calls` rows, or per-model counts and settled-cost sums. |
 | `tamper <receipt-id>` | Reads the receipt file, flips one byte in memory, and shows the sha256 of the altered copy no longer matches the database. The file on disk is not modified. |
+| `export <dir>` / `export --dir <dir>` | Writes a judge pack to `<dir>`: the database, the receipt files, `PACK.md` and `manifest.json`. The only verb that writes, and only inside `<dir>`. See below. |
 
 Planned, not implemented (the verb prints `planned, not implemented`
 and exits 3):
@@ -93,7 +94,6 @@ and exits 3):
 | Verb | Status |
 |---|---|
 | `parity` | Cross-build parity node. The database has no parity rows yet. |
-| `export --dir <dir>` | Replay pack export. |
 
 `--json` works on every verb and prints one JSON document on stdout.
 
@@ -192,6 +192,42 @@ differs.
 Value for `evidence.db` of 2026-11-02 (29 hashed receipts of 32):
 `54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`.
 
+## `export`
+
+`export <dir>` (or `--dir <dir>`) writes a judge pack. `<dir>` is
+created if absent; if it exists it must be an empty directory, or the
+command refuses with exit 2 and writes nothing. The source database is
+opened read-only as for every other verb and is left byte-identical.
+Nothing is written outside `<dir>`, and every name inside it is fixed
+or built from an integer receipt id, so database contents cannot steer
+a write elsewhere.
+
+```
+<dir>/
+  evidence.db                 byte copy of the database
+  receipts/<receipt_id>.json  each receipt whose source_file resolves (same rule as verify)
+  manifest.json               db sha256, receipts root, row counts, per-file sha256,
+                              missing receipt ids (no timestamps; deterministic)
+  PACK.md                     plain-language description, how to verify, and one line
+                              per receipt left out, with the reason
+```
+
+The `receipts/` folder matches the shipped layout: put `evidence.db`
+and `receipts/` in a folder named `evidence` and run
+`agenthand evidence verify --all` from its parent.
+
+The last line states the counts, in the same shape for both verdicts:
+
+```
+EXPORT: COMPLETE (2 of 2 receipt files included, 0 missing)
+EXPORT: PARTIAL (29 of 32 receipt files included, 3 missing)
+```
+
+Every receipt row counts, hashed or not: a receipt whose row names no
+file is listed as missing. `PARTIAL` exits 4, the same code as
+`OVERALL: INCOMPLETE` (nothing failed, but not everything is covered).
+`--json` prints the manifest plus `status` and `dir`.
+
 ## `trace` output
 
 ```
@@ -220,11 +256,11 @@ second time is printed once more with `(shown above)` and not expanded.
 
 | Code | Meaning |
 |---|---|
-| 0 | Success; `verify`: `OVERALL: PASS`; `root`: meta matches or is absent; `tamper`: the altered copy fails the check, or the file is not checked |
+| 0 | Success; `verify`: `OVERALL: PASS`; `export`: `EXPORT: COMPLETE`; `root`: meta matches or is absent; `tamper`: the altered copy fails the check, or the file is not checked |
 | 1 | `verify`: `OVERALL: FAIL`; `root`: meta differs; `tamper`: the file on disk already differs from the database |
-| 2 | Usage error, unknown id, database not found or not schema v2 |
+| 2 | Usage error, unknown id, database not found or not schema v2; `export`: target not empty or not writable |
 | 3 | Planned verb, not implemented |
-| 4 | `verify`: `OVERALL: INCOMPLETE` (no `FAIL`, but receipt files skipped or none re-hashed) |
+| 4 | Incomplete, nothing failed: `verify`: `OVERALL: INCOMPLETE` (receipt files skipped or none re-hashed); `export`: `EXPORT: PARTIAL` (receipt files left out of the pack) |
 
 ## Parity with `verify_db.py`
 
@@ -264,7 +300,10 @@ default, from `./evidence/evidence.db`, with `--base-dir` and with
 and without a reason; the root for 1, 2 and 3 receipts against
 hand-computed values; a wrong stored root; the database left unchanged
 by every verb; trace, graph, tamper, planned verbs and database
-location. One `#[ignore]` test runs against the real database and its
+location; `export`: a partial pack (exit 4, source database untouched,
+pack database byte-identical, manifest hashes and root checked), a
+complete pack that verifies `PASS` from its own copy, and a refused
+non-empty target. One `#[ignore]` test runs against the real database and its
 29 receipt files and expects
 `OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))`:
 

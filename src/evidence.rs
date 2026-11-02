@@ -17,9 +17,10 @@
 //!
 //! Exit codes: 0 = ok / OVERALL PASS, 1 = a FAIL (verify, root
 //! mismatch, tamper precondition), 2 = usage or database error,
-//! 3 = a planned verb that is not implemented, 4 = OVERALL INCOMPLETE
-//! (verify: nothing failed, but receipt files were skipped or none
-//! were re-hashed).
+//! 3 = a planned verb that is not implemented, 4 = incomplete: nothing
+//! failed, but not everything is covered (verify: OVERALL INCOMPLETE,
+//! receipt files skipped or none re-hashed; export: EXPORT PARTIAL,
+//! receipt files left out of the pack).
 //!
 //! `export` is the one writing verb: it copies the database and the
 //! resolvable receipt files into a fresh directory (a replay pack)
@@ -135,7 +136,8 @@ Options:
   --json            machine-readable output on stdout
 
 Exit codes: 0 ok / OVERALL PASS; 1 FAIL; 2 usage or database error; 3 planned verb;
-4 OVERALL INCOMPLETE (no FAIL, but receipt files skipped or none re-hashed).
+4 incomplete: verify OVERALL INCOMPLETE (no FAIL, but receipt files skipped or none
+re-hashed); export EXPORT PARTIAL (receipt files left out of the pack).
 ";
 
 const PLANNED: [(&str, &str); 1] = [(
@@ -1307,9 +1309,7 @@ fn io_error(action: &str, path: &Path, e: std::io::Error) -> CliError {
 }
 
 fn count_rows(conn: &Connection, table: &str) -> CliResult<i64> {
-    Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
-        r.get(0)
-    })?)
+    Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?)
 }
 
 fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
@@ -1335,8 +1335,7 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
                 dir.display()
             )));
         }
-        let mut entries = std::fs::read_dir(&dir)
-            .map_err(|e| io_error("read", &dir, e))?;
+        let mut entries = std::fs::read_dir(&dir).map_err(|e| io_error("read", &dir, e))?;
         if entries.next().is_some() {
             return Err(CliError::usage(format!(
                 "export: target {} exists and is not empty; refusing to overwrite",
@@ -1347,8 +1346,7 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
         std::fs::create_dir_all(&dir).map_err(|e| io_error("create", &dir, e))?;
     }
     let receipts_dir = dir.join("receipts");
-    std::fs::create_dir_all(&receipts_dir)
-        .map_err(|e| io_error("create", &receipts_dir, e))?;
+    std::fs::create_dir_all(&receipts_dir).map_err(|e| io_error("create", &receipts_dir, e))?;
 
     let n_runs = count_rows(&ctx.conn, "runs")?;
     let n_calls = count_rows(&ctx.conn, "calls")?;
@@ -1371,16 +1369,19 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
             let receipt_id = opt_i64(r.get_ref(0)?)
                 .ok_or_else(|| CliError::usage("export: receipt row without a receipt_id"))?;
             let sf = opt_text(r.get_ref(1)?).filter(|s| !s.is_empty());
-            let bytes = sf.as_deref().and_then(|s| {
+            let read = sf.as_deref().map(|s| {
                 let p = resolve_receipt_path(&ctx.base_dir, s);
                 if p.is_file() {
-                    std::fs::read(&p).ok()
+                    std::fs::read(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))
                 } else {
-                    None
+                    Err(format!(
+                        "the named file was not present locally: {}",
+                        p.display()
+                    ))
                 }
             });
-            match bytes {
-                Some(b) => {
+            match read {
+                Some(Ok(b)) => {
                     let name = format!("{receipt_id}.json");
                     let dest = receipts_dir.join(&name);
                     std::fs::write(&dest, &b).map_err(|e| io_error("write", &dest, e))?;
@@ -1390,16 +1391,11 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
                         "sha256": hex(&Sha256::digest(&b)),
                     }));
                 }
-                None => {
-                    let reason = match &sf {
-                        None => "the database names no receipt file for it".to_string(),
-                        Some(s) => format!(
-                            "the named file was not present locally: {}",
-                            resolve_receipt_path(&ctx.base_dir, s).display()
-                        ),
-                    };
-                    missing.push((receipt_id, reason));
-                }
+                Some(Err(reason)) => missing.push((receipt_id, reason)),
+                None => missing.push((
+                    receipt_id,
+                    "the database names no receipt file for it".to_string(),
+                )),
             }
         }
     }
@@ -1479,8 +1475,12 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
          \x20   agenthand evidence verify --all\n\
          \n\
          `verify --all` re-checks the receipt hashes, the run totals, the\n\
-         graph edges and the receipts root against the database, and\n\
-         prints OVERALL: PASS when every check holds.\n\
+         graph edges and the receipts root against the database. It\n\
+         prints OVERALL: PASS (with the re-hashed, skipped and failing\n\
+         counts) only when no check fails and every hashed receipt file\n\
+         was found and re-hashed; OVERALL: INCOMPLETE (exit 4) when\n\
+         nothing fails but receipt files were not found; OVERALL: FAIL\n\
+         (exit 1) when any check fails.\n\
          \n\
          ## Receipt files not included\n\
          \n\
@@ -1504,9 +1504,7 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
             ctx.base_dir.display(),
             ctx.base_rule
         );
-        outln!(
-            "export: {n_runs} runs, {n_calls} calls, {n_receipts} receipts, {n_claims} claims"
-        );
+        outln!("export: {n_runs} runs, {n_calls} calls, {n_receipts} receipts, {n_claims} claims");
         outln!("export: receipts root {root}");
         outln!("export: evidence.db copied (sha256 {db_sha})");
         outln!(
@@ -1517,15 +1515,15 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
             let ids: Vec<String> = missing_ids.iter().map(i64::to_string).collect();
             outln!("export: missing receipt file(s): {}", ids.join(", "));
         }
-        if complete {
-            outln!("EXPORT: COMPLETE ({n_included} receipt files)");
-        } else {
-            outln!(
-                "EXPORT: PARTIAL ({n_included} of {n_receipts} receipt files included)"
-            );
-        }
+        // Same shape for both verdicts, like the OVERALL line.
+        outln!(
+            "EXPORT: {status} ({n_included} of {n_receipts} receipt files included, {} missing)",
+            missing.len()
+        );
     }
-    Ok(0)
+    // PARTIAL reuses exit 4: nothing failed, but not everything is
+    // covered, the same meaning as verify's INCOMPLETE.
+    Ok(if complete { 0 } else { EXIT_INCOMPLETE })
 }
 
 // ---------------------------------------------------------------------------
