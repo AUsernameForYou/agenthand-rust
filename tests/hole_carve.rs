@@ -545,6 +545,50 @@ fn reflector_and_bolt_stay_product_inside_a_completed_wheel() {
     assert!(record["gate"]["pass"] == json!(true), "{record:#}");
 }
 
+/// A dark paver joint across the shaded part of the wheel: a straight,
+/// non-radial band 12 px wide (about 5% of the rim radius, like the 40 px
+/// joints at r = 760 px on IMG_1443), darker than the shade.
+fn in_band(x: u32, y: u32) -> bool {
+    (420..432).contains(&y) && part(x, y) == Part::Enclosed
+}
+
+#[test]
+fn dark_joint_band_releases_while_spokes_reflector_and_bolt_stay() {
+    let (source, mask) = reflector_wheel_scene();
+    let mut px = source.pixels.clone();
+    for y in 0..H {
+        for x in 0..W {
+            if in_band(x, y) {
+                let i = ((y * W + x) * 4) as usize;
+                let v = 24.0 + noise(x, y, 31) * 4.0;
+                px[i..i + 3].copy_from_slice(&[v as u8, (v - 1.0) as u8, v as u8]);
+            }
+        }
+    }
+    let source = RgbaImage::new(W, H, px);
+    let (out, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(record["applied"], json!(true), "{record:#}");
+    assert_never_raised(&mask, &out);
+    let band = count_where(&out, |x, y, _| in_band(x, y));
+    let band_released = count_where(&out, |x, y, v| in_band(x, y) && v < 255);
+    assert!(
+        band_released as f64 >= 0.6 * band as f64,
+        "only {band_released} of {band} band pixels released: {record:#}"
+    );
+    assert!(record["completion"]["strip_pixels"].as_u64().unwrap() > 0, "{record:#}");
+    let crossing = count_where(&out, |x, y, _| (420..432).contains(&y) && part(x, y) == Part::Spoke);
+    let crossing_kept =
+        count_where(&out, |x, y, v| (420..432).contains(&y) && part(x, y) == Part::Spoke && v == 255);
+    assert!(crossing_kept as f64 >= 0.95 * crossing as f64, "{crossing_kept}/{crossing} spoke px kept in the band");
+    assert!(kept_share(&out, Part::Spoke) >= 0.98, "{record:#}");
+    assert_eq!(count_where(&out, |x, y, v| in_reflector(x, y) && part(x, y) != Part::Spoke && v < 255), 0);
+    assert_eq!(count_where(&out, |x, y, v| in_bolt(x, y) && v < 255), 0);
+    assert_eq!(record["gate"]["pass"], json!(true), "{record:#}");
+    // With the completion off the band is left and counted as residue.
+    let (_, off) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
+    assert!(off["gate"]["strip_residue_pixels"].as_u64().unwrap() > 0, "{off:#}");
+}
+
 // ---------------------------------------------------------------------------
 // (f) The completion kill switch.
 // ---------------------------------------------------------------------------
