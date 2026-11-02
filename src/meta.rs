@@ -5,6 +5,19 @@
 //! does not retry by default) — an SDK-level retry would re-run a
 //! billable call behind the gate's back. Every function here performs
 //! network I/O and must only run inside `billing::billed_call`.
+//!
+//! Timeouts: every Meta call runs under a per-call timeout of
+//! [`DEFAULT_HTTP_TIMEOUT_S`] (180 s) covering the whole request
+//! (connect, send, the provider's think time, and the response
+//! read), plus a connect timeout of [`HTTP_CONNECT_TIMEOUT_S`]
+//! (20 s). reqwest's blocking client otherwise applies its own
+//! 30 s default, and a live identify call measured 28.3 s
+//! (1.4 s of headroom), so the default would cut off healthy,
+//! already-billable calls. `AGENTHAND_HTTP_TIMEOUT_S` (a whole
+//! number of seconds, > 0) overrides the per-call timeout; an empty,
+//! unparseable or zero value keeps the 180 s default. The value is
+//! read when the client is built (`build_client`), and applies to
+//! the direct client and the proxy fallback alike.
 
 use crate::config;
 use crate::image::decode_image;
@@ -24,6 +37,14 @@ pub const IDENTIFY_MAX_ATTEMPTS: usize = 3;
 pub const SAM_MAX_ATTEMPTS: usize = 2;
 
 const IDENTIFY_PROMPT_TOKENS: i64 = 300;
+
+/// Default per-call timeout for every Meta API request, in seconds
+/// (see the module docs; overridable via [`HTTP_TIMEOUT_ENV`]).
+pub const DEFAULT_HTTP_TIMEOUT_S: u64 = 180;
+/// Connect timeout for every Meta API request, in seconds.
+pub const HTTP_CONNECT_TIMEOUT_S: u64 = 20;
+/// Environment variable that overrides [`DEFAULT_HTTP_TIMEOUT_S`].
+pub const HTTP_TIMEOUT_ENV: &str = "AGENTHAND_HTTP_TIMEOUT_S";
 
 /// Model behind the identify tool.
 pub const IDENTIFY_MODEL: &str = "muse-spark-1.3";
@@ -81,9 +102,34 @@ pub fn require_meta_api_key() -> Result<String, String> {
 pub struct MetaClient {
     direct: reqwest::blocking::Client,
     fallback: Option<reqwest::blocking::Client>,
+    timeout: std::time::Duration,
+}
+
+/// Resolve the per-call timeout from a raw `AGENTHAND_HTTP_TIMEOUT_S`
+/// value: a whole number of seconds greater than zero, else the
+/// [`DEFAULT_HTTP_TIMEOUT_S`] default. Pure, so the rule is testable
+/// without touching the process environment.
+pub fn http_timeout_from(raw: Option<&str>) -> std::time::Duration {
+    let secs = raw
+        .map(str::trim)
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_HTTP_TIMEOUT_S);
+    std::time::Duration::from_secs(secs)
+}
+
+/// The per-call timeout `build_client` applies, read from the
+/// environment (`AGENTHAND_HTTP_TIMEOUT_S`) at call time.
+pub fn http_timeout() -> std::time::Duration {
+    http_timeout_from(std::env::var(HTTP_TIMEOUT_ENV).ok().as_deref())
 }
 
 impl MetaClient {
+    /// The per-call timeout this client was built with.
+    pub fn timeout(&self) -> std::time::Duration {
+        self.timeout
+    }
+
     /// Send via the direct client; on a connect-class error, retry
     /// once via the fallback client when one was built.
     fn execute(
@@ -216,7 +262,7 @@ impl reqwest::dns::Resolve for TcpDnsResolver {
 /// narration client's bundle-loading pattern from roomrun.rs.
 /// None when no proxy is configured in the environment: without
 /// one, a second client would just repeat the direct attempt.
-fn build_fallback_client() -> Option<reqwest::blocking::Client> {
+fn build_fallback_client(timeout: std::time::Duration) -> Option<reqwest::blocking::Client> {
     const PROXY_VARS: [&str; 6] = [
         "HTTPS_PROXY",
         "https_proxy",
@@ -231,7 +277,9 @@ fn build_fallback_client() -> Option<reqwest::blocking::Client> {
     {
         return None;
     }
-    let mut builder = reqwest::blocking::Client::builder();
+    let mut builder = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(std::time::Duration::from_secs(HTTP_CONNECT_TIMEOUT_S));
     // Load the operating-system CA bundle so a TLS endpoint (or an
     // intercepting proxy) chaining to a locally trusted root
     // verifies. Failure to read the bundle is not fatal: webpki
@@ -255,8 +303,16 @@ fn build_fallback_client() -> Option<reqwest::blocking::Client> {
 }
 
 /// Build the shared Meta API transport (see [`MetaClient`]).
+/// The per-call timeout is [`http_timeout`] (180 s unless
+/// `AGENTHAND_HTTP_TIMEOUT_S` overrides it) with a 20 s connect
+/// timeout, on the direct client and the fallback alike: reqwest's
+/// own 30 s default left a 28.3 s identify call 1.4 s of headroom.
 pub fn build_client() -> Result<MetaClient, String> {
-    let mut direct_builder = reqwest::blocking::Client::builder().no_proxy();
+    let timeout = http_timeout();
+    let mut direct_builder = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .connect_timeout(std::time::Duration::from_secs(HTTP_CONNECT_TIMEOUT_S));
     if let Some(resolver) = build_tcp_dns_resolver() {
         direct_builder = direct_builder.dns_resolver(Arc::new(resolver));
     }
@@ -265,7 +321,8 @@ pub fn build_client() -> Result<MetaClient, String> {
         .map_err(|e| format!("cannot build HTTP client: {}", error_chain(&e)))?;
     Ok(MetaClient {
         direct,
-        fallback: build_fallback_client(),
+        fallback: build_fallback_client(timeout),
+        timeout,
     })
 }
 
@@ -1376,6 +1433,66 @@ pub fn request_plate_edit(
             .unwrap_or(0);
     }
     Ok((png_bytes, usage))
+}
+
+#[cfg(test)]
+mod http_timeout_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    /// A loopback server that accepts one connection, reads the
+    /// request, and answers only after `delay`. Loopback only: no
+    /// network leaves the machine.
+    fn slow_server(delay: Duration) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                std::thread::sleep(delay);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// F0: the per-call timeout comes from AGENTHAND_HTTP_TIMEOUT_S.
+    /// A 1 s override must cut off a response that takes 4 s.
+    #[test]
+    fn build_client_honours_the_env_timeout() {
+        std::env::set_var("AGENTHAND_HTTP_TIMEOUT_S", "1");
+        let client = build_client().unwrap();
+        assert_eq!(client.timeout(), Duration::from_secs(1));
+        std::env::set_var("AGENTHAND_HTTP_TIMEOUT_S", "7");
+        assert_eq!(build_client().unwrap().timeout(), Duration::from_secs(7));
+        std::env::remove_var("AGENTHAND_HTTP_TIMEOUT_S");
+        assert_eq!(build_client().unwrap().timeout(), Duration::from_secs(180));
+        let url = slow_server(Duration::from_secs(4));
+        let started = Instant::now();
+        let result = client.execute(|c| c.get(&url).send());
+        let elapsed = started.elapsed();
+        let err = result.expect_err("a 1 s timeout must cut off a 4 s response");
+        assert!(err.is_timeout(), "expected a timeout error, got: {err}");
+        assert!(elapsed < Duration::from_secs(3), "took {elapsed:?}");
+    }
+
+    /// F0: unset, empty, unparseable and zero values all keep the
+    /// 180 s default; a positive whole number of seconds wins.
+    #[test]
+    fn timeout_defaults_to_180_seconds() {
+        assert_eq!(DEFAULT_HTTP_TIMEOUT_S, 180);
+        assert_eq!(http_timeout_from(None), Duration::from_secs(180));
+        for raw in ["", "  ", "abc", "0", "-5", "2.5"] {
+            assert_eq!(http_timeout_from(Some(raw)), Duration::from_secs(180), "{raw:?}");
+        }
+        assert_eq!(http_timeout_from(Some("240")), Duration::from_secs(240));
+        assert_eq!(http_timeout_from(Some(" 45 ")), Duration::from_secs(45));
+        assert_eq!(HTTP_CONNECT_TIMEOUT_S, 20);
+    }
 }
 
 #[cfg(test)]
