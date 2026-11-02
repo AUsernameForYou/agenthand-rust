@@ -17,7 +17,9 @@
 //!
 //! Exit codes: 0 = ok / OVERALL PASS, 1 = a FAIL (verify, root
 //! mismatch, tamper precondition), 2 = usage or database error,
-//! 3 = a planned verb that is not implemented.
+//! 3 = a planned verb that is not implemented, 4 = OVERALL INCOMPLETE
+//! (verify: nothing failed, but receipt files were skipped or none
+//! were re-hashed).
 //!
 //! Database location (first match wins): `--db <path>`; the
 //! `AGENTHAND_EVIDENCE_DB` environment variable; `evidence/evidence.db`
@@ -28,7 +30,10 @@
 //! resolve against it): `--base-dir <dir>`; `AGENTHAND_EVIDENCE_BASE`;
 //! else the parent of the database's directory — the rule
 //! `verify_db.py` uses (its ROOT is the parent of the directory that
-//! holds `evidence.db`).
+//! holds `evidence.db`). For the shipped layout, `<repo>/evidence/evidence.db`
+//! with receipts at `<repo>/evidence/receipts/<receipt_id>.json` and
+//! `source_file` = `evidence/receipts/<receipt_id>.json`, that base is
+//! the repo root, so the repo-relative paths resolve as written.
 
 use rusqlite::types::ValueRef;
 use rusqlite::{params, Connection, OpenFlags};
@@ -64,6 +69,7 @@ const TOL: f64 = 1e-6;
 const EXIT_FAIL: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_PLANNED: u8 = 3;
+const EXIT_INCOMPLETE: u8 = 4;
 
 const CLAIM_STATUSES: [&str; 4] = ["verified", "corrected", "withdrawn", "refused"];
 const REQUIRED_RELATIONS: [&str; 9] = [
@@ -87,7 +93,9 @@ Implemented:
   list [--chapter <c>] [--status <s>]  claims with criterion, status and chapters
   show <claim-id>                      one claim: scope, runs, calls, receipts, chapters
   verify <claim-id> | --all            re-run the reference checks (verify_db.py) and
-                                       print one line per check, then OVERALL
+                                       print one line per check, then OVERALL:
+                                       PASS | INCOMPLETE | FAIL (R re-hashed,
+                                       S skipped, F failing line(s))
   verify-all                           same as verify --all
   trace <node-id>                      walk the derived edges from a node, as a tree
                                        (claim:N, chapter:N, receipt:N, run:N, call:N,
@@ -118,7 +126,8 @@ Options:
                     else the parent of the database's directory (verify_db.py's rule)
   --json            machine-readable output on stdout
 
-Exit codes: 0 ok / OVERALL PASS; 1 FAIL; 2 usage or database error; 3 planned verb.
+Exit codes: 0 ok / OVERALL PASS; 1 FAIL; 2 usage or database error; 3 planned verb;
+4 OVERALL INCOMPLETE (no FAIL, but receipt files skipped or none re-hashed).
 ";
 
 const PLANNED: [(&str, &str); 2] = [
@@ -696,6 +705,28 @@ struct Verify {
     items: Vec<Item>,
     section: char,
     failures: usize,
+    /// Section (a): receipt files re-hashed from disk whose sha256
+    /// matched the database. A mismatch is a FAIL line, not counted here.
+    rehashed: usize,
+    /// Section (a): hashed receipts whose file was not present.
+    skipped: usize,
+}
+
+impl Verify {
+    /// The verdict. FAIL overrides everything; PASS needs no FAIL, no
+    /// SKIP and at least one re-hashed receipt file. Otherwise
+    /// INCOMPLETE, including the case of zero receipt checks in scope
+    /// (0 re-hashed, 0 skipped): nothing was re-hashed, so nothing was
+    /// proven, and that is not a pass.
+    fn overall(&self) -> (&'static str, u8) {
+        if self.failures > 0 {
+            ("FAIL", EXIT_FAIL)
+        } else if self.skipped == 0 && self.rehashed > 0 {
+            ("PASS", 0)
+        } else {
+            ("INCOMPLETE", EXIT_INCOMPLETE)
+        }
+    }
 }
 
 impl Verify {
@@ -747,6 +778,8 @@ fn run_verify(ctx: &Ctx, scope: Scope) -> CliResult<Verify> {
         items: Vec::new(),
         section: 'a',
         failures: 0,
+        rehashed: 0,
+        skipped: 0,
     };
     let (scope_receipts, scope_runs) = match scope {
         Scope::All => (None, None),
@@ -851,6 +884,8 @@ fn run_verify(ctx: &Ctx, scope: Scope) -> CliResult<Verify> {
     v.summary(format!(
         "  -> {n_pass} matched, {n_skip} not-on-disk, {n_nohash} receipts carry no hash"
     ));
+    v.rehashed = n_pass;
+    v.skipped = n_skip;
 
     // --- (b) run totals vs call sums --------------------------------------
     v.header('b', "== (b) run totals vs sum of call costs ==");
@@ -1113,7 +1148,7 @@ fn run_verify(ctx: &Ctx, scope: Scope) -> CliResult<Verify> {
 
 fn cmd_verify(ctx: &Ctx, o: &Opts, scope: Scope) -> CliResult<u8> {
     let v = run_verify(ctx, scope)?;
-    let overall = if v.failures > 0 { "FAIL" } else { "PASS" };
+    let (overall, code) = v.overall();
     let scope_label = match scope {
         Scope::All => "all".to_string(),
         Scope::Claim(id) => format!("claim:{id}"),
@@ -1143,6 +1178,8 @@ fn cmd_verify(ctx: &Ctx, o: &Opts, scope: Scope) -> CliResult<u8> {
             "receipt_base_rule": ctx.base_rule,
             "scope": scope_label,
             "items": items,
+            "rehashed": v.rehashed,
+            "skipped": v.skipped,
             "failures": v.failures,
             "overall": overall,
         }));
@@ -1162,9 +1199,14 @@ fn cmd_verify(ctx: &Ctx, o: &Opts, scope: Scope) -> CliResult<u8> {
                 Item::Check { status, msg, .. } => outln!("{status:<6} {msg}"),
             }
         }
-        outln!("OVERALL: {overall} ({} failing line(s))", v.failures);
+        outln!(
+            "OVERALL: {overall} ({} re-hashed, {} skipped, {} failing line(s))",
+            v.rehashed,
+            v.skipped,
+            v.failures
+        );
     }
-    Ok(if v.failures > 0 { EXIT_FAIL } else { 0 })
+    Ok(code)
 }
 
 // ---------------------------------------------------------------------------

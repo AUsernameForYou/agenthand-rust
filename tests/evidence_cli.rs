@@ -232,28 +232,43 @@ fn file_sha(p: &Path) -> String {
     sha_hex(&std::fs::read(p).unwrap())
 }
 
+/// Put the standard fixture's missing receipt file (receipt 3) on disk,
+/// so every hashed receipt can be re-hashed.
+fn complete(f: &Fixture) {
+    std::fs::write(f.root.join("pkg").join("absent.json"), b"absent").unwrap();
+}
+
 #[test]
 fn verify_all_passes_on_a_consistent_db() {
     let f = standard("pass", Some("False accept: phantom card fit."));
+    complete(&f);
     let o = run_db(&f.db, &["verify", "--all"]);
     assert_eq!(o.code, 0, "stdout:\n{}\nstderr:\n{}", o.stdout, o.stderr);
     for want in [
         "== (a) receipt file hashes ==",
         "PASS   receipt 1 (run 1): sha256 matches pkg/r1.json",
         "PASS   receipt 2 (run 2): sha256 matches pkg/r2.json",
-        "SKIP   receipt 3 (run 2): file not present locally: pkg/absent.json",
-        "  -> 2 matched, 1 not-on-disk, 1 receipts carry no hash",
+        "PASS   receipt 3 (run 2): sha256 matches pkg/absent.json",
+        "  -> 3 matched, 0 not-on-disk, 1 receipts carry no hash",
         "PASS   run 1 (Hero run fixture): total $0.019175 == calls sum",
         "PASS   no orphan calls or receipts (every row joins to a run)",
         "PASS   every receipt (4) and every call (4) has its run edge in the graph",
         "PASS   claim 1: directed walk reaches 1 receipt(s)",
         "PASS   claim 2 (withdrawn): no receipt by design; directed walk terminates at its rubric criterion",
         "PASS   claim 3 (refused): scope fields complete; reason present",
-        "OVERALL: PASS (0 failing line(s))",
+        "OVERALL: PASS (3 re-hashed, 0 skipped, 0 failing line(s))",
     ] {
         assert!(o.stdout.contains(want), "missing {want:?} in:\n{}", o.stdout);
     }
     assert!(!o.stdout.contains("FAIL "), "{}", o.stdout);
+    assert!(!o.stdout.contains("SKIP "), "{}", o.stdout);
+    let j = run_db(&f.db, &["verify", "--all", "--json"]);
+    assert_eq!(j.code, 0, "{}", j.stdout);
+    let jv: serde_json::Value = serde_json::from_str(&j.stdout).unwrap();
+    assert_eq!(jv["overall"], "PASS");
+    assert_eq!(jv["rehashed"], 3);
+    assert_eq!(jv["skipped"], 0);
+    assert_eq!(jv["failures"], 0);
     // verify-all is the same check run.
     let alias = run_db(&f.db, &["verify-all"]);
     assert_eq!(alias.code, 0);
@@ -276,14 +291,27 @@ fn tampered_receipt_file_fails_with_exit_1() {
         o.stdout
     );
     assert!(
-        o.stdout.contains("OVERALL: FAIL (1 failing line(s))"),
+        o.stdout
+            .contains("SKIP   receipt 3 (run 2): file not present locally: pkg/absent.json"),
+        "{}",
+        o.stdout
+    );
+    // FAIL overrides INCOMPLETE: receipt 3 is skipped, the verdict is FAIL.
+    assert!(
+        o.stdout
+            .contains("OVERALL: FAIL (1 re-hashed, 1 skipped, 1 failing line(s))"),
         "{}",
         o.stdout
     );
     // The single-claim check reaches the same receipt and fails too.
     let one = run_db(&f.db, &["verify", "1"]);
     assert_eq!(one.code, 1, "{}", one.stdout);
-    assert!(one.stdout.contains("OVERALL: FAIL"), "{}", one.stdout);
+    assert!(
+        one.stdout
+            .contains("OVERALL: FAIL (0 re-hashed, 0 skipped, 1 failing line(s))"),
+        "{}",
+        one.stdout
+    );
 }
 
 #[test]
@@ -311,7 +339,8 @@ fn tampered_db_sha_fails_hash_and_root_checks() {
         o.stdout
     );
     assert!(
-        o.stdout.contains("OVERALL: FAIL (2 failing line(s))"),
+        o.stdout
+            .contains("OVERALL: FAIL (1 re-hashed, 1 skipped, 2 failing line(s))"),
         "{}",
         o.stdout
     );
@@ -328,7 +357,14 @@ fn tampered_db_sha_fails_hash_and_root_checks() {
 fn withdrawn_claim_passes_by_design_and_needs_its_reason() {
     let f = standard("withdrawn", Some("False accept: phantom card fit."));
     let o = run_db(&f.db, &["verify", "claim:2"]);
-    assert_eq!(o.code, 0, "{}", o.stdout);
+    // Its walk reaches no receipt, so nothing is re-hashed: INCOMPLETE, exit 4.
+    assert_eq!(o.code, 4, "{}", o.stdout);
+    assert!(
+        o.stdout
+            .contains("OVERALL: INCOMPLETE (0 re-hashed, 0 skipped, 0 failing line(s))"),
+        "{}",
+        o.stdout
+    );
     assert!(o.stdout.contains(
         "PASS   claim 2 (withdrawn): no receipt by design; directed walk terminates at its rubric criterion"
     ));
@@ -356,7 +392,160 @@ fn withdrawn_claim_passes_by_design_and_needs_its_reason() {
         .stdout
         .contains("FAIL   claim 2 (withdrawn): withdrawn/refused claim has no reason"));
     assert!(
-        o.stdout.contains("OVERALL: FAIL (1 failing line(s))"),
+        o.stdout
+            .contains("OVERALL: FAIL (2 re-hashed, 1 skipped, 1 failing line(s))"),
+        "{}",
+        o.stdout
+    );
+}
+
+#[test]
+fn missing_receipt_files_are_incomplete_not_pass() {
+    // One hashed receipt file absent: no FAIL line, but not a PASS.
+    let f = standard("incomplete", Some("reason"));
+    let o = run_db(&f.db, &["verify", "--all"]);
+    assert_eq!(o.code, 4, "{}{}", o.stdout, o.stderr);
+    assert!(!o.stdout.contains("FAIL "), "{}", o.stdout);
+    assert!(
+        o.stdout
+            .contains("OVERALL: INCOMPLETE (2 re-hashed, 1 skipped, 0 failing line(s))"),
+        "{}",
+        o.stdout
+    );
+    let j = run_db(&f.db, &["verify", "--all", "--json"]);
+    assert_eq!(j.code, 4);
+    let jv: serde_json::Value = serde_json::from_str(&j.stdout).unwrap();
+    assert_eq!(jv["overall"], "INCOMPLETE");
+    assert_eq!(jv["rehashed"], 2);
+    assert_eq!(jv["skipped"], 1);
+
+    // The hollow pass: a copy of the database with no receipt files
+    // beside it used to print OVERALL: PASS. Every hash is skipped now,
+    // and the verdict says so.
+    let copy = f.root.join("copy").join("evidence");
+    std::fs::create_dir_all(&copy).unwrap();
+    let db_copy = copy.join("evidence.db");
+    std::fs::copy(&f.db, &db_copy).unwrap();
+    let o = run_db(&db_copy, &["verify", "--all"]);
+    assert_eq!(o.code, 4, "{}{}", o.stdout, o.stderr);
+    for want in [
+        "  -> 0 matched, 3 not-on-disk, 1 receipts carry no hash",
+        "OVERALL: INCOMPLETE (0 re-hashed, 3 skipped, 0 failing line(s))",
+    ] {
+        assert!(
+            o.stdout.contains(want),
+            "missing {want:?} in:\n{}",
+            o.stdout
+        );
+    }
+    assert!(!o.stdout.contains("OVERALL: PASS"), "{}", o.stdout);
+}
+
+#[test]
+fn repo_relative_receipt_paths_resolve_from_the_repo_root() {
+    // The shipped layout: <repo>/evidence/evidence.db beside
+    // <repo>/evidence/receipts/<receipt_id>.json, with source_file in the
+    // repo-relative form evidence/receipts/<id>.json. Receipt 3 keeps an
+    // absolute path outside the repo.
+    let root = temp_root("repo-layout");
+    let repo = root.join("repo");
+    let receipts = repo.join("evidence").join("receipts");
+    std::fs::create_dir_all(&receipts).unwrap();
+    let db = repo.join("evidence").join("evidence.db");
+    let mut shas = Vec::new();
+    for i in 1..=2 {
+        let bytes = format!("{{\"receipt\": {i}}}\n");
+        std::fs::write(receipts.join(format!("{i}.json")), &bytes).unwrap();
+        shas.push(sha_hex(bytes.as_bytes()));
+    }
+    let abs = root.join("pkg").join("abs.json");
+    std::fs::write(&abs, b"absolute receipt\n").unwrap();
+    let f = Fixture {
+        root: root.clone(),
+        db: db.clone(),
+    };
+    {
+        let con = Connection::open(&db).unwrap();
+        con.execute_batch(SCHEMA).unwrap();
+        con.execute(
+            "INSERT INTO runs (run_id, label) VALUES (1, 'repo layout run')",
+            [],
+        )
+        .unwrap();
+        con.execute(
+            "INSERT INTO receipts (receipt_id, run_id, kind, file_sha256, source_file) VALUES \
+             (1, 1, 'fidelity_receipt', ?1, 'evidence/receipts/1.json'), \
+             (2, 1, 'fidelity_receipt', ?2, 'evidence/receipts/2.json'), \
+             (3, 1, 'fidelity_receipt', ?3, ?4)",
+            params![
+                shas[0],
+                shas[1],
+                sha_hex(b"absolute receipt\n"),
+                abs.to_str().unwrap()
+            ],
+        )
+        .unwrap();
+        con.execute_batch(
+            "INSERT INTO claims (claim_id, text, status, scope_photo, scope_build, scope_date) VALUES
+                 (1, 'Repo layout claim.', 'verified', 'IMG_1', 'abc1234', '2026-11-02');
+             INSERT INTO evidence_map (claim_id, rubric_criterion, run_id, receipt_id) VALUES
+                 (1, 'Demo', 1, 1);",
+        )
+        .unwrap();
+        finish_db(&con);
+    }
+    let pass = "OVERALL: PASS (3 re-hashed, 0 skipped, 0 failing line(s))";
+
+    // Default base: the parent of evidence/, i.e. the repo root.
+    let o = run_db(&f.db, &["verify", "--all"]);
+    assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
+    for want in [
+        format!(
+            "# receipt base dir: {} (parent of the database's directory)",
+            repo.display()
+        ),
+        "PASS   receipt 1 (run 1): sha256 matches evidence/receipts/1.json".to_string(),
+        "PASS   receipt 2 (run 1): sha256 matches evidence/receipts/2.json".to_string(),
+        format!("PASS   receipt 3 (run 1): sha256 matches {}", abs.display()),
+        pass.to_string(),
+    ] {
+        assert!(
+            o.stdout.contains(&want),
+            "missing {want:?} in:\n{}",
+            o.stdout
+        );
+    }
+
+    // Found by the ./evidence/evidence.db search from the repo root.
+    let out = Command::new(env!("CARGO_BIN_EXE_agenthand"))
+        .args(["evidence", "verify", "--all"])
+        .current_dir(&repo)
+        .env_remove("AGENTHAND_EVIDENCE_DB")
+        .env_remove("AGENTHAND_EVIDENCE_BASE")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains(pass), "{stdout}");
+
+    // --base-dir and AGENTHAND_EVIDENCE_BASE are still honoured; the
+    // absolute path resolves either way.
+    let o = run_db(
+        &f.db,
+        &["--base-dir", repo.to_str().unwrap(), "verify", "--all"],
+    );
+    assert_eq!(o.code, 0, "{}", o.stdout);
+    assert!(o.stdout.contains(pass), "{}", o.stdout);
+    let elsewhere = root.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let o = run_with_env(
+        &["--db", db.to_str().unwrap(), "verify", "--all"],
+        &[("AGENTHAND_EVIDENCE_BASE", elsewhere.to_str().unwrap())],
+    );
+    assert_eq!(o.code, 4, "{}", o.stdout);
+    assert!(
+        o.stdout
+            .contains("OVERALL: INCOMPLETE (1 re-hashed, 2 skipped, 0 failing line(s))"),
         "{}",
         o.stdout
     );
@@ -430,6 +619,7 @@ fn root_recomputes_instead_of_echoing_the_stored_value() {
 #[test]
 fn database_is_never_written() {
     let f = standard("readonly", Some("reason"));
+    complete(&f);
     let before = file_sha(&f.db);
     for args in [
         vec!["verify", "--all"],
@@ -623,15 +813,21 @@ fn database_location_comes_from_env_or_fails_clearly() {
         &f.db,
         &["--base-dir", other.to_str().unwrap(), "verify", "--all"],
     );
-    assert_eq!(v.code, 0, "{}", v.stdout);
+    assert_eq!(v.code, 4, "{}", v.stdout);
     assert!(v
         .stdout
         .contains("  -> 0 matched, 3 not-on-disk, 1 receipts carry no hash"));
+    assert!(v
+        .stdout
+        .contains("OVERALL: INCOMPLETE (0 re-hashed, 3 skipped, 0 failing line(s))"));
     let unknown = run_db(&f.db, &["show", "1", "--status", "verified"]);
     assert_eq!(unknown.code, 2);
 }
 
-/// The real evidence database. Run on a machine that has it:
+/// The real evidence database with its 29 receipt files. Run in a repo
+/// that ships them (`<repo>/evidence/evidence.db` and
+/// `<repo>/evidence/receipts/<id>.json`; set AGENTHAND_EVIDENCE_BASE if
+/// the receipts live elsewhere):
 /// AGENTHAND_EVIDENCE_DB=/path/to/evidence.db cargo test --release \
 ///   --test evidence_cli -- --ignored
 #[test]
@@ -639,10 +835,16 @@ fn database_location_comes_from_env_or_fails_clearly() {
 fn real_evidence_db_reaches_overall_pass_and_its_root() {
     let db = std::env::var("AGENTHAND_EVIDENCE_DB")
         .expect("set AGENTHAND_EVIDENCE_DB to the real evidence.db");
-    let o = run_with_env(&["verify", "--all"], &[("AGENTHAND_EVIDENCE_DB", &db)]);
+    let mut env = vec![("AGENTHAND_EVIDENCE_DB", db.clone())];
+    if let Ok(base) = std::env::var("AGENTHAND_EVIDENCE_BASE") {
+        env.push(("AGENTHAND_EVIDENCE_BASE", base));
+    }
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let o = run_with_env(&["verify", "--all"], &env);
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     assert!(
-        o.stdout.contains("OVERALL: PASS (0 failing line(s))"),
+        o.stdout
+            .contains("OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))"),
         "{}",
         o.stdout
     );
