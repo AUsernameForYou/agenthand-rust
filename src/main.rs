@@ -59,12 +59,43 @@ fn main() -> ExitCode {
         Some("heic-extract") => run_heic_extract(&args[2..]),
         Some("room-run") => run_room_run(&args[2..]),
         Some("verify") => {
-            let (Some(source), Some(final_), Some(mask)) = (args.get(2), args.get(3), args.get(4))
-            else {
-                eprintln!("usage: agenthand verify <source> <final> <mask>");
+            // Positionals plus the Python verifier's optional layer
+            // files: --reconstruction LAYER [--plate PLATE].
+            let usage = "usage: agenthand verify <source> <final> <mask> \
+                         [--reconstruction <layer.png>] [--plate <plate>]";
+            let mut positional: Vec<&str> = Vec::new();
+            let (mut reconstruction, mut plate): (Option<&str>, Option<&str>) = (None, None);
+            let mut rest = args[2..].iter();
+            while let Some(arg) = rest.next() {
+                let slot = match arg.as_str() {
+                    "--reconstruction" => &mut reconstruction,
+                    "--plate" => &mut plate,
+                    a if a.starts_with("--") => {
+                        eprintln!("unknown verify option {a:?}\n{usage}");
+                        return ExitCode::from(2);
+                    }
+                    a => {
+                        positional.push(a);
+                        continue;
+                    }
+                };
+                let Some(value) = rest.next() else {
+                    eprintln!("{arg} needs a file\n{usage}");
+                    return ExitCode::from(2);
+                };
+                *slot = Some(value.as_str());
+            }
+            let [source, final_, mask] = positional[..] else {
+                eprintln!("{usage}");
                 return ExitCode::from(2);
             };
-            match composite::verify_files(Path::new(source), Path::new(final_), Path::new(mask)) {
+            match composite::verify_files_with_layers(
+                Path::new(source),
+                Path::new(final_),
+                Path::new(mask),
+                reconstruction.map(Path::new),
+                plate.map(Path::new),
+            ) {
                 Ok(report) => {
                     println!(
                         "{}",

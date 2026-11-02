@@ -3172,6 +3172,25 @@ pub fn verify_files(
     final_path: &std::path::Path,
     mask_path: &std::path::Path,
 ) -> Result<Value, String> {
+    verify_files_with_layers(source_path, final_path, mask_path, None, None)
+}
+
+/// [`verify_files`] plus Python `verify.py --reconstruction LAYER
+/// [--plate PLATE]` (python `main`, ff72fcb): with the paper-fill
+/// layer supplied, no paper pixel may sit under the product mask (any
+/// mask value > 0); with the plate supplied too, and no problem found
+/// so far, the final must equal plate (fitted to the frame), then
+/// paper, then the product cut from the source by the mask,
+/// recomposited exactly. `non_product_pixels_verified` is true only
+/// when that identity was actually checked and held. A plate without
+/// a layer is not checked, as in Python.
+pub fn verify_files_with_layers(
+    source_path: &std::path::Path,
+    final_path: &std::path::Path,
+    mask_path: &std::path::Path,
+    reconstruction_path: Option<&std::path::Path>,
+    plate_path: Option<&std::path::Path>,
+) -> Result<Value, String> {
     let load_rgba = |p: &std::path::Path| -> Result<RgbaImage, String> {
         let data = std::fs::read(p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
         crate::image::decode_image(&data)
@@ -3257,6 +3276,62 @@ pub fn verify_files(
         );
     }
 
+    // Paper-fill layer checks (only when the layer file is supplied):
+    // the overlap count binds paper to the empty region; the
+    // recomposite identity is what promotes the rest of the frame from
+    // unexamined to verified.
+    let mut reconstruction_pixels: Option<u64> = None;
+    let mut reconstruction_overlap: Option<u64> = None;
+    let mut recomposite_identical: Option<bool> = None;
+    let mut non_product_pixels_verified = false;
+    if let Some(layer_path) = reconstruction_path {
+        let recon = load_rgba(layer_path)?;
+        if (recon.width, recon.height) != (source.width, source.height) {
+            problems.push(format!(
+                "reconstruction layer is {}x{}, source is {}x{}; paper is rendered on the product's frame",
+                recon.width, recon.height, source.width, source.height
+            ));
+        } else if (mask_w, mask_h) == (source.width, source.height) {
+            let (mut paper, mut overlap) = (0u64, 0u64);
+            for (px, &m) in recon.pixels.chunks_exact(4).zip(mask_gray.iter()) {
+                if px[3] > 0 {
+                    paper += 1;
+                    if m > 0 {
+                        overlap += 1;
+                    }
+                }
+            }
+            reconstruction_pixels = Some(paper);
+            reconstruction_overlap = Some(overlap);
+            if overlap > 0 {
+                problems.push(format!(
+                    "reconstruction places paper on {overlap} pixels inside the product mask; paper may only fill where the cut is empty"
+                ));
+            }
+            if let (Some(plate_path), true) = (plate_path, problems.is_empty()) {
+                let plate = load_rgba(plate_path)?;
+                let (fitted, _) = fit_plate(&plate, source.width, source.height);
+                let mut product = source.clone();
+                for (px, &m) in product.pixels.chunks_exact_mut(4).zip(mask_gray.iter()) {
+                    px[3] = m;
+                }
+                let rebuilt = alpha_composite(&alpha_composite(&fitted, &recon), &product);
+                let identical = rebuilt.pixels == final_img.pixels;
+                recomposite_identical = Some(identical);
+                if identical {
+                    non_product_pixels_verified = true;
+                } else {
+                    problems.push(
+                        "the final image is not the exact composite of plate, reconstruction layer, and product; pixels outside the three layers are present"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        // A mask on a different frame is already a problem above; the
+        // overlap cannot be measured against it (Python raises there).
+    }
+
     Ok(json!({
         "ok": problems.is_empty(),
         "source": source_path.display().to_string(),
@@ -3269,6 +3344,10 @@ pub fn verify_files(
         "color_profile_source_sha256": source_profile,
         "color_profile_output_sha256": output_profile,
         "color_profile_preserved": preserved,
+        "reconstruction_pixels": reconstruction_pixels,
+        "reconstruction_overlap_product_pixels": reconstruction_overlap,
+        "recomposite_identical": recomposite_identical,
+        "non_product_pixels_verified": non_product_pixels_verified,
         "problems": problems,
     }))
 }

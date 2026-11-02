@@ -338,3 +338,145 @@ fn verify_files_flags_a_tampered_pixel() {
     assert_eq!(report["changed_pixels"], 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The paper-fill fixture for the standalone file verifier: an 8x6
+/// source, a mask with a fully-on product block and one edge pixel,
+/// a paper layer on empty pixels only, a 16x12 plate (fitted to the
+/// frame), and the delivered final = plate, then paper, then product.
+fn layered_files(dir: &std::path::Path) -> RgbaImage {
+    let source = build(8, 6, |x, y| [(x * 30) as u8, (y * 40) as u8, 77, 255]);
+    let mut mask = vec![0u8; 48];
+    for y in 1..4 {
+        for x in 2..5 {
+            mask[y * 8 + x] = 255;
+        }
+    }
+    mask[3 * 8 + 5] = 128; // one edge-band pixel
+    let mask_gray = GrayImage {
+        width: 8,
+        height: 6,
+        pixels: mask.clone(),
+        icc_profile: None,
+    };
+    let recon = build(8, 6, |x, _| if x < 2 { [200, 190, 180, 255] } else { [0, 0, 0, 0] });
+    let plate = build(16, 12, |x, y| [(x * 15) as u8, 99, (y * 20) as u8, 255]);
+    let fitted = agenthand::resample::fit(&plate, 8, 6);
+    let mut fg = source.clone();
+    for (i, px) in fg.pixels.chunks_exact_mut(4).enumerate() {
+        px[3] = mask[i];
+    }
+    let final_ = composite::alpha_composite(&composite::alpha_composite(&fitted, &recon), &fg);
+    std::fs::write(dir.join("s.png"), encode_png_rgba(&source)).unwrap();
+    std::fs::write(dir.join("m.png"), encode_png_gray(&mask_gray)).unwrap();
+    std::fs::write(dir.join("r.png"), encode_png_rgba(&recon)).unwrap();
+    std::fs::write(dir.join("p.png"), encode_png_rgba(&plate)).unwrap();
+    std::fs::write(dir.join("f.png"), encode_png_rgba(&final_)).unwrap();
+    final_
+}
+
+/// Python `verify.py --reconstruction LAYER --plate PLATE` (main):
+/// with the paper layer and plate supplied, the final must be the
+/// exact recomposite of plate, paper and product; only then are the
+/// non-product pixels verified. A pixel painted outside the product
+/// fails; the exit code follows.
+#[test]
+fn verify_cli_checks_the_paper_layer_and_plate() {
+    let dir = std::env::temp_dir().join(format!("agenthand-verify-layers-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut final_ = layered_files(&dir);
+    let run = || {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_agenthand"))
+            .arg("verify")
+            .arg(dir.join("s.png"))
+            .arg(dir.join("f.png"))
+            .arg(dir.join("m.png"))
+            .arg("--reconstruction")
+            .arg(dir.join("r.png"))
+            .arg("--plate")
+            .arg(dir.join("p.png"))
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stderr)));
+        (out.status.code(), report)
+    };
+    let (code, report) = run();
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(code, Some(0));
+    assert_eq!(report["reconstruction_pixels"], 12);
+    assert_eq!(report["reconstruction_overlap_product_pixels"], 0);
+    assert_eq!(report["recomposite_identical"], true);
+    assert_eq!(report["non_product_pixels_verified"], true);
+
+    // Paint one plate pixel the three layers do not explain.
+    set_px(&mut final_, 7, 5, [1, 2, 3, 255]);
+    std::fs::write(dir.join("f.png"), encode_png_rgba(&final_)).unwrap();
+    let (code, report) = run();
+    assert_eq!(report["ok"], false, "{report}");
+    assert_eq!(code, Some(1));
+    assert_eq!(report["changed_pixels"], 0);
+    assert_eq!(report["recomposite_identical"], false);
+    assert_eq!(report["non_product_pixels_verified"], false);
+    assert_eq!(
+        report["problems"],
+        serde_json::json!([
+            "the final image is not the exact composite of plate, reconstruction layer, and product; pixels outside the three layers are present"
+        ])
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The library side of the layer checks: paper under the product mask
+/// (edge band included) is refused and the recomposite is not run; a
+/// plate without a layer is not checked (Python's rule); without the
+/// layer files the report carries the new keys as null / false.
+#[test]
+fn verify_files_layer_checks_refuse_paper_under_the_mask() {
+    let dir = std::env::temp_dir().join(format!("agenthand-verify-paper-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    layered_files(&dir);
+    let (s, f, m, r, p) = (
+        dir.join("s.png"),
+        dir.join("f.png"),
+        dir.join("m.png"),
+        dir.join("r.png"),
+        dir.join("p.png"),
+    );
+
+    // No layer files: the plain verifier, with the keys present.
+    let plain = composite::verify_files(&s, &f, &m).unwrap();
+    assert_eq!(plain["ok"], true, "{plain}");
+    assert!(plain["reconstruction_pixels"].is_null());
+    assert!(plain["recomposite_identical"].is_null());
+    assert_eq!(plain["non_product_pixels_verified"], false);
+    // A plate alone is not checked.
+    let plate_only = composite::verify_files_with_layers(&s, &f, &m, None, Some(&p)).unwrap();
+    assert_eq!(plate_only, plain);
+    // The layer alone: overlap measured, identity not checked.
+    let layer_only = composite::verify_files_with_layers(&s, &f, &m, Some(&r), None).unwrap();
+    assert_eq!(layer_only["ok"], true, "{layer_only}");
+    assert_eq!(layer_only["reconstruction_pixels"], 12);
+    assert!(layer_only["recomposite_identical"].is_null());
+    assert_eq!(layer_only["non_product_pixels_verified"], false);
+
+    // Paper on the edge-band pixel (mask 128) and one product pixel.
+    let mut recon = build(8, 6, |x, _| if x < 2 { [200, 190, 180, 255] } else { [0, 0, 0, 0] });
+    set_px(&mut recon, 5, 3, [9, 9, 9, 40]);
+    set_px(&mut recon, 3, 2, [9, 9, 9, 255]);
+    std::fs::write(&r, encode_png_rgba(&recon)).unwrap();
+    let report = composite::verify_files_with_layers(&s, &f, &m, Some(&r), Some(&p)).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["reconstruction_pixels"], 14);
+    assert_eq!(report["reconstruction_overlap_product_pixels"], 2);
+    assert!(report["recomposite_identical"].is_null());
+    assert_eq!(report["non_product_pixels_verified"], false);
+    assert_eq!(
+        report["problems"],
+        serde_json::json!([
+            "reconstruction places paper on 2 pixels inside the product mask; paper may only fill where the cut is empty"
+        ])
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
