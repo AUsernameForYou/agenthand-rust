@@ -1119,6 +1119,23 @@ pub const CARVE_COMPLETE_LINK_RADIUS: usize = 7;
 /// area the carve could not release exceeds this share of the enclosed
 /// window area (accepted + completed + remainder).
 pub const CARVE_GATE_MAX_REMAINDER_FRAC: f64 = 0.10;
+/// Strips (step 4f): kept interior pixels (not thin, not pale) narrower
+/// than a (2w+1) square, w = max(`_WIDE_MIN_PX`, frac x diag) (21 px on
+/// IMG_1443), whose core survives a (2c+1) opening, c = max(`_CORE_MIN_PX`,
+/// frac x diag) (5 px), are strips. A strip at least `_RELEASE_FRAC`
+/// bordered by released windows is released; one at least `_RESIDUE_FRAC`
+/// bordered and left is gate residue.
+pub const CARVE_STRIP_WIDE_MIN_PX: usize = 8;
+pub const CARVE_STRIP_WIDE_DIAG_FRAC: f64 = 0.0037;
+pub const CARVE_STRIP_CORE_MIN_PX: usize = 2;
+pub const CARVE_STRIP_CORE_DIAG_FRAC: f64 = 0.0009;
+pub const CARVE_STRIP_RELEASE_FRAC: f64 = 0.6;
+pub const CARVE_STRIP_RESIDUE_FRAC: f64 = 0.3;
+/// Spoke bridges: a released strip pixel goes back to the product when a
+/// straight line through it (16 directions) leaves the strip within
+/// 3w px on both sides into kept pixels that continue along the line for
+/// at least this many px on both sides (a spoke crossing the strip).
+pub const CARVE_STRIP_BRIDGE_CONTINUE_PX: usize = 12;
 /// cut_out's error code when the gate refuses.
 pub const HOLE_CARVE_GATE_CODE: &str = "HOLE_CARVE_INCOMPLETE";
 /// Pocket guard (step 4e): a cell that lies mostly (`_FRAC`) in a pocket
@@ -1912,6 +1929,182 @@ fn restore_pale_parts<'s>(
     restored
 }
 
+/// What the strip step reads.
+struct StripInputs<'a, 's> {
+    w: usize,
+    h: usize,
+    cand: &'a [bool],
+    thin: &'a [bool],
+    /// Mask pixels at least as deep as the completion's depth floor, in a
+    /// carved component (empty when the completion found no window).
+    interior: &'a [bool],
+    src_at: &'a dyn Fn(usize) -> &'s [u8],
+    diag: f64,
+}
+
+struct StripOutcome {
+    released_px: u64,
+    released_cells: u64,
+    bridged_px: u64,
+    residue_px: u64,
+}
+
+/// 4f. Strips. Colour cannot tell a paver joint in shade from the tyre, so
+/// the completion keeps dark joint bands across the windows. A strip is a
+/// kept interior pixel set (not thin line work, not pale) narrower than
+/// the wide-part square, with a core that survives the core opening (so a
+/// spoke in shade, a few px wide, is not a strip). A strip bordered by
+/// released windows for at least `CARVE_STRIP_RELEASE_FRAC` of its border
+/// is released when `apply`; a strip bordered for at least
+/// `CARVE_STRIP_RESIDUE_FRAC` that stays is counted as gate residue. Spokes
+/// crossing a released strip are bridged back to the product.
+fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOutcome {
+    let (w, h) = (p.w, p.h);
+    let n = w * h;
+    let mut out = StripOutcome { released_px: 0, released_cells: 0, bridged_px: 0, residue_px: 0 };
+    if p.interior.len() != n {
+        return out;
+    }
+    let is_pale = |i: usize| -> bool {
+        let px = (p.src_at)(i);
+        let (mx, mn) = (px[0].max(px[1]).max(px[2]), px[0].min(px[1]).min(px[2]));
+        carve_luma(px) >= CARVE_PALE_MIN_LUMA && mx - mn <= CARVE_PALE_MAX_CHROMA
+    };
+    let q: Vec<u8> = (0..n)
+        .map(|i| {
+            if p.interior[i] && p.cand[i] && !carved[i] && !p.thin[i] && !is_pale(i) {
+                255
+            } else {
+                0
+            }
+        })
+        .collect();
+    if !q.iter().any(|&v| v != 0) {
+        return out;
+    }
+    let rw = CARVE_STRIP_WIDE_MIN_PX.max((CARVE_STRIP_WIDE_DIAG_FRAC * p.diag).round() as usize);
+    let rc = CARVE_STRIP_CORE_MIN_PX.max((CARVE_STRIP_CORE_DIAG_FRAC * p.diag).round() as usize);
+    let wide = square_extreme(&square_extreme(&q, w, h, rw, false), w, h, rw, true);
+    let narrow: Vec<u8> = (0..n).map(|i| if q[i] != 0 && wide[i] == 0 { 255 } else { 0 }).collect();
+    drop((q, wide));
+    let core: Vec<bool> = square_extreme(&square_extreme(&narrow, w, h, rc, false), w, h, rc, true)
+        .iter()
+        .map(|&v| v != 0)
+        .collect();
+    drop(narrow);
+    let (labels, count) = label8(&core, w, h);
+    if count == 0 {
+        return out;
+    }
+    let mut area = vec![0u64; count + 1];
+    let mut border = vec![0u64; count + 1];
+    let mut open = vec![0u64; count + 1];
+    for i in 0..n {
+        let l = labels[i] as usize;
+        if l == 0 {
+            continue;
+        }
+        area[l] += 1;
+        let (x, y) = (i % w, i / w);
+        let mut nb = |j: usize| {
+            if labels[j] as usize != l {
+                border[l] += 1;
+                if carved[j] {
+                    open[l] += 1;
+                }
+            }
+        };
+        if x > 0 {
+            nb(i - 1);
+        }
+        if x + 1 < w {
+            nb(i + 1);
+        }
+        if y > 0 {
+            nb(i - w);
+        }
+        if y + 1 < h {
+            nb(i + w);
+        }
+    }
+    let share = |l: usize| open[l] as f64 / border[l].max(1) as f64;
+    let release: Vec<bool> = (0..=count)
+        .map(|l| l != 0 && apply && area[l] >= CARVE_CELL_MIN_PX && share(l) >= CARVE_STRIP_RELEASE_FRAC)
+        .collect();
+    for l in 1..=count {
+        if release[l] {
+            out.released_cells += 1;
+        } else if area[l] >= CARVE_CELL_MIN_PX && share(l) >= CARVE_STRIP_RESIDUE_FRAC {
+            out.residue_px += area[l];
+        }
+    }
+    if out.released_cells == 0 {
+        return out;
+    }
+    let strip: Vec<bool> = (0..n).map(|i| release[labels[i] as usize]).collect();
+    drop(labels);
+    // Spoke bridges, judged against the carve before the strips go.
+    let reach = (3 * rw) as isize;
+    let cont = CARVE_STRIP_BRIDGE_CONTINUE_PX as isize;
+    let dirs: Vec<(f64, f64)> = (0..16)
+        .map(|k| {
+            let a = k as f64 * std::f64::consts::PI / 16.0;
+            (a.cos(), a.sin())
+        })
+        .collect();
+    let kept_at = |x: f64, y: f64| -> Option<bool> {
+        let (xi, yi) = (x.round() as isize, y.round() as isize);
+        if xi < 0 || yi < 0 || xi >= w as isize || yi >= h as isize {
+            return None;
+        }
+        let j = yi as usize * w + xi as usize;
+        Some(!carved[j] && !strip[j] && p.cand[j])
+    };
+    // From (x, y) along (dx, dy): leave the strip within `reach`, then find
+    // `cont` kept pixels in a row.
+    let side = |x: usize, y: usize, dx: f64, dy: f64| -> bool {
+        let mut t = 1isize;
+        loop {
+            if t > reach {
+                return false;
+            }
+            let (px, py) = (x as f64 + dx * t as f64, y as f64 + dy * t as f64);
+            let (xi, yi) = (px.round() as isize, py.round() as isize);
+            if xi < 0 || yi < 0 || xi >= w as isize || yi >= h as isize {
+                return false;
+            }
+            if !strip[yi as usize * w + xi as usize] {
+                break;
+            }
+            t += 1;
+        }
+        (0..cont).all(|k| {
+            kept_at(x as f64 + dx * (t + k) as f64, y as f64 + dy * (t + k) as f64) == Some(true)
+        })
+    };
+    let mut bridge = vec![false; n];
+    for i in 0..n {
+        if !strip[i] {
+            continue;
+        }
+        let (x, y) = (i % w, i / w);
+        if dirs.iter().any(|&(dx, dy)| side(x, y, dx, dy) && side(x, y, -dx, -dy)) {
+            bridge[i] = true;
+        }
+    }
+    for i in 0..n {
+        if strip[i] {
+            if bridge[i] {
+                out.bridged_px += 1;
+            } else {
+                carved[i] = true;
+                out.released_px += 1;
+            }
+        }
+    }
+    out
+}
+
 /// What the completion pass reads (all planes are the carve window).
 struct CompleteInputs<'a> {
     w: usize,
@@ -1985,7 +2178,7 @@ fn complete_windows(
     p: &CompleteInputs,
     carved: &[bool],
     apply: bool,
-) -> (CompletionOutcome, Vec<bool>) {
+) -> (CompletionOutcome, Vec<bool>, Vec<bool>) {
     let (w, h) = (p.w, p.h);
     let n = w * h;
     let r = CARVE_THIN_RADIUS;
@@ -2002,7 +2195,7 @@ fn complete_windows(
         core_depth_px: core,
     };
     if accepted_px == 0 {
-        return (empty, Vec::new());
+        return (empty, Vec::new(), Vec::new());
     }
     // 1. Second colour model and structure.
     let (m2, _, _) = CarveTileModels::build(w, h, p.tile, |i| {
@@ -2054,7 +2247,7 @@ fn complete_windows(
     // floor is the same in every direction: a chessboard depth is ~30%
     // shallower along diagonals and would expose the tyre's inner edge
     // elsewhere). Compared squared.
-    let (floor_sq, open) = {
+    let (floor_sq, open, interior_plane) = {
         let depth_sq = euclidean_depth_sq(p.on, w, h);
         let mut accepted: Vec<u32> = (0..n).filter(|&i| carved[i]).map(|i| depth_sq[i]).collect();
         let need = ((CARVE_COMPLETE_FLOOR_FRAC * accepted_px as f64).ceil() as usize).max(1);
@@ -2070,13 +2263,16 @@ fn complete_windows(
                     && p.comp_ok[p.comp_labels[i] as usize]
             })
             .collect();
-        (floor_sq, open)
+        let interior_plane: Vec<bool> = (0..n)
+            .map(|i| p.on[i] && depth_sq[i] >= floor_sq && p.comp_ok[p.comp_labels[i] as usize])
+            .collect();
+        (floor_sq, open, interior_plane)
     };
     let floor = ((floor_sq as f64).sqrt().ceil() as u32).min(u16::MAX as u32) as u16;
     // 3. Cells and their border.
     let (cl, cc) = label8(&open, w, h);
     if cc == 0 {
-        return (CompletionOutcome { depth_floor_px: floor, ..empty }, Vec::new());
+        return (CompletionOutcome { depth_floor_px: floor, ..empty }, Vec::new(), interior_plane);
     }
     let look: Vec<bool> = {
         let plane: Vec<u8> = (0..n)
@@ -2233,6 +2429,7 @@ fn complete_windows(
             core_depth_px: core,
         },
         completed,
+        interior_plane,
     )
 }
 
@@ -2785,7 +2982,7 @@ pub fn carve_holes_opts(
     // `complete_windows`): windows between the accepted ones whose
     // background the colour test could not prove (pavers in shade) are
     // released whole, bounded by the kept structure around them.
-    let (completion, completed) = complete_windows(
+    let (completion, completed, interior) = complete_windows(
         &CompleteInputs {
             w,
             h,
@@ -2918,6 +3115,23 @@ pub fn carve_holes_opts(
     }
     drop(completed);
 
+    // 4f. Strips: narrow kept bands across released windows (paver joints
+    // in shade) are released; spokes crossing them are bridged back.
+    let strips = release_strips(
+        &StripInputs {
+            w,
+            h,
+            cand: &cand,
+            thin: &thin,
+            interior: &interior,
+            src_at: &|i: usize| src_at(i),
+            diag,
+        },
+        &mut carved,
+        complete,
+    );
+    drop(interior);
+
     // 5a''. Pale-part guard: pale solid parts the carve mostly kept (a
     // reflector) are product; carved pixels inside their convex hull go
     // back to the product (its frayed edge, the bolt on it).
@@ -3038,9 +3252,13 @@ pub fn carve_holes_opts(
     }
     let product_after = out.pixels.iter().filter(|&&v| v == 255).count() as u64;
     // The enclosed-remainder gate (cut_out refuses when it fails).
-    let enclosed_px = completion.accepted_px + completion.released_px + completion.remainder_px;
+    let remainder_px = completion.remainder_px + strips.residue_px;
+    let enclosed_px = completion.accepted_px
+        + completion.released_px
+        + strips.released_px
+        + remainder_px;
     let remainder_frac = if enclosed_px > 0 {
-        completion.remainder_px as f64 / enclosed_px as f64
+        remainder_px as f64 / enclosed_px as f64
     } else {
         0.0
     };
@@ -3049,7 +3267,9 @@ pub fn carve_holes_opts(
         "pass": remainder_frac <= CARVE_GATE_MAX_REMAINDER_FRAC,
         "accepted_window_pixels": completion.accepted_px,
         "completed_window_pixels": completion.released_px,
-        "remainder_pixels": completion.remainder_px,
+        "strip_pixels": strips.released_px,
+        "strip_residue_pixels": strips.residue_px,
+        "remainder_pixels": remainder_px,
         "enclosed_candidate_pixels": enclosed_px,
         "enclosed_cells": completion.cells_enclosed,
         "remainder_fraction": crate::round6(remainder_frac),
@@ -3089,6 +3309,9 @@ pub fn carve_holes_opts(
             "depth_floor_px": completion.depth_floor_px,
             "core_depth_px": completion.core_depth_px,
             "link_radius_px": CARVE_COMPLETE_LINK_RADIUS,
+            "strip_pixels": strips.released_px,
+            "strip_cells": strips.released_cells,
+            "spoke_bridge_pixels": strips.bridged_px,
         },
         "gate": gate,
     });
