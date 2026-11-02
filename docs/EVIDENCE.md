@@ -47,7 +47,28 @@ Rule 3 is the rule `verify_db.py` uses (its `ROOT` is the parent of the
 directory holding `evidence.db`). For a database at
 `<repo>/evidence/evidence.db` the base is `<repo>`. `verify` prints the
 base it used, and the rule that chose it, on a `# receipt base dir:`
-line.
+line. Absolute paths are used as they are, whatever the base.
+
+Receipts layout. The hashed receipt files ship in the repo next to the
+database, one file per receipt, and `receipts.source_file` holds the
+repo-relative path:
+
+```
+<repo>/
+  evidence/
+    evidence.db
+    receipts/
+      <receipt_id>.json      source_file = evidence/receipts/<receipt_id>.json
+```
+
+With no `--base-dir` and no `AGENTHAND_EVIDENCE_BASE`, rule 3 makes the
+base `<repo>`, so `evidence/receipts/32.json` resolves to
+`<repo>/evidence/receipts/32.json`. This holds whether the database was
+named with `--db`, `AGENTHAND_EVIDENCE_DB`, or found as
+`./evidence/evidence.db` from the repo root. A copy of `evidence.db`
+moved somewhere else needs `--base-dir <repo>` (or the receipts copied
+along with it at the same relative place); otherwise its receipts are
+`SKIP` and the verdict is `INCOMPLETE`.
 
 ## Verbs
 
@@ -57,7 +78,7 @@ Implemented:
 |---|---|
 | `list [--chapter <c>] [--status <s>]` | Claims with status, rubric criterion and chapters. `--status` is one of `verified`, `corrected`, `withdrawn`, `refused`. |
 | `show <claim-id>` | One claim: text, scope fields, reason, source, each `evidence_map` row with its run (calls, totals, verify result) and receipt (sha256, source file, verify command, expected line), and the chapters that cite it. |
-| `verify <claim-id>` / `verify --all` / `verify-all` | The reference checks, one line per check, then `OVERALL: PASS` or `OVERALL: FAIL`. See below. |
+| `verify <claim-id>` / `verify --all` / `verify-all` | The reference checks, one line per check, then one `OVERALL:` line (`PASS`, `INCOMPLETE` or `FAIL`, with counts). See below. |
 | `trace <node-id>` | The directed walk over `edges` from a node, as an indented tree, then the reverse walk (incoming edges). |
 | `chapter <c>` | The film chapter at a timestamp (or by id or label), its claim, and its trace. |
 | `root` | The receipts root recomputed from the `receipts.file_sha256` rows, and whether `meta` holds the same value and count. |
@@ -104,10 +125,44 @@ with the same line text and the same statuses:
 | (e) | Each claim has `scope_photo`, `scope_build` and `scope_date`, or a reason; withdrawn and refused claims have a reason. |
 
 Statuses: `PASS`, `FAIL`, `REPORT` (a fact with its explanation on
-record), `SKIP` (not checked: file absent). Only `FAIL` lines count
-toward `OVERALL`. The output starts with `# db:` and
-`# receipt base dir:` lines; every other line has the same text as
-`verify_db.py` prints.
+record), `SKIP` (not checked: file absent). The output starts with
+`# db:` and `# receipt base dir:` lines; every other line has the same
+text as `verify_db.py` prints.
+
+### The `OVERALL` line
+
+The last line carries three counts:
+
+```
+OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))
+OVERALL: INCOMPLETE (0 re-hashed, 29 skipped, 0 failing line(s))
+OVERALL: FAIL (28 re-hashed, 0 skipped, 1 failing line(s))
+```
+
+- re-hashed: receipt files in scope whose sha256 was recomputed from
+  disk and matched the database (section (a) `PASS` lines). A mismatch
+  is a `FAIL` line, not a re-hash.
+- skipped: hashed receipts in scope whose file was not present (section
+  (a) `SKIP` lines).
+- failing line(s): `FAIL` lines in all sections.
+
+Verdict, in order:
+
+1. Any `FAIL` line: `FAIL`, exit 1. This holds even when receipts were
+   also skipped.
+2. No `FAIL`, no `SKIP`, at least one receipt re-hashed: `PASS`, exit 0.
+3. Otherwise `INCOMPLETE`, exit 4: nothing failed, but some receipt
+   files were not checked, or none were. A scope with no hashed receipts
+   at all (for example `verify` on a withdrawn claim, whose walk reaches
+   no receipt) prints `INCOMPLETE (0 re-hashed, 0 skipped, 0 failing
+   line(s))`: nothing was re-hashed, so nothing was proven.
+
+A `PASS` therefore always means every hashed receipt in scope was read
+from disk and matched. A copy of the database without its receipt files
+cannot pass.
+
+`--json` carries the same verdict in `overall` (`PASS`, `INCOMPLETE`,
+`FAIL`) and the counts in `rehashed`, `skipped` and `failures`.
 
 `verify <claim-id>` runs the same sections limited to that claim: (a)
 and (b) for the receipts and runs its directed walk reaches, (c) for its
@@ -169,6 +224,7 @@ second time is printed once more with `(shown above)` and not expanded.
 | 1 | `verify`: `OVERALL: FAIL`; `root`: meta differs; `tamper`: the file on disk already differs from the database |
 | 2 | Usage error, unknown id, database not found or not schema v2 |
 | 3 | Planned verb, not implemented |
+| 4 | `verify`: `OVERALL: INCOMPLETE` (no `FAIL`, but receipt files skipped or none re-hashed) |
 
 ## Parity with `verify_db.py`
 
@@ -184,20 +240,38 @@ in both. Three synthetic databases (all-pass; a mix of every `FAIL`,
 `REPORT` and `SKIP` case; a wrong stored root) also gave identical
 output and exit codes.
 
+That record predates the `INCOMPLETE` verdict (2026-11-02). The run it
+describes, 29 `SKIP` lines and no `FAIL`, is exactly the case that no
+longer passes: agenthand now prints
+`OVERALL: INCOMPLETE (0 re-hashed, 29 skipped, 0 failing line(s))` and
+exits 4. `verify_db.py` takes the same ruling; the per-check lines are
+unchanged, and the `OVERALL` line and exit code match once both carry
+it.
+
 ## Tests
 
 `tests/evidence_cli.rs` builds small databases from
 `tests/fixtures/evidence/schema.sql` (a byte copy of the evidence
 layer's `schema.sql`, sha256
 `a61a63193c61ae652a76a25ed24effc7664113a5eb9e9aedf4ffaf3a4ad3bf67`) in a
-temp dir and runs the binary: a passing database, a tampered receipt
-file and a tampered database sha (exit 1), withdrawn claims with and
-without a reason, the root for 1, 2 and 3 receipts against
-hand-computed values, a wrong stored root, the database left unchanged
-by every verb, trace, graph, tamper, planned verbs, and database
-location. One `#[ignore]` test runs against the real database:
+temp dir and runs the binary: every receipt file present (`PASS`, exit
+0); receipt files missing, including a database copy with an empty base
+directory (`INCOMPLETE`, exit 4); a tampered receipt file with another
+receipt skipped and a tampered database sha (`FAIL`, exit 1); the
+`evidence/receipts/<id>.json` layout resolved from the repo root (by
+default, from `./evidence/evidence.db`, with `--base-dir` and with
+`AGENTHAND_EVIDENCE_BASE`, plus an absolute path); withdrawn claims with
+and without a reason; the root for 1, 2 and 3 receipts against
+hand-computed values; a wrong stored root; the database left unchanged
+by every verb; trace, graph, tamper, planned verbs and database
+location. One `#[ignore]` test runs against the real database and its
+29 receipt files and expects
+`OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))`:
 
 ```sh
-AGENTHAND_EVIDENCE_DB=/path/to/evidence.db \
+AGENTHAND_EVIDENCE_DB=<repo>/evidence/evidence.db \
   cargo test --release --test evidence_cli -- --ignored
 ```
+
+Set `AGENTHAND_EVIDENCE_BASE` as well if the receipts are not under the
+database's repo root.
