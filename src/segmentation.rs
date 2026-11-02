@@ -1392,6 +1392,109 @@ fn carve_model(local: &[u32], global: &[u32], global_sum: f64) -> Vec<f32> {
         .collect()
 }
 
+/// Per-tile background and product colour models (docs/HOLE-CARVE.md,
+/// step 2): each tile pools its 3x3 tile neighbourhood, the global
+/// model is mixed in as a `CARVE_TILE_PRIOR`-sample prior, and the
+/// models are blended bilinearly between tile centres.
+struct CarveTileModels {
+    tile: usize,
+    ntx: usize,
+    nty: usize,
+    bg: Vec<Vec<f32>>,
+    pr: Vec<Vec<f32>>,
+}
+
+impl CarveTileModels {
+    /// Build the models over a `w` x `h` window. `sample(i)` names pixel
+    /// i as a background sample (`Some((true, bin))`), a product sample
+    /// (`Some((false, bin))`) or neither. Also returns the background
+    /// and product sample counts.
+    fn build(
+        w: usize,
+        h: usize,
+        tile: usize,
+        sample: impl Fn(usize) -> Option<(bool, usize)>,
+    ) -> (Self, u64, u64) {
+        let (ntx, nty) = (w.div_ceil(tile), h.div_ceil(tile));
+        let mut raw_bg = vec![0u32; ntx * nty * CARVE_BINS];
+        let mut raw_pr = vec![0u32; ntx * nty * CARVE_BINS];
+        let mut glob_bg = vec![0u32; CARVE_BINS];
+        let mut glob_pr = vec![0u32; CARVE_BINS];
+        for i in 0..w * h {
+            let Some((is_bg, c)) = sample(i) else {
+                continue;
+            };
+            let t = ((i / w) / tile) * ntx + (i % w) / tile;
+            if is_bg {
+                raw_bg[t * CARVE_BINS + c] += 1;
+                glob_bg[c] += 1;
+            } else {
+                raw_pr[t * CARVE_BINS + c] += 1;
+                glob_pr[c] += 1;
+            }
+        }
+        let (n_bg, n_pr): (u64, u64) = (
+            glob_bg.iter().map(|&v| v as u64).sum(),
+            glob_pr.iter().map(|&v| v as u64).sum(),
+        );
+        let g_bg = smooth_bins(&glob_bg);
+        let g_pr = smooth_bins(&glob_pr);
+        let g_bg_sum: f64 = g_bg.iter().map(|&v| v as f64).sum::<f64>().max(1.0);
+        let g_pr_sum: f64 = g_pr.iter().map(|&v| v as f64).sum::<f64>().max(1.0);
+        let mut bg: Vec<Vec<f32>> = Vec::with_capacity(ntx * nty);
+        let mut pr: Vec<Vec<f32>> = Vec::with_capacity(ntx * nty);
+        for ty in 0..nty {
+            for tx in 0..ntx {
+                let mut loc_bg = vec![0u32; CARVE_BINS];
+                let mut loc_pr = vec![0u32; CARVE_BINS];
+                for yy in ty.saturating_sub(1)..(ty + 2).min(nty) {
+                    for xx in tx.saturating_sub(1)..(tx + 2).min(ntx) {
+                        let t = yy * ntx + xx;
+                        let (rb, rp) = (
+                            &raw_bg[t * CARVE_BINS..(t + 1) * CARVE_BINS],
+                            &raw_pr[t * CARVE_BINS..(t + 1) * CARVE_BINS],
+                        );
+                        for c in 0..CARVE_BINS {
+                            loc_bg[c] += rb[c];
+                            loc_pr[c] += rp[c];
+                        }
+                    }
+                }
+                bg.push(carve_model(&smooth_bins(&loc_bg), &g_bg, g_bg_sum));
+                pr.push(carve_model(&smooth_bins(&loc_pr), &g_pr, g_pr_sum));
+            }
+        }
+        (CarveTileModels { tile, ntx, nty, bg, pr }, n_bg, n_pr)
+    }
+
+    /// (P(colour | background), P(colour | product)) at pixel i of the
+    /// window for colour bin `c`, blended between tile centres.
+    fn evidence(&self, i: usize, w: usize, c: usize) -> (f64, f64) {
+        let tile = self.tile;
+        let tile_coord = |p: usize, count: usize| -> (usize, usize, f64) {
+            let f = ((p as f64 + 0.5) / tile as f64 - 0.5).clamp(0.0, (count - 1) as f64);
+            let i0 = (f.floor() as usize).min(count - 1);
+            let i1 = (i0 + 1).min(count - 1);
+            (i0, i1, f - i0 as f64)
+        };
+        let (ntx, nty) = (self.ntx, self.nty);
+        let (tx0, tx1, wx) = tile_coord(i % w, ntx);
+        let (ty0, ty1, wy) = tile_coord(i / w, nty);
+        let mut pb = 0f64;
+        let mut pp = 0f64;
+        for (t, wt) in [
+            (ty0 * ntx + tx0, (1.0 - wy) * (1.0 - wx)),
+            (ty0 * ntx + tx1, (1.0 - wy) * wx),
+            (ty1 * ntx + tx0, wy * (1.0 - wx)),
+            (ty1 * ntx + tx1, wy * wx),
+        ] {
+            pb += wt * self.bg[t][c] as f64;
+            pp += wt * self.pr[t][c] as f64;
+        }
+        (pb, pp)
+    }
+}
+
 /// Pillow 'L' luma of an RGB(A) pixel.
 #[inline]
 fn carve_luma(px: &[u8]) -> u8 {
@@ -1484,87 +1587,22 @@ pub fn carve_holes_with(
     let tile = CARVE_TILE_MIN_PX
         .max((CARVE_TILE_DIAG_FRAC * diag).round() as usize)
         .max(w.max(h).div_ceil(CARVE_TILE_MAX_GRID));
-    let (ntx, nty) = (w.div_ceil(tile), h.div_ceil(tile));
-    let mut raw_bg = vec![0u32; ntx * nty * CARVE_BINS];
-    let mut raw_pr = vec![0u32; ntx * nty * CARVE_BINS];
-    let mut glob_bg = vec![0u32; CARVE_BINS];
-    let mut glob_pr = vec![0u32; CARVE_BINS];
-    for i in 0..n {
-        let ring = !on[i] && dout[i] >= CARVE_BG_RING.0 && dout[i] <= CARVE_BG_RING.1;
-        let band = on[i] && din[i] > CARVE_PRODUCT_MIN_DEPTH && din[i] <= band_px;
-        if !ring && !band {
-            continue;
-        }
-        let c = carve_colour_bin(src_at(i));
-        let t = ((i / w) / tile) * ntx + (i % w) / tile;
-        if ring {
-            raw_bg[t * CARVE_BINS + c] += 1;
-            glob_bg[c] += 1;
+    let ring_at = |i: usize| !on[i] && dout[i] >= CARVE_BG_RING.0 && dout[i] <= CARVE_BG_RING.1;
+    let band_at = |i: usize| on[i] && din[i] > CARVE_PRODUCT_MIN_DEPTH && din[i] <= band_px;
+    let (models, n_bg, n_pr) = CarveTileModels::build(w, h, tile, |i| {
+        if ring_at(i) {
+            Some((true, carve_colour_bin(src_at(i))))
+        } else if band_at(i) {
+            Some((false, carve_colour_bin(src_at(i))))
         } else {
-            raw_pr[t * CARVE_BINS + c] += 1;
-            glob_pr[c] += 1;
+            None
         }
-    }
-    let (n_bg, n_pr): (u64, u64) = (
-        glob_bg.iter().map(|&v| v as u64).sum(),
-        glob_pr.iter().map(|&v| v as u64).sum(),
-    );
+    });
     if n_bg < 64 || n_pr < 64 {
         return unchanged("too few background or product colour samples around the mask");
     }
-    let g_bg = smooth_bins(&glob_bg);
-    let g_pr = smooth_bins(&glob_pr);
-    let g_bg_sum: f64 = g_bg.iter().map(|&v| v as f64).sum();
-    let g_pr_sum: f64 = g_pr.iter().map(|&v| v as f64).sum();
-    let mut model_bg: Vec<Vec<f32>> = Vec::with_capacity(ntx * nty);
-    let mut model_pr: Vec<Vec<f32>> = Vec::with_capacity(ntx * nty);
-    for ty in 0..nty {
-        for tx in 0..ntx {
-            let mut loc_bg = vec![0u32; CARVE_BINS];
-            let mut loc_pr = vec![0u32; CARVE_BINS];
-            for yy in ty.saturating_sub(1)..(ty + 2).min(nty) {
-                for xx in tx.saturating_sub(1)..(tx + 2).min(ntx) {
-                    let t = yy * ntx + xx;
-                    let (rb, rp) = (
-                        &raw_bg[t * CARVE_BINS..(t + 1) * CARVE_BINS],
-                        &raw_pr[t * CARVE_BINS..(t + 1) * CARVE_BINS],
-                    );
-                    for c in 0..CARVE_BINS {
-                        loc_bg[c] += rb[c];
-                        loc_pr[c] += rp[c];
-                    }
-                }
-            }
-            model_bg.push(carve_model(&smooth_bins(&loc_bg), &g_bg, g_bg_sum));
-            model_pr.push(carve_model(&smooth_bins(&loc_pr), &g_pr, g_pr_sum));
-        }
-    }
-    drop(raw_bg);
-    drop(raw_pr);
     let min_density = CARVE_BG_MIN_DENSITY / CARVE_BINS as f64;
-    let tile_coord = |p: usize, count: usize| -> (usize, usize, f64) {
-        let f = ((p as f64 + 0.5) / tile as f64 - 0.5).clamp(0.0, (count - 1) as f64);
-        let i0 = (f.floor() as usize).min(count - 1);
-        let i1 = (i0 + 1).min(count - 1);
-        (i0, i1, f - i0 as f64)
-    };
-    let evidence = |i: usize| -> (f64, f64) {
-        let c = carve_colour_bin(src_at(i));
-        let (tx0, tx1, wx) = tile_coord(i % w, ntx);
-        let (ty0, ty1, wy) = tile_coord(i / w, nty);
-        let mut pb = 0f64;
-        let mut pp = 0f64;
-        for (t, wt) in [
-            (ty0 * ntx + tx0, (1.0 - wy) * (1.0 - wx)),
-            (ty0 * ntx + tx1, (1.0 - wy) * wx),
-            (ty1 * ntx + tx0, wy * (1.0 - wx)),
-            (ty1 * ntx + tx1, wy * wx),
-        ] {
-            pb += wt * model_bg[t][c] as f64;
-            pp += wt * model_pr[t][c] as f64;
-        }
-        (pb, pp)
-    };
+    let evidence = |i: usize| -> (f64, f64) { models.evidence(i, w, carve_colour_bin(src_at(i))) };
     let bg_like = |i: usize| -> bool {
         let (pb, pp) = evidence(i);
         pb >= min_density && pb > CARVE_BG_RATIO * pp
