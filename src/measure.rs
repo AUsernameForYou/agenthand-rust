@@ -1210,9 +1210,7 @@ fn ring_centroid(frame: &MeasureFrame) -> Option<(Pt, f64)> {
     let mut sy = 0f64;
     for y in 0..frame.height {
         for x in 0..frame.width {
-            let idx = y * frame.width + x;
-            let (hh, ss, vv) = frame.hsv(idx);
-            if (88.0..=104.0).contains(&hh) && ss >= 70.0 && vv >= 70.0 {
+            if is_ring_cyan(frame, y * frame.width + x) {
                 count += 1.0;
                 sx += x as f64;
                 sy += y as f64;
@@ -2228,6 +2226,240 @@ fn fit_pipeline(
     Some((H, tick_pairs, rms))
 }
 
+// ---------------------------------------------------------------------------
+// Card verification (the acceptance gate)
+//
+// The seeded fit proves only that some quad's arm lines cross
+// bright/dark runs at tick-like spacing, and periodic texture does
+// that too: IMG_1403's 640-px preview fitted 12/24 "ticks" on bare
+// fence boards (the card itself is ~25 px across), and the IMG_1435 /
+// IMG_1491 jacket frames fitted up to 21/24 on denim seams. The ring
+// anchor that seeds the search is the centroid of every cyan-hued
+// pixel in the frame, so sky, teal play equipment or denim pull it
+// off the card. The winning fit is therefore accepted only when it
+// shows the card's unique printed feature, the cyan ring concentrated
+// at the ring position, and then, as secondary checks, a bright paper
+// border around dark arms, at least half the tick cuts, and the
+// card's aspect ratio. Anything else refuses; nothing is re-fitted.
+
+/// Minimum fraction of the profile's tick cuts a verified fit matches.
+const VERIFY_MIN_TICK_FRAC: f64 = 0.5;
+/// Ring: on the best circle about the ring centre, at least this
+/// fraction of samples is ring-cyan (the printed ring is three 92-deg
+/// arcs, so a clean ring reads ~0.77 at its mid radius), spread over
+/// at least this many of six sectors.
+const VERIFY_MIN_RING_FRAC: f64 = 0.3;
+const VERIFY_MIN_RING_SECTORS: usize = 4;
+/// Circles just outside the ring may carry at most this share of the
+/// ring's cyan: on a card the cyan is concentrated on the ring; sky,
+/// denim or painted surfaces spread it evenly.
+const VERIFY_MAX_RING_SPILL: f64 = 0.35;
+const RING_SAMPLES: usize = 96;
+const RING_SECTORS: usize = 6;
+/// Paper border vs arm ink (8-bit grey medians): minimum ratio and
+/// minimum difference.
+const VERIFY_MIN_PAPER_RATIO: f64 = 2.0;
+const VERIFY_MIN_PAPER_DIFF: f64 = 40.0;
+/// The projected sheet's width:height may differ from the card's by
+/// at most this factor either way.
+const VERIFY_MAX_ASPECT_FACTOR: f64 = 1.5;
+
+/// Pixel index of the nearest pixel to `p`, or None off-frame.
+fn pixel_index(frame: &MeasureFrame, p: Pt) -> Option<usize> {
+    let (x, y) = (p[0].round(), p[1].round());
+    if !(x >= 0.0 && y >= 0.0 && x < frame.width as f64 && y < frame.height as f64) {
+        return None;
+    }
+    Some(y as usize * frame.width + x as usize)
+}
+
+/// The ring's cyan test (HSV inRange (88,70,70)-(104,255,255)).
+fn is_ring_cyan(frame: &MeasureFrame, idx: usize) -> bool {
+    let (hh, ss, vv) = frame.hsv(idx);
+    (88.0..=104.0).contains(&hh) && ss >= 70.0 && vv >= 70.0
+}
+
+/// Measurements the acceptance gate reads off one fitted homography.
+#[derive(Clone, Copy, Debug)]
+struct CardEvidence {
+    tick_frac: f64,
+    /// Best cyan fraction along one circle about the ring centre, and
+    /// how many of the circle's six sectors hold cyan at that radius.
+    ring_frac: f64,
+    ring_sectors: usize,
+    /// Cyan fraction on circles just outside the profile's ring.
+    spill_frac: f64,
+    /// Median grey of the paper border and of the arm ink.
+    paper_grey: f64,
+    ink_grey: f64,
+    /// Projected sheet aspect / card aspect.
+    aspect_factor: f64,
+}
+
+fn card_evidence(frame: &MeasureFrame, card: &CardProfile, H: &H3, n_ticks: usize) -> CardEvidence {
+    let (cw, ch) = (card.card_width_mm, card.card_height_mm);
+    let on_sheet = |q: Pt| q[0] >= 0.0 && q[1] >= 0.0 && q[0] <= cw && q[1] <= ch;
+
+    // Ring: cyan along circles about the ring centre. The radius is
+    // searched (0.25-0.95 of the profile's outer radius) rather than
+    // taken from the profile, because the printed v4 cards carry a
+    // ring about 0.43x the profile's (outer radius ~15.8 mm on AH-BIG
+    // against the profile's 36.75 mm) while the synthetic battery
+    // renders the profile's ring; the centre agrees in both. Off-frame
+    // samples count as not cyan.
+    let c = card.ring_centre_mm;
+    let r_out = card.ring_outer_mm;
+    let cyan_at =
+        |q: Pt| pixel_index(frame, project1(H, q)).is_some_and(|i| is_ring_cyan(frame, i));
+    let circle = |r: f64| -> Vec<bool> {
+        (0..RING_SAMPLES)
+            .map(|k| {
+                let a = k as f64 * std::f64::consts::TAU / RING_SAMPLES as f64;
+                cyan_at(pt(c[0] + r * a.cos(), c[1] + r * a.sin()))
+            })
+            .collect()
+    };
+    let (mut ring_frac, mut ring_sectors) = (0.0f64, 0usize);
+    for step in 5..=19 {
+        let hits = circle(step as f64 * 0.05 * r_out);
+        let f = hits.iter().filter(|&&b| b).count() as f64 / hits.len() as f64;
+        if f > ring_frac {
+            ring_frac = f;
+            ring_sectors = hits
+                .chunks(RING_SAMPLES / RING_SECTORS)
+                .filter(|chunk| chunk.iter().any(|&b| b))
+                .count();
+        }
+    }
+    // Spill: the same test just outside the profile's ring, on the
+    // sheet only.
+    let (mut spill_n, mut spill_c) = (0usize, 0usize);
+    for f in [1.2, 1.35, 1.5] {
+        let r = f * r_out;
+        for k in 0..RING_SAMPLES {
+            let a = k as f64 * std::f64::consts::TAU / RING_SAMPLES as f64;
+            let q = pt(c[0] + r * a.cos(), c[1] + r * a.sin());
+            if on_sheet(q) {
+                spill_n += 1;
+                spill_c += cyan_at(q) as usize;
+            }
+        }
+    }
+    let spill_frac = if spill_n == 0 {
+        0.0
+    } else {
+        spill_c as f64 / spill_n as f64
+    };
+
+    // Paper: the midline of the white border between the trim and
+    // the bracket frame's outer edge, all four sides.
+    let half = card.stroke_mm / 2.0;
+    let (tl, tr, bl, br) = (
+        card.frame["TL"],
+        card.frame["TR"],
+        card.frame["BL"],
+        card.frame["BR"],
+    );
+    let xl = (tl[0].min(bl[0]) - half) / 2.0;
+    let xr = (tr[0].max(br[0]) + half + cw) / 2.0;
+    let yt = (tl[1].min(tr[1]) - half) / 2.0;
+    let yb = (bl[1].max(br[1]) + half + ch) / 2.0;
+    let mut paper_pts: Vec<Pt> = Vec::new();
+    for t in linspace(0.0, 1.0, 9) {
+        let x = xl + t * (xr - xl);
+        let y = yt + t * (yb - yt);
+        paper_pts.extend_from_slice(&[pt(x, yt), pt(x, yb), pt(xl, y), pt(xr, y)]);
+    }
+    // Ink: arm centrelines, clear of the tick cuts.
+    let mut ink_pts: Vec<Pt> = Vec::new();
+    for arm in arms(card) {
+        let axis = sub(arm.end_mm, arm.start_mm);
+        for f in [0.1, 0.375, 0.625, 0.9] {
+            ink_pts.push(add(arm.start_mm, scale(axis, f)));
+        }
+    }
+    let greys = |pts: &[Pt]| -> (Vec<f64>, usize) {
+        let vals: Vec<f64> = pts
+            .iter()
+            .filter_map(|q| pixel_index(frame, project1(H, *q)).map(|i| frame.gray[i] as f64))
+            .collect();
+        let n = vals.len();
+        (vals, n)
+    };
+    let (paper_vals, paper_seen) = greys(&paper_pts);
+    let (ink_vals, ink_seen) = greys(&ink_pts);
+    // A card mostly out of frame cannot be verified.
+    let (paper_grey, ink_grey) = if 2 * paper_seen < paper_pts.len() || 2 * ink_seen < ink_pts.len()
+    {
+        (0.0, 255.0)
+    } else {
+        (percentile(&paper_vals, 50.0), percentile(&ink_vals, 50.0))
+    };
+
+    // Aspect of the projected sheet.
+    let corners = [
+        project1(H, pt(0.0, 0.0)),
+        project1(H, pt(cw, 0.0)),
+        project1(H, pt(cw, ch)),
+        project1(H, pt(0.0, ch)),
+    ];
+    let across = norm(sub(corners[1], corners[0])) + norm(sub(corners[2], corners[3]));
+    let down = norm(sub(corners[3], corners[0])) + norm(sub(corners[2], corners[1]));
+    let aspect_factor = if down > 0.0 && ch > 0.0 {
+        (across / down) / (cw / ch)
+    } else {
+        0.0
+    };
+
+    let total_ticks = card.ticks.len().max(1);
+    CardEvidence {
+        tick_frac: n_ticks as f64 / total_ticks as f64,
+        ring_frac,
+        ring_sectors,
+        spill_frac,
+        paper_grey,
+        ink_grey,
+        aspect_factor,
+    }
+}
+
+/// Ok when the fitted quad shows the printed card; otherwise the
+/// first failing check, worded for the refusal message.
+fn verify_card(
+    frame: &MeasureFrame,
+    card: &CardProfile,
+    H: &H3,
+    n_ticks: usize,
+) -> Result<(), String> {
+    let ev = card_evidence(frame, card, H, n_ticks);
+    // The ring is the card's one unique printed feature: it anchors
+    // acceptance. Ticks, paper and aspect are secondary checks.
+    if ev.ring_frac < VERIFY_MIN_RING_FRAC
+        || ev.ring_sectors < VERIFY_MIN_RING_SECTORS
+        || ev.spill_frac > VERIFY_MAX_RING_SPILL * ev.ring_frac
+    {
+        return Err("no cyan ring at the card's ring position".to_string());
+    }
+    if ev.paper_grey < VERIFY_MIN_PAPER_RATIO * ev.ink_grey.max(1.0)
+        || ev.paper_grey - ev.ink_grey < VERIFY_MIN_PAPER_DIFF
+    {
+        return Err("no white paper border around dark bracket arms".to_string());
+    }
+    if ev.tick_frac < VERIFY_MIN_TICK_FRAC {
+        return Err(format!(
+            "only {n_ticks}/{} tick cuts matched",
+            card.ticks.len()
+        ));
+    }
+    if !(1.0 / VERIFY_MAX_ASPECT_FACTOR..=VERIFY_MAX_ASPECT_FACTOR).contains(&ev.aspect_factor) {
+        return Err(format!(
+            "the fitted quad's aspect is {:.2}x the card's",
+            ev.aspect_factor
+        ));
+    }
+    Ok(())
+}
+
 /// Port of `_detect_card`.
 pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection, String> {
     let mask = ink_mask(frame);
@@ -2397,6 +2629,14 @@ pub fn detect_card(frame: &MeasureFrame, card: &CardProfile) -> Result<Detection
     }
     results.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.2.total_cmp(&b.2)));
     let (H, tick_pairs, rms) = results.into_iter().next().unwrap();
+    // Acceptance gate: the winning fit must show the printed card (its
+    // ring first), not just tick-spaced texture.
+    if let Err(reason) = verify_card(frame, card, &H, tick_pairs.len()) {
+        return Err(format!(
+            "Card not verified in this photo ({reason}) — shoot closer \
+             with the card flat and fully in frame."
+        ));
+    }
     let quad = [
         project1(&H, card.frame["TL"]),
         project1(&H, card.frame["TR"]),

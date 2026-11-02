@@ -60,22 +60,107 @@ fn assert_refused(path: &Path, card_id: &str) -> String {
     }
 }
 
+const NOT_VERIFIED: &str = "Card not verified in this photo (";
+
 #[test]
-#[ignore = "M1 reproduction: accepted a phantom fit on fence boards until the verification gate (M2)"]
 fn fence_preview_1403_refuses() {
     let err = assert_refused(
         &root().join("tests/fixtures/measure/real/IMG_1403_preview.jpg"),
         "AH-BIG",
     );
     println!("IMG_1403 preview: {err}");
+    assert!(err.starts_with(NOT_VERIFIED), "{err}");
+    assert!(err.contains("no cyan ring"), "{err}");
 }
 
 #[test]
-#[ignore = "M1 reproduction: accepted a phantom fit on denim until the verification gate (M2)"]
 fn jacket_preview_1435_refuses() {
     let err = assert_refused(
         &root().join("tests/fixtures/measure/real/IMG_1435_640.jpg"),
         "AH-35",
     );
     println!("IMG_1435 640: {err}");
+    assert!(err.starts_with(NOT_VERIFIED), "{err}");
+}
+
+/// Synthetic version of the same failure: a genuine bracket frame
+/// (every tick cut present) whose ring is gone, with the cyan that
+/// anchors the seed search sitting off the card (two decoy patches
+/// either side of the ring position, so the anchor and scale seed land
+/// exactly where the ring was). Before the gate this measured the
+/// orange object at 21/24 ticks; tick counts alone are not proof of a
+/// card, the ring is.
+#[test]
+fn bracket_without_its_ring_refuses() {
+    let path = root().join("tests/fixtures/measure/ahbig_2x.png");
+    let mut img = decode_image(&std::fs::read(&path).unwrap())
+        .unwrap()
+        .into_rgba();
+    let (w, h) = (img.width as usize, img.height as usize);
+    let is_cyan = |p: &[u8]| p[2] > 150 && p[0] < 110 && p[1] > 100 && p[1] < 220;
+    let (mut n, mut sx, mut sy) = (0usize, 0.0f64, 0.0f64);
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            if is_cyan(&img.pixels[i..i + 3]) {
+                n += 1;
+                sx += x as f64;
+                sy += y as f64;
+                img.pixels[i..i + 3].copy_from_slice(&[17, 17, 17]);
+            }
+        }
+    }
+    assert!(n > 2000, "fixture ring not found ({n} px)");
+    let (cx, cy) = (sx / n as f64, sy / n as f64);
+    let side = ((n as f64 / 2.0).sqrt()).round() as i64;
+    for dx in [-220.0, 220.0] {
+        let (x0, y0) = ((cx + dx) as i64 - side / 2, cy as i64 - side / 2);
+        for y in y0..y0 + side {
+            for x in x0..x0 + side {
+                let i = (y as usize * w + x as usize) * 4;
+                img.pixels[i..i + 3].copy_from_slice(&[0, 175, 225]);
+            }
+        }
+    }
+    let profile = root().join("tests/fixtures/layout-profile.json");
+    let card = load_card_profile(&profile, "AH-BIG").unwrap();
+    let frame = MeasureFrame::from_rgba(&img);
+    match estimate(&frame, &card, "AH-BIG", None, None) {
+        Ok(est) => panic!(
+            "ringless bracket accepted: {} (ticks {}, card {} px)",
+            est.display, est.ticks_matched, est.card_width_px
+        ),
+        Err(err) => {
+            println!("ringless bracket: {err}");
+            assert!(err.starts_with(NOT_VERIFIED), "{err}");
+            assert!(err.contains("no cyan ring"), "{err}");
+        }
+    }
+}
+
+/// Full-resolution frames that are not in the repo (run on the Mac):
+/// AGENTHAND_MEASURE_IMG_1491=<IMG_1491.HEIC or source.jpg> and
+/// AGENTHAND_MEASURE_IMG_1405=<IMG_1405 640-px intake preview>.
+/// Both earlier "acceptances" were phantom fits (1491: every fit
+/// candidate sits on the jacket front, the anchor is denim; 1405: a
+/// 278-px "card" in a 640-px yard-wide frame), so both must refuse.
+fn env_case(var: &str, card_id: &str) {
+    let Some(path) = std::env::var_os(var) else {
+        println!("{var} not set; skipped");
+        return;
+    };
+    let err = assert_refused(Path::new(&path), card_id);
+    println!("{var}: {err}");
+}
+
+#[test]
+#[ignore = "needs AGENTHAND_MEASURE_IMG_1491 (full-res photo, not in the repo)"]
+fn jacket_full_res_1491_refuses() {
+    env_case("AGENTHAND_MEASURE_IMG_1491", "AH-BIG");
+}
+
+#[test]
+#[ignore = "needs AGENTHAND_MEASURE_IMG_1405 (intake preview, not in the repo)"]
+fn yard_preview_1405_refuses() {
+    env_case("AGENTHAND_MEASURE_IMG_1405", "AH-BIG");
 }
