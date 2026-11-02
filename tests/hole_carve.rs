@@ -351,7 +351,7 @@ fn ring_with_product_coloured_interior_is_a_no_op() {
 /// wheel (the ring outside the tyre sees the shaded paving too).
 const SHADE_Y: u32 = 340;
 
-fn shaded(x: u32, y: u32) -> bool {
+fn shaded(_x: u32, y: u32) -> bool {
     y >= SHADE_Y
 }
 
