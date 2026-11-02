@@ -21,6 +21,11 @@
 //! (verify: nothing failed, but receipt files were skipped or none
 //! were re-hashed).
 //!
+//! `export` is the one writing verb: it copies the database and the
+//! resolvable receipt files into a fresh directory (a replay pack)
+//! and never modifies the source database, which is still opened
+//! read-only like everywhere else here.
+//!
 //! Database location (first match wins): `--db <path>`; the
 //! `AGENTHAND_EVIDENCE_DB` environment variable; `evidence/evidence.db`
 //! under the current directory; `evidence/evidence.db` beside the
@@ -109,11 +114,14 @@ Implemented:
   calls [--by-model] [--run <id>]      model-call rows, or per-model counts and sums
   tamper <receipt-id>                  flip one byte of a receipt file in memory and
                                        show its sha256 no longer matches (no writes)
+  export <dir> | --dir <dir>           write a replay pack to <dir> (created fresh, or
+                                       already present and empty): a byte copy of the
+                                       database, receipts/<receipt_id>.json for every
+                                       resolvable receipt file, PACK.md, manifest.json
 
 Planned, not implemented:
   parity                               cross-build parity node (no parity rows in the
                                        database yet)
-  export --dir <dir>                   replay pack export
 
 Chapter selectors (<c>): a chapter id (7), chapter:7, a timestamp (1:42, 0:01:42,
 102.5, 102.5s), or the narration label token (Ch5, ChClose).
@@ -130,13 +138,10 @@ Exit codes: 0 ok / OVERALL PASS; 1 FAIL; 2 usage or database error; 3 planned ve
 4 OVERALL INCOMPLETE (no FAIL, but receipt files skipped or none re-hashed).
 ";
 
-const PLANNED: [(&str, &str); 2] = [
-    (
-        "parity",
-        "cross-build parity node; the database has no parity rows yet",
-    ),
-    ("export", "replay pack export (evidence export --dir <dir>)"),
-];
+const PLANNED: [(&str, &str); 1] = [(
+    "parity",
+    "cross-build parity node; the database has no parity rows yet",
+)];
 
 // ---------------------------------------------------------------------------
 // Entry point and argument parsing
@@ -380,6 +385,15 @@ fn run_inner(args: &[String]) -> CliResult<u8> {
             allow(&o, verb, &[])?;
             positional_count(&o, verb, 1, "one receipt id (N or receipt:N)")?;
             cmd_tamper(&open(&o)?, &o)
+        }
+        "export" => {
+            allow(&o, verb, &["--dir"])?;
+            if o.positional.len() > 2 {
+                return Err(CliError::usage(
+                    "`evidence export` takes one target directory (<dir> or --dir <dir>)",
+                ));
+            }
+            cmd_export(&open(&o)?, &o)
         }
         other => Err(CliError::usage(format!("unknown verb {other:?}"))),
     }
@@ -1279,6 +1293,239 @@ fn cmd_root(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
         }
     }
     Ok(if fail { EXIT_FAIL } else { 0 })
+}
+
+// ---------------------------------------------------------------------------
+// export (the one writing verb: it writes the pack, never the database)
+// ---------------------------------------------------------------------------
+
+fn io_error(action: &str, path: &Path, e: std::io::Error) -> CliError {
+    CliError {
+        code: EXIT_USAGE,
+        msg: format!("export: cannot {action} {}: {e}", path.display()),
+    }
+}
+
+fn count_rows(conn: &Connection, table: &str) -> CliResult<i64> {
+    Ok(conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
+        r.get(0)
+    })?)
+}
+
+fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
+    let dir_arg = match (o.positional.get(1), &o.dir) {
+        (Some(p), Some(d)) if p != d => {
+            return Err(CliError::usage(
+                "`evidence export` got the target directory twice (<dir> and --dir); pass one",
+            ));
+        }
+        (Some(p), _) => p.clone(),
+        (None, Some(d)) => d.clone(),
+        (None, None) => {
+            return Err(CliError::usage(
+                "`evidence export` takes one target directory (<dir> or --dir <dir>)",
+            ));
+        }
+    };
+    let dir = PathBuf::from(&dir_arg);
+    if dir.exists() {
+        if !dir.is_dir() {
+            return Err(CliError::usage(format!(
+                "export: target {} exists and is not a directory",
+                dir.display()
+            )));
+        }
+        let mut entries = std::fs::read_dir(&dir)
+            .map_err(|e| io_error("read", &dir, e))?;
+        if entries.next().is_some() {
+            return Err(CliError::usage(format!(
+                "export: target {} exists and is not empty; refusing to overwrite",
+                dir.display()
+            )));
+        }
+    } else {
+        std::fs::create_dir_all(&dir).map_err(|e| io_error("create", &dir, e))?;
+    }
+    let receipts_dir = dir.join("receipts");
+    std::fs::create_dir_all(&receipts_dir)
+        .map_err(|e| io_error("create", &receipts_dir, e))?;
+
+    let n_runs = count_rows(&ctx.conn, "runs")?;
+    let n_calls = count_rows(&ctx.conn, "calls")?;
+    let n_receipts = count_rows(&ctx.conn, "receipts")?;
+    let n_claims = count_rows(&ctx.conn, "claims")?;
+    let root = receipts_root(&rooted_digests(&ctx.conn)?);
+
+    // Receipt files, by the verify verb's resolution rule: a non-empty
+    // source_file resolved against the receipt base dir (absolute
+    // paths as-is); the receipt counts as resolvable when the resolved
+    // path is a readable file.
+    let mut files: Vec<Value> = Vec::new();
+    let mut missing: Vec<(i64, String)> = Vec::new();
+    {
+        let mut stmt = ctx
+            .conn
+            .prepare("SELECT receipt_id, source_file FROM receipts ORDER BY receipt_id")?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let receipt_id = opt_i64(r.get_ref(0)?)
+                .ok_or_else(|| CliError::usage("export: receipt row without a receipt_id"))?;
+            let sf = opt_text(r.get_ref(1)?).filter(|s| !s.is_empty());
+            let bytes = sf.as_deref().and_then(|s| {
+                let p = resolve_receipt_path(&ctx.base_dir, s);
+                if p.is_file() {
+                    std::fs::read(&p).ok()
+                } else {
+                    None
+                }
+            });
+            match bytes {
+                Some(b) => {
+                    let name = format!("{receipt_id}.json");
+                    let dest = receipts_dir.join(&name);
+                    std::fs::write(&dest, &b).map_err(|e| io_error("write", &dest, e))?;
+                    files.push(json!({
+                        "receipt_id": receipt_id,
+                        "file": format!("receipts/{name}"),
+                        "sha256": hex(&Sha256::digest(&b)),
+                    }));
+                }
+                None => {
+                    let reason = match &sf {
+                        None => "the database names no receipt file for it".to_string(),
+                        Some(s) => format!(
+                            "the named file was not present locally: {}",
+                            resolve_receipt_path(&ctx.base_dir, s).display()
+                        ),
+                    };
+                    missing.push((receipt_id, reason));
+                }
+            }
+        }
+    }
+    let missing_ids: Vec<i64> = missing.iter().map(|(id, _)| *id).collect();
+
+    let db_dest = dir.join("evidence.db");
+    std::fs::copy(&ctx.db_path, &db_dest).map_err(|e| io_error("copy", &db_dest, e))?;
+    let db_sha = sha256_file(&db_dest).map_err(|e| io_error("read", &db_dest, e))?;
+
+    let manifest = json!({
+        "db_file_sha256": db_sha,
+        "receipts_root": root,
+        "counts": {
+            "runs": n_runs,
+            "calls": n_calls,
+            "receipts": n_receipts,
+            "claims": n_claims,
+        },
+        "files": files,
+        "missing_receipt_ids": missing_ids,
+    });
+    let manifest_path = dir.join("manifest.json");
+    let manifest_text = serde_json::to_string_pretty(&manifest).unwrap_or_default();
+    std::fs::write(&manifest_path, format!("{manifest_text}\n"))
+        .map_err(|e| io_error("write", &manifest_path, e))?;
+
+    let missing_section = if missing.is_empty() {
+        "Every receipt file named in the database was resolved on the \
+         exporting machine and is included.\n"
+            .to_string()
+    } else {
+        let mut s = String::new();
+        for (id, reason) in &missing {
+            s.push_str(&format!("- receipt {id}: not included ({reason}).\n"));
+        }
+        s
+    };
+    let pack_md = format!(
+        "# agenthand evidence pack\n\
+         \n\
+         This pack is a self-contained copy of the agenthand Proof Graph\n\
+         evidence, written by `agenthand evidence export`. It holds the\n\
+         evidence database and every receipt file the database could\n\
+         resolve, so the claims the database records can be re-checked\n\
+         offline, with no network and no API key.\n\
+         \n\
+         Contents:\n\
+         \n\
+         - `evidence.db`: the evidence database (SQLite, schema v2), copied\n\
+         \x20 byte for byte from the export source. Its sha256 is in\n\
+         \x20 `manifest.json`.\n\
+         - `receipts/<receipt_id>.json`: one file per receipt whose file\n\
+         \x20 could be resolved, named by receipt id.\n\
+         - `manifest.json`: the machine-readable inventory: the database\n\
+         \x20 sha256, the receipts root, the row counts, and the sha256 of\n\
+         \x20 every included receipt file.\n\
+         - `PACK.md`: this file.\n\
+         \n\
+         Counts: {n_runs} runs, {n_calls} calls, {n_receipts} receipts, {n_claims} claims.\n\
+         \n\
+         Receipts root: {root}\n\
+         (sha256 of the sorted receipt sha256 hex digests, concatenated\n\
+         with no separator; `agenthand evidence root` recomputes it.)\n\
+         \n\
+         ## Verify this pack\n\
+         \n\
+         Against the workspace the database came from (the receipt paths\n\
+         in the database resolve against it):\n\
+         \n\
+         \x20   agenthand evidence --db <pack>/evidence.db verify --all\n\
+         \n\
+         Standalone: make a folder named `evidence`, put this pack's\n\
+         `evidence.db` and `receipts/` in it (so the layout reads\n\
+         `evidence/evidence.db` and `evidence/receipts/`), then run, from\n\
+         the folder that holds `evidence/`:\n\
+         \n\
+         \x20   agenthand evidence verify --all\n\
+         \n\
+         `verify --all` re-checks the receipt hashes, the run totals, the\n\
+         graph edges and the receipts root against the database, and\n\
+         prints OVERALL: PASS when every check holds.\n\
+         \n\
+         ## Receipt files not included\n\
+         \n\
+         {missing_section}",
+    );
+    let pack_path = dir.join("PACK.md");
+    std::fs::write(&pack_path, pack_md).map_err(|e| io_error("write", &pack_path, e))?;
+
+    let n_included = files.len();
+    let complete = missing.is_empty();
+    let status = if complete { "COMPLETE" } else { "PARTIAL" };
+    if o.json {
+        let mut out = manifest.clone();
+        out["status"] = json!(status);
+        out["dir"] = json!(dir.display().to_string());
+        print_json(&out);
+    } else {
+        outln!("# db: {}", ctx.db_path.display());
+        outln!(
+            "# receipt base dir: {} ({})",
+            ctx.base_dir.display(),
+            ctx.base_rule
+        );
+        outln!(
+            "export: {n_runs} runs, {n_calls} calls, {n_receipts} receipts, {n_claims} claims"
+        );
+        outln!("export: receipts root {root}");
+        outln!("export: evidence.db copied (sha256 {db_sha})");
+        outln!(
+            "export: {n_included} receipt file(s) written to {}",
+            receipts_dir.display()
+        );
+        if !missing.is_empty() {
+            let ids: Vec<String> = missing_ids.iter().map(i64::to_string).collect();
+            outln!("export: missing receipt file(s): {}", ids.join(", "));
+        }
+        if complete {
+            outln!("EXPORT: COMPLETE ({n_included} receipt files)");
+        } else {
+            outln!(
+                "EXPORT: PARTIAL ({n_included} of {n_receipts} receipt files included)"
+            );
+        }
+    }
+    Ok(0)
 }
 
 // ---------------------------------------------------------------------------
