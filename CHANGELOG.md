@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased: light direction and thin structure
+
+- **Light read off the source photo** (Daniel's spoke/shadow addendum,
+  IMG_1443 driveway draw: golden-hour plate under a flat-daylight bike).
+  `staging::estimate_light_direction` reads a cast shadow (a darker,
+  hue-neutral region attached to the product's lower half; its
+  centroid against the contact point names the side), else a
+  left/right brightness gradient across the ground, else nothing.
+  Generated plates append the phrase after the angle steer, e.g. "Sun
+  low from camera-left; long soft shadows fall to camera-right across
+  the ground."; source plates add no clause and instead move the
+  contact ellipse away from the light (4% of the product width
+  sideways, half its vertical radius in depth;
+  `composite::apply_contact_shadow_offset`). Record `light_direction
+  {stated, phrase | reason, method, side, shadow_falls, signals}` in the
+  draw result beside `angle_lock`.
+- **Thin-structure guard.** Triggered by the identify concept
+  (bike, chair, rack, ladder, frame, ...; cut_out now keeps the
+  accepted phrase in the mask PNG's provenance chunk) or by enclosed
+  mask holes of at least 0.5% of the mask bbox. Generated plates get
+  the plainness clause; every plate `draw` stages (generated,
+  source_edit, source_blur) gets `composite::soften_thin_holes`: when
+  the plate inside the holes is at least 1.5x as textured as the ring
+  around the product, up to 3 steps of blur plus a 25% lift toward the
+  ring tone, plate pixels outside the product only. Record
+  `thin_structure {triggered, trigger, holes, holes_softened,
+  texture_before, texture_after, ...}`. Kill switch `AGENTHAND_THIN=off`.
+- **Generated plates name what must stay out.** With the concept known,
+  the scene ends "Empty scene, no <concept>, no <head noun plural>, no
+  bicycles or other vehicles, no people, no animals; the product will
+  be placed afterwards."; the draw result records `scene_exclusions`.
+- **`plate_fitted_pixel_sha256`** (additive receipt field,
+  `model_generated` draws only): the cover-fitted plate actually
+  composited; `plate_pixel_sha256` still hashes the stored plate.
+- Identify instructions and output schema, source_edit prompts, product
+  pixels and receipt counts/claim are unchanged. docs/LIGHT-AND-THIN.md
+  has thresholds and limits; tests in `tests/thin_light.rs`.
+
 ## Unreleased: shadow carry-over
 
 - **The product's own cast shadow comes back** (Daniel's shadow ruling,

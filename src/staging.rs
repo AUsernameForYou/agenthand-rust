@@ -544,3 +544,610 @@ pub fn finish_plate(
     };
     apply_edge_matte(&shadowed, foreground, geometry.matte_px)
 }
+
+// ---------------------------------------------------------------------------
+// Light direction (docs/LIGHT-AND-THIN.md). Same discipline as the shot
+// angle: a direction is claimed only when the source photo shows it
+// plainly (a cast shadow, else a broad brightness gradient across the
+// ground); otherwise nothing is stated.
+// ---------------------------------------------------------------------------
+
+/// The source is averaged over square cells so its long side is at most
+/// this many cells.
+pub const LIGHT_GRID_LONG_SIDE: u32 = 256;
+/// A cast-shadow cell is darker than the ground's median luma by a
+/// ratio in [MIN, MAX] ...
+pub const LIGHT_SHADOW_RATIO_MIN: f64 = 0.20;
+pub const LIGHT_SHADOW_RATIO_MAX: f64 = 0.72;
+/// ... and hue-neutral: its chromaticity (r and g shares of r+g+b)
+/// within this of the ground's median.
+pub const LIGHT_CHROMA_TOL: f64 = 0.05;
+/// Seeds: shadow cells within this many cells of the product's lower
+/// half (the region must touch the product where it meets the ground).
+pub const LIGHT_SEED_REACH_CELLS: usize = 2;
+/// The region covers at least this share of the product bbox area ...
+pub const LIGHT_MIN_AREA_FRACTION: f64 = 0.03;
+/// ... at most this share of the ground region (a dark ground is not a
+/// shadow) ...
+pub const LIGHT_MAX_GROUND_FRACTION: f64 = 0.5;
+/// ... and fills at least this share of its own bounding box (a network
+/// of dark paving joints does not).
+pub const LIGHT_MIN_FILL: f64 = 0.30;
+/// Shadow centroid offset from the contact point (bbox bottom centre),
+/// in product bbox widths (x) and heights (y): a side shadow is at least
+/// LIGHT_SIDE_MIN off-centre and more sideways than deep; a front/back
+/// shadow at least LIGHT_DEPTH_MIN deep; an overhead shadow within
+/// LIGHT_OVERHEAD_MAX on both axes. Anything else is inconclusive.
+pub const LIGHT_SIDE_MIN: f64 = 0.15;
+pub const LIGHT_DEPTH_MIN: f64 = 0.10;
+pub const LIGHT_OVERHEAD_MAX: f64 = 0.06;
+/// Gradient fallback: the ground's left and right thirds differ by at
+/// least this share of the ground median, the middle third between
+/// them, over a ground region of at least LIGHT_GRADIENT_MIN_GROUND of
+/// the frame.
+pub const LIGHT_GRADIENT_MIN: f64 = 0.20;
+pub const LIGHT_GRADIENT_MIN_GROUND: f64 = 0.04;
+
+/// Where the light comes from, read off the photo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightSide {
+    /// Shadow falls to camera-right.
+    FromLeft,
+    /// Shadow falls to camera-left.
+    FromRight,
+    /// From behind the camera: the shadow falls behind the product.
+    FromCamera,
+    /// From behind the product: the shadow falls toward the camera.
+    FromBehind,
+    /// High light: a short shadow straight under the product.
+    Overhead,
+}
+
+impl LightSide {
+    pub fn bucket(self) -> &'static str {
+        match self {
+            LightSide::FromLeft => "from_camera_left",
+            LightSide::FromRight => "from_camera_right",
+            LightSide::FromCamera => "from_behind_camera",
+            LightSide::FromBehind => "from_behind_subject",
+            LightSide::Overhead => "overhead",
+        }
+    }
+
+    /// The side the shadow falls to.
+    pub fn shadow_side(self) -> &'static str {
+        match self {
+            LightSide::FromLeft => "camera-right",
+            LightSide::FromRight => "camera-left",
+            LightSide::FromCamera => "behind",
+            LightSide::FromBehind => "toward_camera",
+            LightSide::Overhead => "beneath",
+        }
+    }
+
+    /// Unit step the shadow falls along in the frame (y grows downward,
+    /// so -1 is behind the product, +1 toward the camera).
+    pub fn shadow_step(self) -> (i8, i8) {
+        match self {
+            LightSide::FromLeft => (1, 0),
+            LightSide::FromRight => (-1, 0),
+            LightSide::FromCamera => (0, -1),
+            LightSide::FromBehind => (0, 1),
+            LightSide::Overhead => (0, 0),
+        }
+    }
+}
+
+/// The light estimate and why. `side` is Some only when conclusive.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LightEstimate {
+    pub side: Option<LightSide>,
+    /// "cast_shadow" | "gradient" | "none".
+    pub method: &'static str,
+    pub reason: &'static str,
+    pub signals: Value,
+}
+
+fn cell_luma(rgb: [f64; 3]) -> f64 {
+    0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+}
+
+fn median(mut v: Vec<f64>) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    v[v.len() / 2]
+}
+
+/// Estimate the source photo's light direction (pure; source and
+/// foreground share the frame). Cast shadow first: a darker, hue-neutral
+/// connected region of the ground beside the product's lower half,
+/// outside the mask, read on a coarse cell grid; its centroid relative
+/// to the contact point names the side. Otherwise the left/right
+/// brightness gradient across the ground. Otherwise nothing.
+pub fn estimate_light_direction(source: &RgbaImage, foreground: &RgbaImage) -> LightEstimate {
+    let none = |reason: &'static str, signals: Value| LightEstimate {
+        side: None,
+        method: "none",
+        reason,
+        signals,
+    };
+    if (source.width, source.height) != (foreground.width, foreground.height) {
+        return none(
+            "source and foreground frames differ; light not estimated",
+            Value::Null,
+        );
+    }
+    let Some((x0, y0, x1, y1)) = opaque_bbox(foreground) else {
+        return none("no product bbox; light not estimated", Value::Null);
+    };
+    let (w, h) = (source.width as usize, source.height as usize);
+    let (x0, y0, x1, y1) = (x0 as usize, y0 as usize, x1 as usize, y1 as usize);
+    let (bw, bh) = (x1 - x0, y1 - y0);
+    let cell = ((w.max(h) as u32).div_ceil(LIGHT_GRID_LONG_SIDE)).max(1) as usize;
+    let (gw, gh) = (w.div_ceil(cell), h.div_ceil(cell));
+    let mut sum = vec![[0f64; 3]; gw * gh];
+    let mut count = vec![0u32; gw * gh];
+    let mut product = vec![0u8; gw * gh];
+    for y in 0..h {
+        let row = (y / cell) * gw;
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            let g = row + x / cell;
+            if foreground.pixels[i + 3] > 0 {
+                product[g] = 1;
+            } else {
+                for c in 0..3 {
+                    sum[g][c] += source.pixels[i + c] as f64;
+                }
+                count[g] += 1;
+            }
+        }
+    }
+    let product = dilate_square(&product, gw, gh, 1);
+    let mean = |g: usize| -> [f64; 3] {
+        let n = count[g].max(1) as f64;
+        [sum[g][0] / n, sum[g][1] / n, sum[g][2] / n]
+    };
+    let chroma = |rgb: [f64; 3]| -> [f64; 2] {
+        let s = (rgb[0] + rgb[1] + rgb[2]).max(1.0);
+        [rgb[0] / s, rgb[1] / s]
+    };
+    // Ground region: from the product's vertical middle to the bottom of
+    // the frame, one product width either side.
+    let gy0 = ((y0 + y1) / 2) / cell;
+    let gx0 = x0.saturating_sub(bw) / cell;
+    let gx1 = ((x1 + bw).min(w - 1)) / cell + 1;
+    let in_ground = |g: usize| -> bool { g / gw >= gy0 && g % gw >= gx0 && g % gw < gx1.min(gw) };
+    let ground: Vec<usize> = (0..gw * gh)
+        .filter(|&g| in_ground(g) && product[g] == 0 && count[g] > 0)
+        .collect();
+    if ground.len() < 16 {
+        return none(
+            "too little ground beside the product; light not estimated",
+            Value::Null,
+        );
+    }
+    let ref_luma = median(ground.iter().map(|&g| cell_luma(mean(g))).collect());
+    let ref_chroma = [
+        median(ground.iter().map(|&g| chroma(mean(g))[0]).collect()),
+        median(ground.iter().map(|&g| chroma(mean(g))[1]).collect()),
+    ];
+    let mut signals = json!({
+        "grid_cell_px": cell,
+        "ground_cells": ground.len(),
+        "ground_median_luma": crate::round6(ref_luma),
+    });
+    if ref_luma < 20.0 {
+        return none(
+            "ground too dark to read a shadow; light not estimated",
+            signals,
+        );
+    }
+    let candidate = |g: usize| -> bool {
+        if !in_ground(g) || product[g] != 0 || count[g] == 0 {
+            return false;
+        }
+        let rgb = mean(g);
+        let ratio = cell_luma(rgb) / ref_luma;
+        let c = chroma(rgb);
+        (LIGHT_SHADOW_RATIO_MIN..=LIGHT_SHADOW_RATIO_MAX).contains(&ratio)
+            && (c[0] - ref_chroma[0]).abs() <= LIGHT_CHROMA_TOL
+            && (c[1] - ref_chroma[1]).abs() <= LIGHT_CHROMA_TOL
+    };
+    // Seeds: candidates near the product's lower half.
+    let mut lower = vec![0u8; gw * gh];
+    for g in 0..gw * gh {
+        if product[g] != 0 && g / gw >= gy0 {
+            lower[g] = 1;
+        }
+    }
+    let near_lower = dilate_square(&lower, gw, gh, LIGHT_SEED_REACH_CELLS);
+    let mut in_region = vec![false; gw * gh];
+    let mut stack: Vec<usize> = (0..gw * gh)
+        .filter(|&g| near_lower[g] != 0 && candidate(g))
+        .collect();
+    for &g in &stack {
+        in_region[g] = true;
+    }
+    let mut region = Vec::new();
+    while let Some(g) = stack.pop() {
+        region.push(g);
+        let (gx, gy) = (g % gw, g / gw);
+        let mut visit = |n: usize| {
+            if !in_region[n] && candidate(n) {
+                in_region[n] = true;
+                stack.push(n);
+            }
+        };
+        if gx > 0 {
+            visit(g - 1);
+        }
+        if gx + 1 < gw {
+            visit(g + 1);
+        }
+        if gy > 0 {
+            visit(g - gw);
+        }
+        if gy + 1 < gh {
+            visit(g + gw);
+        }
+    }
+    let bbox_area = (bw * bh).max(1) as f64;
+    let area_px = (region.len() * cell * cell) as f64;
+    let (contact_x, contact_y) = ((x0 + x1) as f64 / 2.0, y1 as f64);
+    let mut cast: Option<LightSide> = None;
+    if !region.is_empty() {
+        let (mut rx0, mut ry0, mut rx1, mut ry1) = (usize::MAX, usize::MAX, 0, 0);
+        let (mut sx, mut sy) = (0f64, 0f64);
+        for &g in &region {
+            let (gx, gy) = (g % gw, g / gw);
+            rx0 = rx0.min(gx);
+            ry0 = ry0.min(gy);
+            rx1 = rx1.max(gx + 1);
+            ry1 = ry1.max(gy + 1);
+            sx += (gx as f64 + 0.5) * cell as f64;
+            sy += (gy as f64 + 0.5) * cell as f64;
+        }
+        let n = region.len() as f64;
+        let fill = n / ((rx1 - rx0) * (ry1 - ry0)) as f64;
+        let nx = (sx / n - contact_x) / bw.max(1) as f64;
+        let ny = (sy / n - contact_y) / bh.max(1) as f64;
+        signals["shadow_area_fraction"] = json!(crate::round6(area_px / bbox_area));
+        signals["shadow_fill"] = json!(crate::round6(fill));
+        signals["shadow_offset_x"] = json!(crate::round6(nx));
+        signals["shadow_offset_y"] = json!(crate::round6(ny));
+        let sized = area_px / bbox_area >= LIGHT_MIN_AREA_FRACTION
+            && n <= LIGHT_MAX_GROUND_FRACTION * ground.len() as f64;
+        if sized && fill >= LIGHT_MIN_FILL {
+            cast = if nx.abs() >= LIGHT_SIDE_MIN && nx.abs() >= ny.abs() {
+                Some(if nx > 0.0 {
+                    LightSide::FromLeft
+                } else {
+                    LightSide::FromRight
+                })
+            } else if ny <= -LIGHT_DEPTH_MIN && -ny > nx.abs() {
+                Some(LightSide::FromCamera)
+            } else if ny >= LIGHT_DEPTH_MIN && ny > nx.abs() {
+                Some(LightSide::FromBehind)
+            } else if nx.abs() <= LIGHT_OVERHEAD_MAX && ny.abs() <= LIGHT_OVERHEAD_MAX {
+                Some(LightSide::Overhead)
+            } else {
+                None
+            };
+        }
+    }
+    if let Some(side) = cast {
+        return LightEstimate {
+            side: Some(side),
+            method: "cast_shadow",
+            reason: "a darker, hue-neutral region attached to the product's lower half; its centroid relative to the contact point names the side",
+            signals,
+        };
+    }
+    // Gradient fallback over the ground outside the shadow region.
+    let span = (gx1.min(gw) - gx0).max(1);
+    let mut thirds = [(0f64, 0u32); 3];
+    for &g in &ground {
+        if in_region[g] {
+            continue;
+        }
+        let t = (((g % gw) - gx0) * 3 / span).min(2);
+        thirds[t].0 += cell_luma(mean(g));
+        thirds[t].1 += 1;
+    }
+    let ground_fraction = (ground.len() * cell * cell) as f64 / (w * h) as f64;
+    if thirds.iter().all(|t| t.1 > 0) {
+        let [l, m, r] = thirds.map(|t| t.0 / t.1 as f64);
+        let rel = (r - l) / ref_luma;
+        signals["gradient"] = json!(crate::round6(rel));
+        let monotonic = (l < m && m < r) || (l > m && m > r);
+        if rel.abs() >= LIGHT_GRADIENT_MIN
+            && monotonic
+            && ground_fraction >= LIGHT_GRADIENT_MIN_GROUND
+        {
+            return LightEstimate {
+                side: Some(if rel > 0.0 {
+                    LightSide::FromRight
+                } else {
+                    LightSide::FromLeft
+                }),
+                method: "gradient",
+                reason: "no conclusive cast shadow; the ground brightens steadily toward one side",
+                signals,
+            };
+        }
+    }
+    none(
+        "no conclusive cast shadow and no clear brightness gradient across the ground; no light direction claimed",
+        signals,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Thin-structure trigger (docs/LIGHT-AND-THIN.md): the product is an
+// open-frame good (a bike, a chair, a rack) by its identify concept, or its
+// mask encloses large transparent holes (wheel interiors, frame
+// triangles). Extends `analyze_subject`'s thin-run flag, which a bike
+// whose wheels SAM filled solid never trips.
+// ---------------------------------------------------------------------------
+
+/// Concept words that mark an open-frame product (a word or its plural,
+/// as a whole token of the concept).
+pub const THIN_CONCEPT_WORDS: [&str; 18] = [
+    "bicycle",
+    "bike",
+    "bmx",
+    "tricycle",
+    "trike",
+    "scooter",
+    "wheel",
+    "wheelchair",
+    "stroller",
+    "chair",
+    "stool",
+    "rack",
+    "ladder",
+    "frame",
+    "easel",
+    "tripod",
+    "trellis",
+    "cart",
+];
+/// Hole analysis grid: long side at most this many cells.
+pub const THIN_WORK_LONG_SIDE: u32 = 1024;
+/// An enclosed hole this large (share of the mask bbox area) triggers
+/// the guard on its own.
+pub const THIN_HOLE_TRIGGER_FRACTION: f64 = 0.005;
+/// Enclosed holes from this size up are counted (and softened).
+pub const THIN_HOLE_MIN_FRACTION: f64 = 0.0005;
+
+/// The first open-frame word of a concept, if any.
+pub fn thin_concept_word(concept: &str) -> Option<&'static str> {
+    let lower = concept.to_ascii_lowercase();
+    for token in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if token.is_empty() {
+            continue;
+        }
+        for word in THIN_CONCEPT_WORDS {
+            if token == word || token.strip_suffix('s') == Some(word) {
+                return Some(word);
+            }
+        }
+    }
+    None
+}
+
+/// Enclosed background components of a product grid (1 = product): the
+/// non-product cells inside the product's bbox that no 4-connected path
+/// of non-product cells joins to the bbox border.
+#[derive(Debug, Clone)]
+pub struct HoleMap {
+    pub width: usize,
+    pub height: usize,
+    /// 0 outside every counted hole, else 1 + its index in `areas`.
+    pub label: Vec<u32>,
+    /// Cell areas of the counted holes (>= the min fraction).
+    pub areas: Vec<usize>,
+    /// The product bbox area in cells; fractions are of this.
+    pub bbox_area: usize,
+}
+
+impl HoleMap {
+    pub fn largest_fraction(&self) -> f64 {
+        let largest = self.areas.iter().copied().max().unwrap_or(0);
+        largest as f64 / self.bbox_area.max(1) as f64
+    }
+}
+
+/// Find the enclosed holes of a product grid, counting those of at
+/// least `min_fraction` of the product bbox area.
+pub fn enclosed_holes(product: &[u8], width: usize, height: usize, min_fraction: f64) -> HoleMap {
+    let mut map = HoleMap {
+        width,
+        height,
+        label: vec![0; width * height],
+        areas: Vec::new(),
+        bbox_area: 0,
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+    for (i, &p) in product.iter().enumerate() {
+        if p != 0 {
+            let (x, y) = (i % width, i / width);
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x + 1);
+            y1 = y1.max(y + 1);
+        }
+    }
+    if x0 == usize::MAX {
+        return map;
+    }
+    map.bbox_area = (x1 - x0) * (y1 - y0);
+    // 0 = unvisited background, 1 = product, 2 = outside, 3+ = hole id.
+    let mut state: Vec<u32> = product.iter().map(|&p| (p != 0) as u32).collect();
+    let flood = |seeds: Vec<usize>, mark: u32, state: &mut Vec<u32>| -> usize {
+        let mut stack = seeds;
+        let mut area = 0usize;
+        while let Some(i) = stack.pop() {
+            area += 1;
+            let (x, y) = (i % width, i / width);
+            let mut push = |n: usize, stack: &mut Vec<usize>| {
+                if state[n] == 0 {
+                    state[n] = mark;
+                    stack.push(n);
+                }
+            };
+            if x > x0 {
+                push(i - 1, &mut stack);
+            }
+            if x + 1 < x1 {
+                push(i + 1, &mut stack);
+            }
+            if y > y0 {
+                push(i - width, &mut stack);
+            }
+            if y + 1 < y1 {
+                push(i + width, &mut stack);
+            }
+        }
+        area
+    };
+    let mut border = Vec::new();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if x == x0 || x + 1 == x1 || y == y0 || y + 1 == y1 {
+                let i = y * width + x;
+                if state[i] == 0 {
+                    state[i] = 2;
+                    border.push(i);
+                }
+            }
+        }
+    }
+    flood(border, 2, &mut state);
+    let min_area = ((min_fraction * map.bbox_area as f64).ceil() as usize).max(1);
+    // Component id (3, 4, ...) -> counted label (1, 2, ...; 0 = too small).
+    let mut id_label: Vec<u32> = Vec::new();
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = y * width + x;
+            if state[i] == 0 {
+                let id = 3 + id_label.len() as u32;
+                state[i] = id;
+                let area = flood(vec![i], id, &mut state);
+                if area >= min_area {
+                    map.areas.push(area);
+                    id_label.push(map.areas.len() as u32);
+                } else {
+                    id_label.push(0);
+                }
+            }
+        }
+    }
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = y * width + x;
+            if state[i] >= 3 {
+                map.label[i] = id_label[(state[i] - 3) as usize];
+            }
+        }
+    }
+    map
+}
+
+/// The analysis grid for a frame: long side at most `long_side` cells.
+pub fn work_grid(width: u32, height: u32, long_side: u32) -> (usize, usize) {
+    let s = (long_side as f64 / width.max(height).max(1) as f64).min(1.0);
+    (
+        ((width as f64 * s).ceil() as usize).max(1),
+        ((height as f64 * s).ceil() as usize).max(1),
+    )
+}
+
+/// Forward-rasterise the visible product (alpha > 0) onto a `gw` x `gh`
+/// grid over the frame: a cell is product when any product pixel falls
+/// in it.
+pub fn product_grid(foreground: &RgbaImage, gw: usize, gh: usize) -> Vec<u8> {
+    let (w, h) = (foreground.width as usize, foreground.height as usize);
+    let mut grid = vec![0u8; gw * gh];
+    for y in 0..h {
+        let gy = y * gh / h;
+        for x in 0..w {
+            if foreground.pixels[(y * w + x) * 4 + 3] > 0 {
+                grid[gy * gw + x * gw / w] = 1;
+            }
+        }
+    }
+    grid
+}
+
+/// Why the thin-structure guard fires (or not).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThinTrigger {
+    pub triggered: bool,
+    /// "concept" | "holes" | "none".
+    pub trigger: &'static str,
+    /// Enclosed mask holes of at least THIN_HOLE_MIN_FRACTION.
+    pub holes: usize,
+    pub largest_hole_fraction: f64,
+    pub concept_word: Option<&'static str>,
+    /// Set when the guard is switched off.
+    pub disabled: Option<String>,
+}
+
+impl ThinTrigger {
+    pub fn disabled(reason: &str) -> Self {
+        ThinTrigger {
+            triggered: false,
+            trigger: "none",
+            holes: 0,
+            largest_hole_fraction: 0.0,
+            concept_word: None,
+            disabled: Some(reason.to_string()),
+        }
+    }
+}
+
+/// Decide the thin-structure trigger from the identify concept (when
+/// known) and the mask's enclosed holes.
+pub fn thin_structure_trigger(foreground: &RgbaImage, concept: Option<&str>) -> ThinTrigger {
+    let (gw, gh) = work_grid(foreground.width, foreground.height, THIN_WORK_LONG_SIDE);
+    let grid = product_grid(foreground, gw, gh);
+    let holes = enclosed_holes(&grid, gw, gh, THIN_HOLE_MIN_FRACTION);
+    let largest = holes.largest_fraction();
+    let concept_word = concept.and_then(thin_concept_word);
+    let trigger = if concept_word.is_some() {
+        "concept"
+    } else if largest >= THIN_HOLE_TRIGGER_FRACTION {
+        "holes"
+    } else {
+        "none"
+    };
+    ThinTrigger {
+        triggered: trigger != "none",
+        trigger,
+        holes: holes.areas.len(),
+        largest_hole_fraction: largest,
+        concept_word,
+        disabled: None,
+    }
+}
+
+/// `finish_plate` with the contact shadow moved `offset` px (away from
+/// the light; see `composite::contact_shadow_offset_px`). A zero offset
+/// is exactly `finish_plate`.
+pub fn finish_plate_lit(
+    plate: &RgbaImage,
+    foreground: &RgbaImage,
+    geometry: &SubjectGeometry,
+    offset: (f64, f64),
+) -> RgbaImage {
+    let shadowed = if geometry.shadow {
+        crate::composite::apply_contact_shadow_offset(plate, foreground, offset)
+    } else {
+        plate.clone()
+    };
+    apply_edge_matte(&shadowed, foreground, geometry.matte_px)
+}

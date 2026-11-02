@@ -2057,6 +2057,15 @@ pub fn draw_product_with_plate_kind(
         let (composite, _in_memory_counts, transformations) = composite_images(&foreground, &plate);
         (composite, transformations, None, None)
     };
+    // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
+    // A model-generated plate is hashed above as stored, before the cover
+    // fit; also pin the fitted pixels actually composited.
+    let plate_fitted_pixel_sha256 =
+        (plate_kind_override.is_none() && plate_handle.is_some()).then(|| {
+            fit_plate(&plate, foreground.width, foreground.height)
+                .0
+                .pixel_sha256()
+        });
     let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
     let composite_record = store.get_record(&composite_handle)?;
 
@@ -2132,6 +2141,11 @@ pub fn draw_product_with_plate_kind(
         // Additive record (never graded): the shadow carry-over, plate
         // pixels only; the counts above are unchanged by it.
         receipt["shadow"] = shadow;
+    }
+    // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
+    if let Some(sha) = plate_fitted_pixel_sha256 {
+        // Additive (never graded): generated plates only.
+        receipt["plate_fitted_pixel_sha256"] = json!(sha);
     }
     if let Some(provenance) = &mask_provenance {
         // Mask provenance (decisions 68/69): the receipt states the
@@ -3219,4 +3233,475 @@ pub fn verify_files(
         "color_profile_preserved": preserved,
         "problems": problems,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Light and thin structure (docs/LIGHT-AND-THIN.md). New functions only:
+// the contact shadow moved away from the light, and the thin-structure
+// guard that softens the plate seen through a product's enclosed openings.
+// Both write plate pixels outside the product mask only.
+// ---------------------------------------------------------------------------
+
+/// Contact-shadow offset away from the light: this share of the opaque
+/// bbox width sideways (light from camera-left or -right) ...
+pub const CONTACT_SHADOW_OFFSET_X: f64 = 0.04;
+/// ... and this share of the ellipse's vertical radius in depth (light
+/// from behind the camera or behind the product). Overhead: none.
+pub const CONTACT_SHADOW_OFFSET_Y: f64 = 0.5;
+
+/// The contact-shadow centre offset (px) for a shadow falling along
+/// `shadow_step` (`staging::LightSide::shadow_step`).
+pub fn contact_shadow_offset_px(foreground: &RgbaImage, shadow_step: (i8, i8)) -> (f64, f64) {
+    let Some((x0, y0, x1, y1)) = opaque_bbox(foreground) else {
+        return (0.0, 0.0);
+    };
+    let ry = ((y1 - y0) as f64 * 0.055).max(5.0);
+    (
+        shadow_step.0 as f64 * CONTACT_SHADOW_OFFSET_X * (x1 - x0) as f64,
+        shadow_step.1 as f64 * CONTACT_SHADOW_OFFSET_Y * ry,
+    )
+}
+
+/// `apply_contact_shadow` with the ellipse centre moved by `offset` px.
+/// Still zero under every fully opaque product pixel; a zero offset is
+/// exactly `apply_contact_shadow`.
+pub fn apply_contact_shadow_offset(
+    plate: &RgbaImage,
+    foreground: &RgbaImage,
+    offset: (f64, f64),
+) -> RgbaImage {
+    assert_eq!(
+        (plate.width, plate.height),
+        (foreground.width, foreground.height)
+    );
+    let Some((x0, y0, x1, y1)) = opaque_bbox(foreground) else {
+        return plate.clone();
+    };
+    let (item_w, item_h) = ((x1 - x0) as f64, (y1 - y0) as f64);
+    let w = foreground.width;
+    let shadow = elliptical_contact_shadow(
+        plate.width,
+        plate.height,
+        (
+            (x0 as f64 + x1 as f64) / 2.0 + offset.0,
+            y1 as f64 + offset.1,
+        ),
+        (item_w * 0.44, (item_h * 0.055).max(5.0)),
+        |x, y| foreground.pixels[((y * w + x) * 4 + 3) as usize] == OPAQUE_ALPHA_THRESHOLD,
+    );
+    let mut out = alpha_composite(plate, &shadow);
+    out.icc_profile = plate.icc_profile.clone();
+    out
+}
+
+/// Kill switch for the thin-structure guard (prompt clause and plate
+/// softening alike): `AGENTHAND_THIN=off`.
+pub const THIN_ENV: &str = "AGENTHAND_THIN";
+/// Local texture: luma standard deviation over a (2r+1)^2 window on the
+/// analysis grid (`staging::THIN_WORK_LONG_SIDE`).
+pub const THIN_TEXTURE_RADIUS: usize = 2;
+/// Soften when the holes' mean local texture is at least this many times
+/// the ring's (and at least THIN_TEXTURE_MIN luma levels) ...
+pub const THIN_TEXTURE_RATIO: f64 = 1.5;
+pub const THIN_TEXTURE_MIN: f64 = 2.0;
+/// ... and stop once it is within this ratio of the ring (or after
+/// THIN_MAX_STEPS steps).
+pub const THIN_TEXTURE_TARGET: f64 = 1.15;
+/// The ring texture never counts as less than this (a flat studio ring
+/// would make any hole look infinitely busy).
+pub const THIN_TEXTURE_FLOOR: f64 = 1.0;
+pub const THIN_MAX_STEPS: usize = 3;
+/// Per step: blur radius (share of the product bbox's long side, three
+/// box passes) and the lift toward the ring's mean tone.
+pub const THIN_BLUR_FRACTION: f64 = 0.006;
+pub const THIN_LIFT: f32 = 0.25;
+/// Grid cells next to the product left untouched, then the feather.
+pub const THIN_MARGIN_CELLS: i64 = 2;
+pub const THIN_FEATHER_CELLS: i64 = 3;
+/// The ring around the product the holes are compared with (share of the
+/// bbox's long side, at least a few cells).
+pub const THIN_RING_FRACTION: f64 = 0.04;
+
+/// Whether the thin-structure guard runs at all (the kill switch).
+pub fn thin_guard_enabled() -> bool {
+    !matches!(
+        std::env::var(THIN_ENV)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "off" | "false" | "no"
+    )
+}
+
+/// The thin-structure trigger behind the kill switch.
+pub fn thin_trigger_for(
+    foreground: &RgbaImage,
+    concept: Option<&str>,
+) -> crate::staging::ThinTrigger {
+    if !thin_guard_enabled() {
+        return crate::staging::ThinTrigger::disabled(&format!("disabled by {THIN_ENV}"));
+    }
+    crate::staging::thin_structure_trigger(foreground, concept)
+}
+
+/// What the guard did; `to_json` is the draw result's `thin_structure`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThinReport {
+    pub trigger: crate::staging::ThinTrigger,
+    pub holes_softened: bool,
+    /// Mean local luma std-dev inside the holes, before and after.
+    pub texture_before: Option<f64>,
+    pub texture_after: Option<f64>,
+    /// The same over the plate ring around the product.
+    pub texture_ring: Option<f64>,
+    pub steps: usize,
+    pub pixels_written: u64,
+    pub note: Option<String>,
+}
+
+impl ThinReport {
+    pub fn from_trigger(trigger: &crate::staging::ThinTrigger) -> Self {
+        ThinReport {
+            trigger: trigger.clone(),
+            holes_softened: false,
+            texture_before: None,
+            texture_after: None,
+            texture_ring: None,
+            steps: 0,
+            pixels_written: 0,
+            note: trigger.disabled.clone(),
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        let t = &self.trigger;
+        json!({
+            "triggered": t.triggered,
+            "trigger": t.trigger,
+            "holes": t.holes,
+            "holes_softened": self.holes_softened,
+            "texture_before": self.texture_before.map(crate::round6),
+            "texture_after": self.texture_after.map(crate::round6),
+            "texture_ring": self.texture_ring.map(crate::round6),
+            "largest_hole_fraction": crate::round6(t.largest_hole_fraction),
+            "concept_word": t.concept_word,
+            "steps": self.steps,
+            "pixels_written": self.pixels_written,
+            "note": self.note,
+        })
+    }
+}
+
+/// `resample::fit`'s cover crop: the plate rectangle (left, top, width,
+/// height) that lands on the `fw` x `fh` product frame.
+fn fit_crop_box(pw: usize, ph: usize, fw: usize, fh: usize) -> (f64, f64, f64, f64) {
+    let (lw, lh) = (pw as f64, ph as f64);
+    if (pw, ph) == (fw, fh) {
+        return (0.0, 0.0, lw, lh);
+    }
+    let (live, out) = (lw / lh, fw as f64 / fh as f64);
+    let (cw, ch) = if live == out {
+        (lw, lh)
+    } else if live >= out {
+        (out * lh, lh)
+    } else {
+        (lw, lw / out)
+    };
+    ((lw - cw) * 0.5, (lh - ch) * 0.5, cw, ch)
+}
+
+/// Area-average a plate onto the `ww` x `wh` analysis grid.
+fn plate_to_grid(plate: &RgbaImage, ww: usize, wh: usize) -> Vec<[f32; 3]> {
+    let (pw, ph) = (plate.width as usize, plate.height as usize);
+    let mut sum = vec![[0f64; 3]; ww * wh];
+    let mut n = vec![0u32; ww * wh];
+    for y in 0..ph {
+        let gy = y * wh / ph;
+        for x in 0..pw {
+            let g = gy * ww + x * ww / pw;
+            let i = (y * pw + x) * 4;
+            for c in 0..3 {
+                sum[g][c] += plate.pixels[i + c] as f64;
+            }
+            n[g] += 1;
+        }
+    }
+    sum.iter()
+        .zip(&n)
+        .map(|(s, &k)| {
+            let k = k.max(1) as f64;
+            [(s[0] / k) as f32, (s[1] / k) as f32, (s[2] / k) as f32]
+        })
+        .collect()
+}
+
+/// Mean local luma std-dev over the selected cells, or None when none
+/// are selected.
+fn mean_local_std(rgb: &[[f32; 3]], w: usize, h: usize, sel: &[bool]) -> Option<f64> {
+    if !sel.iter().any(|&s| s) {
+        return None;
+    }
+    let luma: Vec<f32> = rgb
+        .iter()
+        .map(|p| 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2])
+        .collect();
+    let sq: Vec<f32> = luma.iter().map(|v| v * v).collect();
+    let ones = vec![1f32; luma.len()];
+    let r = THIN_TEXTURE_RADIUS;
+    let (s1, s2, n) = (
+        box_blur_sum(&luma, w, h, r),
+        box_blur_sum(&sq, w, h, r),
+        box_blur_sum(&ones, w, h, r),
+    );
+    let (mut total, mut count) = (0f64, 0u64);
+    for i in 0..luma.len() {
+        if sel[i] {
+            let k = n[i].max(1.0) as f64;
+            let m = s1[i] as f64 / k;
+            total += (s2[i] as f64 / k - m * m).max(0.0).sqrt();
+            count += 1;
+        }
+    }
+    Some(total / count as f64)
+}
+
+/// Three normalised box passes of radius `r` (about a Gaussian).
+fn blur_grid(rgb: &[[f32; 3]], w: usize, h: usize, r: usize) -> Vec<[f32; 3]> {
+    let ones = vec![1f32; rgb.len()];
+    let n = box_blur_sum(&ones, w, h, r);
+    let mut out = rgb.to_vec();
+    for c in 0..3 {
+        let mut plane: Vec<f32> = out.iter().map(|p| p[c]).collect();
+        for _ in 0..3 {
+            let s = box_blur_sum(&plane, w, h, r);
+            plane = s.iter().zip(&n).map(|(a, k)| a / k.max(1.0)).collect();
+        }
+        for (p, v) in out.iter_mut().zip(plane) {
+            p[c] = v;
+        }
+    }
+    out
+}
+
+/// The thin-structure guard on a finished plate (any plate kind, at the
+/// plate's own frame; the foreground maps onto it through
+/// `resample::fit`'s cover crop). When triggered, the plate inside the
+/// product's enclosed holes is compared with the plate ring around the
+/// product (mean local luma std-dev on the analysis grid); when the
+/// holes are at least THIN_TEXTURE_RATIO times busier, up to
+/// THIN_MAX_STEPS steps of blur plus a lift toward the ring's mean tone
+/// soften them until the ratio is within THIN_TEXTURE_TARGET. Writes
+/// only plate pixels inside the holes, at least THIN_MARGIN_CELLS from
+/// the product and never under a product pixel (alpha > 0).
+pub fn soften_thin_holes(
+    plate: &RgbaImage,
+    foreground: &RgbaImage,
+    trigger: &crate::staging::ThinTrigger,
+) -> (RgbaImage, ThinReport) {
+    use crate::staging::{enclosed_holes, work_grid, THIN_HOLE_MIN_FRACTION, THIN_WORK_LONG_SIDE};
+    let mut report = ThinReport::from_trigger(trigger);
+    if !trigger.triggered {
+        return (plate.clone(), report);
+    }
+    if trigger.holes == 0 {
+        report.note = Some("no enclosed holes in the product mask".to_string());
+        return (plate.clone(), report);
+    }
+    let (pw, ph) = (plate.width as usize, plate.height as usize);
+    let (fw, fh) = (foreground.width as usize, foreground.height as usize);
+    let (cl, ct, cw, ch) = fit_crop_box(pw, ph, fw, fh);
+    let (ww, wh) = work_grid(plate.width, plate.height, THIN_WORK_LONG_SIDE);
+    let (sx, sy) = (ww as f64 / pw as f64, wh as f64 / ph as f64);
+    // Product cells: every grid cell any visible product pixel lands in.
+    let span = |f: usize, n: usize, origin: f64, len: f64, s: f64, limit: usize| {
+        let a = (origin + f as f64 * len / n as f64) * s;
+        let b = (origin + (f + 1) as f64 * len / n as f64) * s;
+        let lo = (a.floor().max(0.0) as usize).min(limit - 1);
+        let hi = ((b.ceil() as usize).saturating_sub(1)).clamp(lo, limit - 1);
+        (lo, hi)
+    };
+    let xs: Vec<(usize, usize)> = (0..fw).map(|x| span(x, fw, cl, cw, sx, ww)).collect();
+    let mut product = vec![0u8; ww * wh];
+    for y in 0..fh {
+        let (gy0, gy1) = span(y, fh, ct, ch, sy, wh);
+        for x in 0..fw {
+            if foreground.pixels[(y * fw + x) * 4 + 3] > 0 {
+                let (gx0, gx1) = xs[x];
+                for gy in gy0..=gy1 {
+                    for gx in gx0..=gx1 {
+                        product[gy * ww + gx] = 1;
+                    }
+                }
+            }
+        }
+    }
+    let product = dilate_square(&product, ww, wh, 1);
+    let holes = enclosed_holes(&product, ww, wh, THIN_HOLE_MIN_FRACTION);
+    if holes.areas.is_empty() {
+        report.note = Some("no enclosed holes at the plate's resolution".to_string());
+        return (plate.clone(), report);
+    }
+    let dist = distance_to_class(&product, ww, wh, 1);
+    let (mut bx0, mut by0, mut bx1, mut by1) = (usize::MAX, usize::MAX, 0, 0);
+    for (i, &p) in product.iter().enumerate() {
+        if p != 0 {
+            bx0 = bx0.min(i % ww);
+            by0 = by0.min(i / ww);
+            bx1 = bx1.max(i % ww + 1);
+            by1 = by1.max(i / ww + 1);
+        }
+    }
+    let long = (bx1 - bx0).max(by1 - by0) as f64;
+    let reach = THIN_MARGIN_CELLS + THIN_TEXTURE_RADIUS as i64;
+    let ring_w = ((THIN_RING_FRACTION * long).ceil() as i64).max(reach + 4);
+    let in_hole: Vec<bool> = holes.label.iter().map(|&l| l != 0).collect();
+    let mut hole_sel: Vec<bool> = (0..ww * wh)
+        .map(|i| in_hole[i] && dist[i] > reach)
+        .collect();
+    if !hole_sel.iter().any(|&s| s) {
+        hole_sel = (0..ww * wh)
+            .map(|i| in_hole[i] && dist[i] > THIN_MARGIN_CELLS)
+            .collect();
+    }
+    let ring_sel: Vec<bool> = (0..ww * wh)
+        .map(|i| product[i] == 0 && !in_hole[i] && dist[i] > reach && dist[i] <= ring_w)
+        .collect();
+    let grid0 = plate_to_grid(plate, ww, wh);
+    let (Some(before), Some(ring)) = (
+        mean_local_std(&grid0, ww, wh, &hole_sel),
+        mean_local_std(&grid0, ww, wh, &ring_sel),
+    ) else {
+        report.note = Some("holes or ring too small to measure".to_string());
+        return (plate.clone(), report);
+    };
+    report.texture_before = Some(before);
+    report.texture_after = Some(before);
+    report.texture_ring = Some(ring);
+    let ring_floor = ring.max(THIN_TEXTURE_FLOOR);
+    if before < THIN_TEXTURE_MIN || before / ring_floor < THIN_TEXTURE_RATIO {
+        report.note = Some("hole texture within the ring's; plate unchanged".to_string());
+        return (plate.clone(), report);
+    }
+    // Ring tone and per-cell weights (0 within the margin, feathered).
+    let (mut tone, mut tn) = ([0f64; 3], 0f64);
+    for i in 0..ww * wh {
+        if ring_sel[i] {
+            (0..3).for_each(|c| tone[c] += grid0[i][c] as f64);
+            tn += 1.0;
+        }
+    }
+    let tone = [
+        (tone[0] / tn) as f32,
+        (tone[1] / tn) as f32,
+        (tone[2] / tn) as f32,
+    ];
+    let weight: Vec<f32> = (0..ww * wh)
+        .map(|i| {
+            if in_hole[i] {
+                ((dist[i] - THIN_MARGIN_CELLS) as f32 / THIN_FEATHER_CELLS as f32).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        })
+        .collect();
+    let blur_r = ((THIN_BLUR_FRACTION * long).round() as usize).max(1);
+    let mut grid = grid0.clone();
+    for step in 1..=THIN_MAX_STEPS {
+        let blurred = blur_grid(&grid, ww, wh, blur_r);
+        for i in 0..ww * wh {
+            if weight[i] > 0.0 {
+                for c in 0..3 {
+                    let target = blurred[i][c] * (1.0 - THIN_LIFT) + tone[c] * THIN_LIFT;
+                    grid[i][c] += weight[i] * (target - grid[i][c]);
+                }
+            }
+        }
+        report.steps = step;
+        let now = mean_local_std(&grid, ww, wh, &hole_sel).unwrap_or(0.0);
+        if now / ring_floor <= THIN_TEXTURE_TARGET {
+            break;
+        }
+    }
+    // Full resolution: add the grid change, bilinearly, inside the holes'
+    // plate rectangle; never under a product pixel.
+    let delta: Vec<[f32; 3]> = grid
+        .iter()
+        .zip(&grid0)
+        .map(|(a, b)| [a[0] - b[0], a[1] - b[1], a[2] - b[2]])
+        .collect();
+    let (mut hx0, mut hy0, mut hx1, mut hy1) = (usize::MAX, usize::MAX, 0, 0);
+    for i in 0..ww * wh {
+        if weight[i] > 0.0 {
+            hx0 = hx0.min(i % ww);
+            hy0 = hy0.min(i / ww);
+            hx1 = hx1.max(i % ww + 1);
+            hy1 = hy1.max(i / ww + 1);
+        }
+    }
+    let mut out = plate.clone();
+    if hx0 == usize::MAX {
+        report.note = Some("holes too narrow to soften past the margin".to_string());
+        return (out, report);
+    }
+    let px0 = ((hx0.saturating_sub(1)) as f64 / sx).floor() as usize;
+    let py0 = ((hy0.saturating_sub(1)) as f64 / sy).floor() as usize;
+    let px1 = (((hx1 + 1) as f64 / sx).ceil() as usize).min(pw);
+    let py1 = (((hy1 + 1) as f64 / sy).ceil() as usize).min(ph);
+    let product_at = |px: usize, py: usize| -> bool {
+        // The plate pixel's footprint on the product frame, one pixel of
+        // slack each way.
+        let fx0 = ((px as f64 - cl) * fw as f64 / cw).floor() as i64 - 1;
+        let fx1 = ((px as f64 + 1.0 - cl) * fw as f64 / cw).ceil() as i64 + 1;
+        let fy0 = ((py as f64 - ct) * fh as f64 / ch).floor() as i64 - 1;
+        let fy1 = ((py as f64 + 1.0 - ct) * fh as f64 / ch).ceil() as i64 + 1;
+        for fy in fy0.max(0)..fy1.min(fh as i64) {
+            for fx in fx0.max(0)..fx1.min(fw as i64) {
+                if foreground.pixels[(fy as usize * fw + fx as usize) * 4 + 3] > 0 {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+    let mut written = 0u64;
+    for py in py0..py1 {
+        let gy = ((py as f64 + 0.5) * sy - 0.5).max(0.0);
+        let (ya, ty) = ((gy.floor() as usize).min(wh - 1), (gy - gy.floor()) as f32);
+        let yb = (ya + 1).min(wh - 1);
+        for px in px0..px1 {
+            let gx = ((px as f64 + 0.5) * sx - 0.5).max(0.0);
+            let (xa, tx) = ((gx.floor() as usize).min(ww - 1), (gx - gx.floor()) as f32);
+            let xb = (xa + 1).min(ww - 1);
+            let corners = [ya * ww + xa, ya * ww + xb, yb * ww + xa, yb * ww + xb];
+            if corners.iter().all(|&g| weight[g] == 0.0) {
+                continue;
+            }
+            let k = [
+                (1.0 - tx) * (1.0 - ty),
+                tx * (1.0 - ty),
+                (1.0 - tx) * ty,
+                tx * ty,
+            ];
+            let mut d = [0f32; 3];
+            for (j, &g) in corners.iter().enumerate() {
+                (0..3).for_each(|c| d[c] += k[j] * delta[g][c]);
+            }
+            if d.iter().all(|v| v.abs() < 0.5) || product_at(px, py) {
+                continue;
+            }
+            let i = (py * pw + px) * 4;
+            let mut changed = false;
+            for c in 0..3 {
+                let v = (out.pixels[i + c] as f32 + d[c]).round().clamp(0.0, 255.0) as u8;
+                changed |= v != out.pixels[i + c];
+                out.pixels[i + c] = v;
+            }
+            written += changed as u64;
+        }
+    }
+    report.pixels_written = written;
+    report.holes_softened = written > 0;
+    report.texture_after = mean_local_std(&plate_to_grid(&out, ww, wh), ww, wh, &hole_sel);
+    (out, report)
 }

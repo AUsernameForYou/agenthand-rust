@@ -328,7 +328,13 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         source_image.width,
         source_image.height,
     );
-    let provenance_json = serde_json::to_string(&mask_provenance).unwrap_or_default();
+    // The mask's PNG chunk also carries the accepted concept phrase, so a
+    // later draw knows the product class (docs/LIGHT-AND-THIN.md). The
+    // result's mask_provenance and the receipt's mask_* fields are
+    // unchanged (draw republishes only the five frame fields).
+    let mut mask_text = mask_provenance.clone();
+    mask_text["concept"] = json!(outcome.phrase);
+    let provenance_json = serde_json::to_string(&mask_text).unwrap_or_default();
     let mask_bytes = crate::image::encode_png_gray_with_text(
         &full_mask,
         crate::assets::MASK_PROVENANCE_PNG_KEY,
@@ -626,6 +632,7 @@ fn stage_source_plate(
     geometry: &SubjectGeometry,
     angle: &staging::AngleEstimate,
     scene_prompt: &str,
+    thin_trigger: &staging::ThinTrigger,
 ) -> Result<StagedPlate, meta::ImageError> {
     let staging_err = |message: String| meta::ImageError {
         code: "STAGING_FAILED".to_string(),
@@ -750,7 +757,17 @@ fn stage_source_plate(
             )
         }
     };
-    let finished = staging::finish_plate(&plate, foreground, geometry);
+    // --- insertion point: light and thin (docs/LIGHT-AND-THIN.md) ---
+    // The contact shadow moves a little away from the photo's light when
+    // a direction reads plainly (no prompt clause: the edit keeps the
+    // photo's own light); then the thin-structure guard on the finished
+    // plate, plate pixels outside the product only.
+    let light = staging::estimate_light_direction(&source, foreground);
+    let offset = light.side.map_or((0.0, 0.0), |side| {
+        composite::contact_shadow_offset_px(foreground, side.shadow_step())
+    });
+    let finished = staging::finish_plate_lit(&plate, foreground, geometry, offset);
+    let (finished, thin) = composite::soften_thin_holes(&finished, foreground, thin_trigger);
     let handle = store
         .put_image(&finished, KIND_PLATE, Some(&source_record.asset_id))
         .map_err(staging_err)?;
@@ -779,6 +796,8 @@ fn stage_source_plate(
         "plate_kind": kind,
         "subject": geometry.to_json(),
         "angle_lock": angle_lock_json(angle, &angle_lock),
+        "light_direction": light_direction_json(&light, None, geometry.shadow.then_some(offset)),
+        "thin_structure": thin.to_json(),
     });
     if let Some(f) = fallback {
         extra["plate_fallback"] = f;
@@ -793,6 +812,79 @@ fn stage_source_plate(
         note: note.to_string(),
         extra,
     })
+}
+
+/// The draw result's `light_direction` record (docs/LIGHT-AND-THIN.md):
+/// `stated` is true only when a phrase was appended to the plate prompt
+/// (generated plates); `side` and `method` name what the photo showed
+/// either way, and `contact_shadow_offset_px` what the source plate's
+/// contact shadow was moved by.
+fn light_direction_json(
+    light: &staging::LightEstimate,
+    phrase: Option<&str>,
+    contact_offset: Option<(f64, f64)>,
+) -> Value {
+    let mut record = json!({
+        "stated": phrase.is_some(),
+        "method": light.method,
+        "side": light.side.map(|s| s.bucket()),
+        "shadow_falls": light.side.map(|s| s.shadow_side()),
+        "signals": light.signals,
+    });
+    match phrase {
+        Some(p) => record["phrase"] = json!(p),
+        None if light.side.is_some() => {
+            record["reason"] = json!("source plate keeps the photo's own light; no clause added, the contact shadow follows the reading")
+        }
+        None => record["reason"] = json!(light.reason),
+    }
+    if let Some((dx, dy)) = contact_offset {
+        record["contact_shadow_offset_px"] = json!([crate::round6(dx), crate::round6(dy)]);
+    }
+    record
+}
+
+/// The identify concept the foreground was cut with, from its mask's PNG
+/// chunk (cut_out writes it there); None for older masks.
+fn mask_concept_of(store: &AssetStore, foreground_handle: &str) -> Option<String> {
+    let chain = store.lineage(foreground_handle).ok()?;
+    let mask = chain.iter().find(|r| r.kind == KIND_MASK)?;
+    let bytes = store
+        .read_bytes(&(HANDLE_PREFIX.to_string() + &mask.asset_id))
+        .ok()?;
+    let raw = crate::assets::png_text_of_bytes(&bytes)
+        .get(crate::assets::MASK_PROVENANCE_PNG_KEY)?
+        .clone();
+    let parsed: Value = serde_json::from_str(&raw).ok()?;
+    let concept = parsed.get("concept")?.as_str()?.trim().to_string();
+    (!concept.is_empty()).then_some(concept)
+}
+
+/// The thin-structure guard on a stored plate (generated plates): when it
+/// softened anything, the softened plate is stored as a new plate asset
+/// (parented to the original) and its handle replaces the original's.
+fn guard_stored_plate(
+    store: &AssetStore,
+    plate_handle: &str,
+    foreground: &crate::image::RgbaImage,
+    trigger: &staging::ThinTrigger,
+) -> Result<(String, Value), String> {
+    if !trigger.triggered || trigger.holes == 0 {
+        // Nothing to soften: no need to read the plate back.
+        let mut report = composite::ThinReport::from_trigger(trigger);
+        if trigger.triggered {
+            report.note = Some("no enclosed holes in the product mask".to_string());
+        }
+        return Ok((plate_handle.to_string(), report.to_json()));
+    }
+    let plate = store.read_image(plate_handle)?;
+    let (softened, report) = composite::soften_thin_holes(&plate, foreground, trigger);
+    if !report.holes_softened {
+        return Ok((plate_handle.to_string(), report.to_json()));
+    }
+    let parent = AssetStore::parse_handle(plate_handle)?;
+    let handle = store.put_image(&softened, KIND_PLATE, Some(&parent))?;
+    Ok((handle, report.to_json()))
 }
 
 /// The draw result's `angle_lock` record: the estimated bucket, the
@@ -869,12 +961,45 @@ pub fn tool_draw_with_plate(
     }
 
     let projected = meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
+    // --- insertion point: light and thin (docs/LIGHT-AND-THIN.md) ---
+    // The concept cut_out recorded in the mask, and the thin-structure
+    // trigger (concept words or enclosed mask holes; AGENTHAND_THIN=off).
+    let concept = mask_concept_of(&store, asset);
+    let thin_trigger = composite::thin_trigger_for(&foreground, concept.as_deref());
     let staged = if plate_mode == backdrop::DRAW_PLATE_GENERATED {
         // No reference photo here, so the angle lock rides as steering
         // words from the estimated angle (eye level when unsure). The
         // receipt keeps the caller's scene text.
         let steer = meta::generated_angle_steer(&angle);
-        let plate_scene = meta::generated_plate_scene(scene_prompt, &angle);
+        // Light read off the source photo (stated only when conclusive),
+        // the plainness clause for open-frame products and the scene
+        // exclusions from the concept ride after the steer.
+        // Never fatal: an unreadable source photo states nothing.
+        let light = store
+            .lineage(asset)
+            .ok()
+            .and_then(|chain| chain.last().cloned())
+            .and_then(|r| {
+                store
+                    .read_image(&(HANDLE_PREFIX.to_string() + &r.asset_id))
+                    .ok()
+            })
+            .map(|source| staging::estimate_light_direction(&source, &foreground))
+            .unwrap_or_else(|| staging::LightEstimate {
+                side: None,
+                method: "none",
+                reason: "source photo unreadable; light not estimated",
+                signals: Value::Null,
+            });
+        let light_phrase = meta::light_clause(&light);
+        let exclusions = meta::scene_exclusions(concept.as_deref());
+        let plate_scene = meta::generated_plate_scene_dressed(
+            scene_prompt,
+            &angle,
+            light_phrase,
+            thin_trigger.triggered,
+            &exclusions,
+        );
         match generate_background_plate(
             &store,
             &plate_scene,
@@ -889,6 +1014,8 @@ pub fn tool_draw_with_plate(
                 extra: json!({
                     "plate_mode": backdrop::DRAW_PLATE_GENERATED,
                     "angle_lock": angle_lock_json(&angle, &steer),
+                    "light_direction": light_direction_json(&light, light_phrase, None),
+                    "scene_exclusions": exclusions,
                 }),
             },
             Err(e) => {
@@ -899,7 +1026,15 @@ pub fn tool_draw_with_plate(
             }
         }
     } else {
-        match stage_source_plate(&store, asset, &foreground, &geometry, &angle, scene_prompt) {
+        match stage_source_plate(
+            &store,
+            asset,
+            &foreground,
+            &geometry,
+            &angle,
+            scene_prompt,
+            &thin_trigger,
+        ) {
             Ok(staged) => staged,
             Err(e) => {
                 return Ok((
@@ -909,6 +1044,24 @@ pub fn tool_draw_with_plate(
             }
         }
     };
+    // --- insertion point: thin-structure guard on a generated plate ---
+    // (source plates were guarded before they were stored).
+    // Never fatal: the plate is already paid for, so a guard failure
+    // keeps the original plate and says so.
+    let mut staged = staged;
+    if staged.extra.get("thin_structure").is_none() {
+        match guard_stored_plate(&store, &staged.handle, &foreground, &thin_trigger) {
+            Ok((handle, record)) => {
+                staged.handle = handle;
+                staged.extra["thin_structure"] = record;
+            }
+            Err(e) => {
+                let mut record = composite::ThinReport::from_trigger(&thin_trigger).to_json();
+                record["note"] = json!(format!("guard skipped, original plate kept: {e}"));
+                staged.extra["thin_structure"] = record;
+            }
+        }
+    }
     drop(foreground);
     let plate_handle = staged.handle.clone();
     let billing = staged.billing;
