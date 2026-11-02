@@ -996,6 +996,15 @@ pub fn run_attempts(
 //    carved area is >= 2% of it AND it is an open frame (enclosed
 //    candidate area >= 10%, or the concept names a bicycle / bike / wheel
 //    / chair / rack / stool / ladder / basket).
+// 4e. Completion (`complete_windows`): once windows are accepted, the
+//    rest of the frame interior (shaded pavers that read like the tyre)
+//    is judged by structure: a second colour model with samples from
+//    inside the frame marks the kept structure (rim, tubes, fork, hub);
+//    open cells deeper than the accepted windows reach, framed by
+//    look-through structure and linked to an accepted window across a
+//    spoke, are released whole. Kill switch: AGENTHAND_HOLE_COMPLETE=off.
+//    The enclosed-remainder GATE measures the linked enclosed cells left
+//    unreleased; cut_out refuses above 10% (`hole_carve_gate_refusal`).
 // 5. Finish: line-contrast pixels of BACKGROUND colour inside a window
 //    (wall grain beside a spoke) are released; small specks left inside
 //    windows go too; 1 px gaps along kept structures are closed back to
@@ -1008,7 +1017,7 @@ pub fn run_attempts(
 /// SAM's mask exactly as mapped.
 pub const HOLE_CARVE_ENV: &str = "AGENTHAND_HOLE_CARVE";
 /// The `hole_carve` record's version.
-pub const HOLE_CARVE_VERSION: i64 = 1;
+pub const HOLE_CARVE_VERSION: i64 = 2;
 /// Background sample ring outside the mask (chessboard px, inclusive).
 pub const CARVE_BG_RING: (u16, u16) = (6, 30);
 /// Product samples start deeper than this inside the mask (px).
@@ -1085,17 +1094,51 @@ pub const OPEN_FRAME_WORDS: [&str; 8] = [
 /// alpha (about 50%), and none below `CARVE_SOFT_MIN_ALPHA`.
 pub const CARVE_SOFT_MAX_ALPHA: u8 = 128;
 pub const CARVE_SOFT_MIN_ALPHA: u8 = 26;
+/// Completion pass (step 4e) kill switch: `AGENTHAND_HOLE_COMPLETE=off`
+/// (or 0 / false / no) keeps the carve to colour-proven windows. The
+/// enclosed-remainder gate still runs.
+pub const HOLE_COMPLETE_ENV: &str = "AGENTHAND_HOLE_COMPLETE";
+/// Completion depth floor: a completed window lies at least as deep
+/// inside the silhouette as this share of the accepted window pixels
+/// (the 1st percentile), so the tyre, the rim and other parts between
+/// the windows and the outline stay.
+pub const CARVE_COMPLETE_FLOOR_FRAC: f64 = 0.01;
+/// A completed window holds a pixel at least max(`_MIN_PX`, frac x mask
+/// bbox diagonal) px (chessboard) from anything outside it.
+pub const CARVE_COMPLETE_CORE_MIN_PX: u16 = 4;
+pub const CARVE_COMPLETE_CORE_DIAG_FRAC: f64 = 0.0015;
+/// A completed window is linked to an accepted one through gaps of at
+/// most 2k px (k = this radius): a spoke or another thin line between.
+pub const CARVE_COMPLETE_LINK_RADIUS: usize = 7;
+/// Enclosed-remainder gate: cut_out refuses when the enclosed window
+/// area the carve could not release exceeds this share of the enclosed
+/// window area (accepted + completed + remainder).
+pub const CARVE_GATE_MAX_REMAINDER_FRAC: f64 = 0.10;
+/// cut_out's error code when the gate refuses.
+pub const HOLE_CARVE_GATE_CODE: &str = "HOLE_CARVE_INCOMPLETE";
 
-/// Whether hole carving runs at all (the kill switch).
-pub fn hole_carve_enabled() -> bool {
+/// Whether an on/off environment switch is on: unset or any value
+/// other than 0 / off / false / no (any case) means on.
+fn env_switch_on(name: &str) -> bool {
     !matches!(
-        std::env::var(HOLE_CARVE_ENV)
+        std::env::var(name)
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase()
             .as_str(),
         "0" | "off" | "false" | "no"
     )
+}
+
+/// Whether hole carving runs at all (the kill switch).
+pub fn hole_carve_enabled() -> bool {
+    env_switch_on(HOLE_CARVE_ENV)
+}
+
+/// Whether the completion pass runs (its own kill switch; the carve
+/// kill switch turns it off too).
+pub fn hole_complete_enabled() -> bool {
+    env_switch_on(HOLE_COMPLETE_ENV)
 }
 
 /// The open-frame keyword the concept names, if any: a word of the
@@ -1111,9 +1154,19 @@ pub fn open_frame_keyword(concept: &str) -> Option<&'static str> {
     None
 }
 
-/// `carve_holes_with` behind the kill switch: the cut_out entry point.
+/// `carve_holes_opts` behind both kill switches: the cut_out entry point.
 pub fn carve_holes(source: &RgbaImage, mask: &GrayImage, concept: &str) -> (GrayImage, Value) {
-    carve_holes_with(source, mask, concept, hole_carve_enabled())
+    carve_holes_opts(source, mask, concept, hole_carve_enabled(), hole_complete_enabled())
+}
+
+/// `carve_holes_opts` with the completion pass on.
+pub fn carve_holes_with(
+    source: &RgbaImage,
+    mask: &GrayImage,
+    concept: &str,
+    enabled: bool,
+) -> (GrayImage, Value) {
+    carve_holes_opts(source, mask, concept, enabled, true)
 }
 
 /// Exact chessboard distance (u16, saturating at `cap`) to the nearest
@@ -1182,6 +1235,88 @@ fn chessboard_distance_u16(
         }
     }
     d
+}
+
+/// Exact squared Euclidean distance (px^2) from each pixel to the nearest
+/// pixel outside `inside`; the area beyond the window counts as outside
+/// (Felzenszwalb-Huttenlocher: a column pass, then the lower envelope of
+/// parabolas along each row).
+fn euclidean_depth_sq(inside: &[bool], w: usize, h: usize) -> Vec<u32> {
+    // Column pass, row by row (sequential memory): distance along the
+    // column to the nearest outside pixel, outside sites just beyond both
+    // ends. The upward pass is exact; the downward pass takes the minimum.
+    let mut col = vec![0u32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            col[i] = if !inside[i] {
+                0
+            } else if y == 0 {
+                1
+            } else {
+                col[i - w] + 1
+            };
+        }
+    }
+    for y in (0..h).rev() {
+        for x in 0..w {
+            let i = y * w + x;
+            let below = if y + 1 == h { 1 } else { col[i + w] + 1 };
+            if below < col[i] {
+                col[i] = below;
+            }
+        }
+    }
+    // Row pass over f(q) = col(q)^2, plus outside sites at q = -1 and q = w.
+    let n = w + 2;
+    let mut pos = vec![0i64; n];
+    let mut val = vec![0i64; n];
+    let mut v = vec![0usize; n];
+    let mut z = vec![0f64; n + 1];
+    for y in 0..h {
+        let row = &mut col[y * w..(y + 1) * w];
+        pos[0] = -1;
+        val[0] = 0;
+        for x in 0..w {
+            pos[x + 1] = x as i64;
+            val[x + 1] = row[x] as i64 * row[x] as i64;
+        }
+        pos[n - 1] = w as i64;
+        val[n - 1] = 0;
+        let mut k = 0usize;
+        v[0] = 0;
+        z[0] = f64::NEG_INFINITY;
+        z[1] = f64::INFINITY;
+        for q in 1..n {
+            let mut s;
+            loop {
+                let p = v[k];
+                s = ((val[q] + pos[q] * pos[q]) - (val[p] + pos[p] * pos[p])) as f64
+                    / (2 * (pos[q] - pos[p])) as f64;
+                if s <= z[k] {
+                    // z[0] is -inf, so k never drops below 0 here.
+                    k -= 1;
+                } else {
+                    break;
+                }
+            }
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f64::INFINITY;
+        }
+        k = 0;
+        for (x, out) in row.iter_mut().enumerate() {
+            let xf = x as f64;
+            while z[k + 1] < xf {
+                k += 1;
+            }
+            let p = v[k];
+            let dx = x as i64 - pos[p];
+            *out = (dx * dx + val[p]) as u32;
+        }
+    }
+    col
 }
 
 /// Sliding max (or min) over `[i - r, i + r]` of one line, clipped to the
@@ -1503,8 +1638,14 @@ fn carve_luma(px: &[u8]) -> u8 {
 
 
 
-/// The no-op record (mask returned unchanged).
-fn hole_carve_skipped(reason: &str, product_pixels: u64, keyword: Option<&str>) -> Value {
+/// The no-op record (mask returned unchanged). The gate does not apply:
+/// nothing was carved, so no open-frame interior was judged.
+fn hole_carve_skipped(
+    reason: &str,
+    product_pixels: u64,
+    keyword: Option<&str>,
+    complete: bool,
+) -> Value {
     json!({
         "version": HOLE_CARVE_VERSION,
         "applied": false,
@@ -1516,25 +1657,368 @@ fn hole_carve_skipped(reason: &str, product_pixels: u64, keyword: Option<&str>) 
         "product_pixels_before": product_pixels,
         "product_pixels_after": product_pixels,
         "open_frame_keyword": keyword,
+        "completion": {"enabled": complete, "released_pixels": 0, "cells_released": 0},
+        "gate": {"applies": false, "pass": true},
     })
+}
+
+/// The structured refusal for a `hole_carve` record whose gate failed:
+/// (error code, message, extra error fields). None when the gate passed
+/// or did not apply. Decision 114: the refusal names what is wrong and
+/// what to change in the retake.
+pub fn hole_carve_gate_refusal(record: &Value) -> Option<(String, String, Value)> {
+    let gate = record.get("gate")?;
+    if gate.get("applies").and_then(Value::as_bool) != Some(true)
+        || gate.get("pass").and_then(Value::as_bool) != Some(false)
+    {
+        return None;
+    }
+    let num = |k: &str| gate.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let remainder = num("remainder_pixels") as u64;
+    let enclosed = num("enclosed_candidate_pixels") as u64;
+    let fraction = num("remainder_fraction");
+    let limit = num("max_remainder_fraction");
+    let retake = [
+        "Move the item out of shade, or turn it so no shadow falls inside the frame: shadowed ground seen through the openings reads like the item's own dark parts.",
+        "Shoot it against a plain, evenly lit background whose colour differs from the frame and tyres (a light wall, open lawn or bright paving).",
+        "Keep the whole item in the frame with a margin of background around it, then run cut_out again.",
+    ];
+    let message = format!(
+        "The open-frame carve left {remainder} px of enclosed background it could not release ({:.1}% of the {enclosed} px enclosed window area; the limit is {:.0}%). The staged image would show the old scene through the frame, so this cut is refused. Retake: {} {} {}",
+        fraction * 100.0,
+        limit * 100.0,
+        retake[0],
+        retake[1],
+        retake[2],
+    );
+    let extra = json!({
+        "remainder": {
+            "remainder_pixels": remainder,
+            "enclosed_candidate_pixels": enclosed,
+            "remainder_fraction": gate.get("remainder_fraction").cloned().unwrap_or(Value::Null),
+            "max_remainder_fraction": gate.get("max_remainder_fraction").cloned().unwrap_or(Value::Null),
+            "accepted_window_pixels": gate.get("accepted_window_pixels").cloned().unwrap_or(Value::Null),
+            "completed_window_pixels": gate.get("completed_window_pixels").cloned().unwrap_or(Value::Null),
+        },
+        "retake": retake,
+        "operator_override": format!("{HOLE_CARVE_ENV}=off stages SAM's uncarved mask instead (the old background then stays inside the frame)."),
+    });
+    Some((HOLE_CARVE_GATE_CODE.to_string(), message, extra))
+}
+
+/// What the completion pass reads (all planes are the carve window).
+struct CompleteInputs<'a> {
+    w: usize,
+    h: usize,
+    on: &'a [bool],
+    cand: &'a [bool],
+    thin: &'a [bool],
+    comp_labels: &'a [u32],
+    comp_ok: &'a [bool],
+    comp_area: &'a [u64],
+    /// Colour bin of window pixel i.
+    bin: &'a dyn Fn(usize) -> usize,
+    /// Candidates step 2's evidence proves product.
+    proven_product: &'a [bool],
+    /// Step 2's background ring and product band samples.
+    ring: &'a dyn Fn(usize) -> bool,
+    band: &'a dyn Fn(usize) -> bool,
+    tile: usize,
+    diag: f64,
+    /// The thin step's minimum line extent (px).
+    min_extent: usize,
+}
+
+/// What the completion pass did and what the gate measured.
+struct CompletionOutcome {
+    accepted_px: u64,
+    released_px: u64,
+    cells_released: u64,
+    cells_enclosed: u64,
+    remainder_px: u64,
+    depth_floor_px: u16,
+    core_depth_px: u16,
+}
+
+/// 4e. Completion pass. Step 4 accepts only colour-proven background, so
+/// a window seen through a wheel stays product where the background is
+/// in shade (dark pavers read like the tyre). Once windows are accepted,
+/// the rest of the frame interior is judged by its structure instead:
+///
+/// 1. Second colour model: background samples are the ring plus the
+///    accepted windows; product samples are the band plus candidates step
+///    2 already proves product (P(product) >= e x P(background)). The
+///    models are local again inside the frame, where step 2 had only the
+///    global prior. A candidate this model proves product (same e margin)
+///    is kept STRUCTURE: the rim, frame tubes, a fork, the hub. Structure
+///    in pieces shorter than the thin step's extent floor, counted with
+///    the thin lines they touch, is grain in the background, not a part.
+/// 2. Depth floor: only candidates at least as deep inside the silhouette
+///    (Euclidean depth) as the accepted windows reach (their 1st
+///    percentile) are open; the tyre and the rim lie between the windows
+///    and the outline.
+/// 3. Cells: connected open candidates that are not thin lines and not
+///    structure. A cell is a window when it does not touch the outer
+///    band, holds a core of `core` px, at least half its border is
+///    look-through (accepted windows, or thin / structure pixels outside
+///    a part twice the thin square wide: spokes, not tread on a tyre), and
+///    it links to an accepted window through gaps of at most 2k px.
+/// 4. Windows are returned as a plane (`apply`) and join the carve after
+///    the line release and the specks (5a', 5a), which judge only the
+///    colour-proven windows.
+///
+/// Gate: every enclosed cell (not touching the band, above the cell
+/// floor) that links to an accepted window through enclosed cells is part
+/// of the frame interior; the linked cells left unreleased are the
+/// remainder.
+fn complete_windows(
+    p: &CompleteInputs,
+    carved: &[bool],
+    apply: bool,
+) -> (CompletionOutcome, Vec<bool>) {
+    let (w, h) = (p.w, p.h);
+    let n = w * h;
+    let r = CARVE_THIN_RADIUS;
+    let accepted_px = carved.iter().filter(|&&c| c).count() as u64;
+    let core = CARVE_COMPLETE_CORE_MIN_PX
+        .max((CARVE_COMPLETE_CORE_DIAG_FRAC * p.diag).round() as u16);
+    let empty = CompletionOutcome {
+        accepted_px,
+        released_px: 0,
+        cells_released: 0,
+        cells_enclosed: 0,
+        remainder_px: 0,
+        depth_floor_px: 0,
+        core_depth_px: core,
+    };
+    if accepted_px == 0 {
+        return (empty, Vec::new());
+    }
+    // 1. Second colour model and structure.
+    let (m2, _, _) = CarveTileModels::build(w, h, p.tile, |i| {
+        if (p.ring)(i) || carved[i] {
+            Some((true, (p.bin)(i)))
+        } else if (p.band)(i) || p.proven_product[i] {
+            Some((false, (p.bin)(i)))
+        } else {
+            None
+        }
+    });
+    let structure: Vec<bool> = (0..n)
+        .map(|i| {
+            p.cand[i] && !carved[i] && !p.thin[i] && {
+                let (pb, pp) = m2.evidence(i, w, (p.bin)(i));
+                pp >= CARVE_BG_RATIO * pb
+            }
+        })
+        .collect();
+    drop(m2);
+    // Specks: structure in pieces shorter than the thin step's extent
+    // floor (`min_extent`), counted together with the thin lines they
+    // touch, is open window: dark grain in a shaded paver. A spoke
+    // nipple, a chain plate or a nut joins its line work and stays.
+    let structure: Vec<bool> = {
+        let set: Vec<bool> = (0..n)
+            .map(|i| p.cand[i] && !carved[i] && (structure[i] || p.thin[i]))
+            .collect();
+        let (sl, sc) = label8(&set, w, h);
+        drop(set);
+        let mut ext = vec![(usize::MAX, usize::MAX, 0usize, 0usize); sc + 1];
+        for i in 0..n {
+            let l = sl[i] as usize;
+            if l != 0 {
+                let e = &mut ext[l];
+                e.0 = e.0.min(i % w);
+                e.1 = e.1.min(i / w);
+                e.2 = e.2.max(i % w);
+                e.3 = e.3.max(i / w);
+            }
+        }
+        let long: Vec<bool> = ext
+            .iter()
+            .map(|e| e.0 != usize::MAX && (e.2 - e.0 + 1).max(e.3 - e.1 + 1) >= p.min_extent)
+            .collect();
+        (0..n).map(|i| structure[i] && long[sl[i] as usize]).collect()
+    };
+    // 2. Depth floor from the accepted windows (Euclidean depth, so the
+    // floor is the same in every direction: a chessboard depth is ~30%
+    // shallower along diagonals and would expose the tyre's inner edge
+    // elsewhere). Compared squared.
+    let (floor_sq, open) = {
+        let depth_sq = euclidean_depth_sq(p.on, w, h);
+        let mut accepted: Vec<u32> = (0..n).filter(|&i| carved[i]).map(|i| depth_sq[i]).collect();
+        let need = ((CARVE_COMPLETE_FLOOR_FRAC * accepted_px as f64).ceil() as usize).max(1);
+        let (_, &mut floor_sq, _) = accepted.select_nth_unstable(need - 1);
+        drop(accepted);
+        let open: Vec<bool> = (0..n)
+            .map(|i| {
+                p.cand[i]
+                    && !carved[i]
+                    && !p.thin[i]
+                    && !structure[i]
+                    && depth_sq[i] >= floor_sq
+                    && p.comp_ok[p.comp_labels[i] as usize]
+            })
+            .collect();
+        (floor_sq, open)
+    };
+    let floor = ((floor_sq as f64).sqrt().ceil() as u32).min(u16::MAX as u32) as u16;
+    // 3. Cells and their border.
+    let (cl, cc) = label8(&open, w, h);
+    if cc == 0 {
+        return (CompletionOutcome { depth_floor_px: floor, ..empty }, Vec::new());
+    }
+    let look: Vec<bool> = {
+        let plane: Vec<u8> = (0..n)
+            .map(|i| {
+                if p.on[i] && !carved[i] && (structure[i] || p.thin[i] || !p.cand[i]) {
+                    255
+                } else {
+                    0
+                }
+            })
+            .collect();
+        let eroded = square_extreme(&plane, w, h, r, false);
+        drop(plane);
+        let wide = square_extreme(&square_extreme(&eroded, w, h, r, false), w, h, 2 * r, true);
+        (0..n)
+            .map(|i| carved[i] || (p.cand[i] && (p.thin[i] || structure[i]) && wide[i] == 0))
+            .collect()
+    };
+    drop(structure);
+    let deep: Vec<bool> = {
+        let not_open: Vec<bool> = open.iter().map(|&v| !v).collect();
+        let d = chessboard_distance_u16(&not_open, w, h, true, core);
+        let mut deep = vec![false; cc + 1];
+        for i in 0..n {
+            if cl[i] != 0 && d[i] >= core {
+                deep[cl[i] as usize] = true;
+            }
+        }
+        deep
+    };
+    let mut area = vec![0u64; cc + 1];
+    let mut border = vec![0u64; cc + 1];
+    let mut framed = vec![0u64; cc + 1];
+    let mut touches_band = vec![false; cc + 1];
+    let mut comp = vec![0u32; cc + 1];
+    for i in 0..n {
+        let l = cl[i] as usize;
+        if l == 0 {
+            continue;
+        }
+        area[l] += 1;
+        comp[l] = p.comp_labels[i];
+        let (x, y) = (i % w, i / w);
+        for ny in y.saturating_sub(1)..(y + 2).min(h) {
+            for nx in x.saturating_sub(1)..(x + 2).min(w) {
+                let j = ny * w + nx;
+                if !p.cand[j] {
+                    touches_band[l] = true;
+                }
+                // The border is counted over the 4-neighbourhood.
+                if (nx == x) != (ny == y) && cl[j] as usize != l {
+                    border[l] += 1;
+                    if look[j] {
+                        framed[l] += 1;
+                    }
+                }
+            }
+        }
+    }
+    drop((look, open));
+    let enclosed: Vec<bool> = (0..=cc)
+        .map(|l| {
+            l != 0 && !touches_band[l] && {
+                let c = comp[l] as usize;
+                area[l] >= CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * p.comp_area[c] as f64) as u64)
+            }
+        })
+        .collect();
+    let window: Vec<bool> = (0..=cc)
+        .map(|l| {
+            enclosed[l] && deep[l] && framed[l] as f64 >= CARVE_CELL_FRAME_FRAC * border[l] as f64
+        })
+        .collect();
+    // Linking: the accepted windows and the member cells, each grown by
+    // k px; a member cell links when its grown component holds an
+    // accepted window pixel (gaps of at most 2k px are bridged).
+    let link = |member: &[bool]| -> Vec<bool> {
+        let plane: Vec<u8> = (0..n)
+            .map(|i| if carved[i] || member[cl[i] as usize] { 255 } else { 0 })
+            .collect();
+        let grown: Vec<bool> = square_extreme(&plane, w, h, CARVE_COMPLETE_LINK_RADIUS, true)
+            .iter()
+            .map(|&v| v != 0)
+            .collect();
+        drop(plane);
+        let (gl, gc) = label8(&grown, w, h);
+        let mut has_window = vec![false; gc + 1];
+        for i in 0..n {
+            if carved[i] {
+                has_window[gl[i] as usize] = true;
+            }
+        }
+        let mut linked = vec![false; cc + 1];
+        for i in 0..n {
+            let l = cl[i] as usize;
+            if l != 0 && member[l] && has_window[gl[i] as usize] {
+                linked[l] = true;
+            }
+        }
+        linked
+    };
+    let release = link(&window);
+    let interior = link(&enclosed);
+    // 4. Release, and the gate's remainder.
+    let mut released_px = 0u64;
+    let mut remainder_px = 0u64;
+    let cells_released = if apply { release.iter().filter(|&&v| v).count() as u64 } else { 0 };
+    let cells_enclosed = interior.iter().filter(|&&v| v).count() as u64;
+    for l in 1..=cc {
+        if interior[l] && !(apply && release[l]) {
+            remainder_px += area[l];
+        }
+    }
+    let mut completed = Vec::new();
+    if apply {
+        completed = (0..n).map(|i| release[cl[i] as usize]).collect();
+        released_px = completed.iter().filter(|&&v| v).count() as u64;
+    }
+    (
+        CompletionOutcome {
+            accepted_px,
+            released_px,
+            cells_released,
+            cells_enclosed,
+            remainder_px,
+            depth_floor_px: floor,
+            core_depth_px: core,
+        },
+        completed,
+    )
 }
 
 /// Carve enclosed background out of open-frame products (see the block
 /// comment above and docs/HOLE-CARVE.md). Returns the mask to use from
 /// here on (unchanged unless `applied`) and the `hole_carve` record.
 /// Only mask pixels at 255 (product) are ever lowered; nothing is raised.
-pub fn carve_holes_with(
+/// `complete` runs the completion pass (step 4e); the enclosed-remainder
+/// gate runs whenever the carve applies.
+pub fn carve_holes_opts(
     source: &RgbaImage,
     mask: &GrayImage,
     concept: &str,
     enabled: bool,
+    complete: bool,
 ) -> (GrayImage, Value) {
     let product_before = mask.pixels.iter().filter(|&&v| v == 255).count() as u64;
     let keyword = open_frame_keyword(concept);
+    let complete = complete && enabled;
     let unchanged = |reason: &str| {
         (
             mask.clone(),
-            hole_carve_skipped(reason, product_before, keyword),
+            hole_carve_skipped(reason, product_before, keyword, complete),
         )
     };
     if !enabled {
@@ -1603,13 +2087,19 @@ pub fn carve_holes_with(
     }
     let min_density = CARVE_BG_MIN_DENSITY / CARVE_BINS as f64;
     let evidence = |i: usize| -> (f64, f64) { models.evidence(i, w, carve_colour_bin(src_at(i))) };
-    let bg_like = |i: usize| -> bool {
-        let (pb, pp) = evidence(i);
-        pb >= min_density && pb > CARVE_BG_RATIO * pp
-    };
 
     // Background-like candidates (cached: the thin step and the carve read it).
-    let bgl: Vec<bool> = (0..n).map(|i| cand[i] && bg_like(i)).collect();
+    // The same pass records candidates the evidence proves PRODUCT
+    // (P(product) >= e x P(background)) for the completion pass (4e).
+    let mut bgl = vec![false; n];
+    let mut proven_product = vec![false; n];
+    for i in 0..n {
+        if cand[i] {
+            let (pb, pp) = evidence(i);
+            bgl[i] = pb >= min_density && pb > CARVE_BG_RATIO * pp;
+            proven_product[i] = pp >= CARVE_BG_RATIO * pb;
+        }
+    }
 
     // 3. Thin structures over the candidates' bbox (+ the square radius).
     // Colour consistency first: a line-contrast pixel of BACKGROUND colour
@@ -2054,6 +2544,32 @@ pub fn carve_holes_with(
     }
     drop((region_labels, cell_labels, carve_x, strict));
 
+    // 4e. Completion pass and the enclosed-remainder gate (see
+    // `complete_windows`): windows between the accepted ones whose
+    // background the colour test could not prove (pavers in shade) are
+    // released whole, bounded by the kept structure around them.
+    let (completion, completed) = complete_windows(
+        &CompleteInputs {
+            w,
+            h,
+            on: &on,
+            cand: &cand,
+            thin: &thin,
+            comp_labels: &comp_labels,
+            comp_ok: &comp_ok,
+            comp_area: &comp_area,
+            bin: &|i: usize| carve_colour_bin(src_at(i)),
+            proven_product: &proven_product,
+            ring: &ring_at,
+            band: &band_at,
+            tile,
+            diag,
+            min_extent,
+        },
+        &carved,
+        complete,
+    );
+
     // 5a'. Colour consistency of the protected lines: a line-contrast pixel
     // of BACKGROUND colour (dark grain in a wall beside a spoke) is released
     // when most of the box around it is carved window. Line pixels of
@@ -2154,6 +2670,17 @@ pub fn carve_holes_with(
     }
     drop((speck_labels, comp_labels));
 
+    // 4e'. The completed windows join the carve here, after the line
+    // release (5a') and the specks (5a), which judge only the colour-proven
+    // windows: a spoke, a spoke nipple or a chain plate of background
+    // colour next to a completed window stays product.
+    for (c, &done) in carved.iter_mut().zip(completed.iter()) {
+        if done {
+            *c = true;
+        }
+    }
+    drop(completed);
+
     // 5b. Close 1 px gaps along kept structures.
     let kept = |carved: &[bool], x: isize, y: isize| -> bool {
         x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && {
@@ -2252,6 +2779,24 @@ pub fn carve_holes_with(
         out.pixels[(y0 + y) * fw + x0 + x] = alpha;
     }
     let product_after = out.pixels.iter().filter(|&&v| v == 255).count() as u64;
+    // The enclosed-remainder gate (cut_out refuses when it fails).
+    let enclosed_px = completion.accepted_px + completion.released_px + completion.remainder_px;
+    let remainder_frac = if enclosed_px > 0 {
+        completion.remainder_px as f64 / enclosed_px as f64
+    } else {
+        0.0
+    };
+    let gate = json!({
+        "applies": true,
+        "pass": remainder_frac <= CARVE_GATE_MAX_REMAINDER_FRAC,
+        "accepted_window_pixels": completion.accepted_px,
+        "completed_window_pixels": completion.released_px,
+        "remainder_pixels": completion.remainder_px,
+        "enclosed_candidate_pixels": enclosed_px,
+        "enclosed_cells": completion.cells_enclosed,
+        "remainder_fraction": crate::round6(remainder_frac),
+        "max_remainder_fraction": CARVE_GATE_MAX_REMAINDER_FRAC,
+    });
     let reason_applied = format!(
         "open frame ({}): enclosed background {:.2}% of the component (needs {}%)",
         match keyword {
@@ -2278,6 +2823,15 @@ pub fn carve_holes_with(
         "open_frame": open_frame,
         "outer_band_px": band_px,
         "product_pixels_written": 0,
+        "completion": {
+            "enabled": complete,
+            "released_pixels": completion.released_px,
+            "cells_released": completion.cells_released,
+            "depth_floor_px": completion.depth_floor_px,
+            "core_depth_px": completion.core_depth_px,
+            "link_radius_px": CARVE_COMPLETE_LINK_RADIUS,
+        },
+        "gate": gate,
     });
     (out, record)
 }
