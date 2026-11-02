@@ -3340,8 +3340,18 @@ pub struct Estimate {
     pub ticks_matched: usize,
     pub card_width_px: i64,
     pub reprojection_rms_px: f64,
+    /// The one assumption the photo cannot check: the card's print
+    /// scale (1.0 = printed at 100%, as the profile describes it).
+    pub card_print_scale_assumed: f64,
+    /// The card's outer bracket frame at that scale, [long, short] mm.
+    pub card_outer_bracket_mm: [f64; 2],
+    /// How to verify the print scale with a ruler and correct for it.
+    pub card_print_check: String,
     pub warnings: Vec<String>,
 }
+
+/// Every size assumes the card was printed at 100%.
+pub const CARD_PRINT_SCALE_ASSUMED: f64 = 1.0;
 
 impl Estimate {
     /// JSON in the Python dict's insertion order, indent 2.
@@ -3357,7 +3367,9 @@ impl Estimate {
              \"width_range_mm\": [{}, {}],\n  \"height_range_mm\": [{}, {}],\n  \
              \"display\": {},\n  \"method\": {},\n  \"card_id\": {},\n  \
              \"ticks_matched\": {},\n  \"card_width_px\": {},\n  \
-             \"reprojection_rms_px\": {},\n  \"warnings\": [{}]\n}}",
+             \"reprojection_rms_px\": {},\n  \"card_print_scale_assumed\": {},\n  \
+             \"card_outer_bracket_mm\": [{}, {}],\n  \"card_print_check\": {},\n  \
+             \"warnings\": [{}]\n}}",
             num(self.width_mm),
             num(self.height_mm),
             num(self.range_pct),
@@ -3371,6 +3383,10 @@ impl Estimate {
             self.ticks_matched,
             self.card_width_px,
             num(self.reprojection_rms_px),
+            num(self.card_print_scale_assumed),
+            num(self.card_outer_bracket_mm[0]),
+            num(self.card_outer_bracket_mm[1]),
+            serde_json::to_string(&self.card_print_check).unwrap(),
             warnings
                 .iter()
                 .map(|w| format!("\n    {w}"))
@@ -3498,6 +3514,21 @@ pub fn estimate(
             format!("~{:.0} mm ({:.0}–{:.0} mm)", dim, lo, hi)
         }
     };
+    // Outer bracket frame (centreline frame plus one stroke), long
+    // side first. Profile values carry at most 3 decimals; the epsilon
+    // keeps a printed .x5 rounding up (135.85 -> 135.9).
+    let r1 = |v: f64| ((v * 10.0) + 1e-6).round() / 10.0;
+    let across = (card.frame["TR"][0] - card.frame["TL"][0]).abs() + card.stroke_mm;
+    let down = (card.frame["BL"][1] - card.frame["TL"][1]).abs() + card.stroke_mm;
+    let bracket = [r1(across.max(down)), r1(across.min(down))];
+    let card_print_check = format!(
+        "Sizes assume the {card_id} card was printed at 100%: its outer bracket \
+         frame (the black corner marks) measures {:.1} mm along its long side and \
+         {:.1} mm along its short side. Check the long side with a ruler; if it \
+         measures M mm instead, the card was printed at M / {:.1} and every size \
+         here scales by that factor.",
+        bracket[0], bracket[1], bracket[0]
+    );
     Ok(Estimate {
         width_mm: round_n(width_mm, 1),
         height_mm: round_n(height_mm, 1),
@@ -3514,6 +3545,9 @@ pub fn estimate(
         ticks_matched: n_ticks,
         card_width_px: card_px.round_ties_even() as i64,
         reprojection_rms_px: round_n(det.rms, 2),
+        card_print_scale_assumed: CARD_PRINT_SCALE_ASSUMED,
+        card_outer_bracket_mm: bracket,
+        card_print_check,
         warnings,
     })
 }

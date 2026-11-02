@@ -419,3 +419,32 @@ fn printed_card_is_found_beside_scattered_cyan() {
         est.height_range_mm
     );
 }
+
+/// Sizes rest on one assumption the photo cannot check: that the card
+/// was printed at 100%. Every result states it, with the card's outer
+/// bracket size and how to correct for a scaled print.
+#[test]
+fn every_estimate_states_the_print_scale_assumption() {
+    let path = root().join("tests/fixtures/measure/ahbig_2x.png");
+    let img = decode_image(&std::fs::read(&path).unwrap())
+        .unwrap()
+        .into_rgba();
+    let profile = root().join("tests/fixtures/scaled-card-profiles.json");
+    let card = load_card_profile(&profile, "AH-BIG").unwrap();
+    let est = estimate(&MeasureFrame::from_rgba(&img), &card, "AH-BIG", None, None).unwrap();
+    assert_eq!(est.card_print_scale_assumed, 1.0);
+    assert_eq!(est.card_outer_bracket_mm, [197.4, 135.9]);
+    println!("{}", est.card_print_check);
+    assert!(est.card_print_check.contains("printed at 100%"));
+    assert!(est.card_print_check.contains("197.4 mm"));
+    assert!(est.card_print_check.contains("ruler"));
+    let json = est.to_json_pretty();
+    assert!(json.contains("\"card_print_scale_assumed\": 1.0"), "{json}");
+    assert!(
+        json.contains("\"card_outer_bracket_mm\": [197.4, 135.9]"),
+        "{json}"
+    );
+    assert!(json.contains("\"card_print_check\": "), "{json}");
+    let parsed: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["card_print_scale_assumed"].as_f64(), Some(1.0));
+}
