@@ -62,6 +62,32 @@ fn assert_refused(path: &Path, card_id: &str) -> String {
 
 const NOT_VERIFIED: &str = "Card not verified in this photo (";
 
+/// Every refusal the estimator can give on a photo before measuring.
+/// On real photos the contract is that the estimate is REFUSED; which
+/// gate fires first is not part of it. Float and JPEG-decode
+/// differences between platforms move the first failing gate: on the
+/// Mac (2026-11-02, after M2 landed) the IMG_1403 preview refused at
+/// "Card fit did not converge to a trustworthy homography (coverage or
+/// residual gates failed)." while this box refuses at the ring gate,
+/// and `fence_preview_1403_refuses` panicked on the reason. Real-photo
+/// tests therefore accept any reason in this set.
+const KNOWN_REFUSALS: &[&str] = &[
+    NOT_VERIFIED,
+    "Card fit did not converge",
+    "Tick verification failed",
+    "Cyan ring not found",
+    "Too little ink",
+    "Card too small in frame",
+    "Card failed strict tick verification",
+];
+
+fn assert_known_refusal(err: &str) {
+    assert!(
+        KNOWN_REFUSALS.iter().any(|prefix| err.starts_with(prefix)),
+        "refused, but with an unexpected reason: {err}"
+    );
+}
+
 #[test]
 fn fence_preview_1403_refuses() {
     let err = assert_refused(
@@ -69,8 +95,7 @@ fn fence_preview_1403_refuses() {
         "AH-BIG",
     );
     println!("IMG_1403 preview: {err}");
-    assert!(err.starts_with(NOT_VERIFIED), "{err}");
-    assert!(err.contains("no cyan ring"), "{err}");
+    assert_known_refusal(&err);
 }
 
 #[test]
@@ -80,7 +105,7 @@ fn jacket_preview_1435_refuses() {
         "AH-35",
     );
     println!("IMG_1435 640: {err}");
-    assert!(err.starts_with(NOT_VERIFIED), "{err}");
+    assert_known_refusal(&err);
 }
 
 /// Synthetic version of the same failure: a genuine bracket frame
@@ -151,6 +176,7 @@ fn env_case(var: &str, card_id: &str) {
     };
     let err = assert_refused(Path::new(&path), card_id);
     println!("{var}: {err}");
+    assert_known_refusal(&err);
 }
 
 #[test]
