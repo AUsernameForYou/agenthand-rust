@@ -336,6 +336,24 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
     let carve_concept = format!("{} {}", outcome.phrase, concept.as_deref().unwrap_or(""));
     let (full_mask, hole_carve) =
         segmentation::carve_holes(&source_image, &full_mask, &carve_concept);
+    // Enclosed-remainder gate (docs/HOLE-CARVE.md): an open-frame carve
+    // that left too much of the frame interior as old background refuses
+    // loudly, before anything is stored, with the retake that fixes it
+    // (decision 114). The SAM call is already settled, so the refusal
+    // carries its cost and call id.
+    if let Some((code, message, extra)) = segmentation::hole_carve_gate_refusal(&hole_carve) {
+        let mut refusal = error(&code, &message, extra);
+        refusal["error"]["cost_counted_usd"] = json!(billing.actual_usd);
+        refusal["requested_concept"] = json!(concept);
+        refusal["concept"] = json!(outcome.phrase);
+        refusal["hole_carve"] = hole_carve;
+        refusal["mask_provenance"] = mask_provenance;
+        refusal["attempts"] = json!(outcome.attempts);
+        refusal["cost_usd"] = json!(billing.actual_usd);
+        refusal["usage"] = usage_json(&billing.usage);
+        refusal["call_id"] = json!(billing.call_id);
+        return Ok(refusal);
+    }
     // <<< HOLE CARVE <<<
     // The mask's PNG chunk also carries the accepted concept phrase, so a
     // later draw knows the product class (docs/LIGHT-AND-THIN.md). The
