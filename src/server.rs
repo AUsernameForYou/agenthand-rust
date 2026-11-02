@@ -328,6 +328,15 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         source_image.width,
         source_image.height,
     );
+    // >>> HOLE CARVE (docs/HOLE-CARVE.md) >>>
+    // Open-frame interiors SAM returned as solid (wheel discs) go back
+    // to the plate before anything is cut, stored or reviewed, so the
+    // mask asset, foreground, overlay, mask_review and the receipt all
+    // count the carved mask. Kill switch: AGENTHAND_HOLE_CARVE=off.
+    let carve_concept = format!("{} {}", outcome.phrase, concept.as_deref().unwrap_or(""));
+    let (full_mask, hole_carve) =
+        segmentation::carve_holes(&source_image, &full_mask, &carve_concept);
+    // <<< HOLE CARVE <<<
     // The mask's PNG chunk also carries the accepted concept phrase, so a
     // later draw knows the product class (docs/LIGHT-AND-THIN.md). The
     // result's mask_provenance and the receipt's mask_* fields are
@@ -375,6 +384,7 @@ pub fn tool_cut_out(image: &str, concept: Option<String>) -> Result<Value, Strin
         "mask_asset": mask_handle,
         "mask_overlay_asset": overlay_handle,
         "mask_review": mask_review,
+        "hole_carve": hole_carve,
         "mask_provenance": mask_provenance,
         "hashes": {
             "source": {

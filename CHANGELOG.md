@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased: hole carving
+
+- **Open-frame interiors go back to the plate** (Daniel's ruling: the
+  product is pixel-exact, the background is variable). SAM returned the
+  IMG_1443 bike's wheels as solid discs, so the pavers, wall and spoke
+  shadows seen between the spokes shipped as "product" and showed the
+  old scene through the wheels on every new plate. `cut_out` now runs
+  `segmentation::carve_holes` on the full-frame mask before anything is
+  cut, stored or reviewed: candidates deeper than the outer band
+  (max(12 px, 0.6% of the bbox diagonal)) whose colour is at least e
+  times as likely under a local background model (ring 6-30 px outside
+  the mask) as under a local product model (the outer band) are carved
+  when they form windows framed by narrow structure; spokes, chain and
+  cables (13x13 black/top-hat, contrast >= 28) are protected; a
+  component is carved only with >= 2% enclosed background AND either
+  >= 10% enclosed candidate area or an open-frame concept word (bicycle,
+  bike, wheel, chair, rack, stool, ladder, basket). Inner edges get a
+  soft alpha <= 128 for the edge fix. Only alpha-255 pixels are ever
+  lowered; nothing is raised or recoloured; the receipt counts the
+  carved mask.
+- **`hole_carve` record** (additive) in the cut_out result beside
+  `mask_review`: `{version, applied, reason, regions, carved_pixels,
+  protected_thin_pixels, soft_edge_pixels, speck_pixels,
+  released_line_pixels, appendage_pixels_kept, product_pixels_before,
+  product_pixels_after, open_frame_keyword, open_frame, outer_band_px,
+  product_pixels_written: 0}`.
+- Kill switch `AGENTHAND_HOLE_CARVE=off` (0/false/no) returns SAM's
+  mapped mask byte-for-byte. IMG_1443: 587,550 px carved in 3 regions,
+  114,473 spoke/chain px protected, product 5,660,280 -> 5,072,730 px.
+  docs/HOLE-CARVE.md has the algorithm, thresholds and limits; tests in
+  `tests/hole_carve.rs`.
+
 ## Unreleased: light direction and thin structure
 
 - **Light read off the source photo** (Daniel's spoke/shadow addendum,
