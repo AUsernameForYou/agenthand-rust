@@ -26,6 +26,10 @@
 //!   verified listing per item from a whole room; manifest + summary
 //!   land in the output dir. Exit 0 when every item staged, 1 when
 //!   any item did not stage, 2 on refusal/usage errors.
+//! - `agenthand evidence [--db <path>] <verb> ...` — the Proof Graph
+//!   CLI over the evidence database (read-only, offline): list, show,
+//!   verify, trace, chapter, root, graph, rubric, calls, tamper. See
+//!   `agenthand evidence --help` and docs/EVIDENCE.md.
 
 use agenthand::assets::AssetStore;
 use agenthand::composite;
@@ -58,6 +62,7 @@ fn main() -> ExitCode {
         Some("measure") => run_measure(&args[2..]),
         Some("heic-extract") => run_heic_extract(&args[2..]),
         Some("room-run") => run_room_run(&args[2..]),
+        Some("evidence") => agenthand::evidence::run(&args[2..]),
         Some("verify") => {
             // Positionals plus the Python verifier's optional layer
             // files: --reconstruction LAYER [--plate PLATE].
@@ -115,7 +120,7 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             eprintln!(
-                "unknown subcommand {other:?} (expected: serve | parity | verify | measure | heic-extract | room-run)"
+                "unknown subcommand {other:?} (expected: serve | parity | verify | measure | heic-extract | room-run | evidence)"
             );
             ExitCode::from(2)
         }

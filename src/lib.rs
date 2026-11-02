@@ -25,6 +25,8 @@
 //!   accounting semantics).
 //! - `measure` — the prototype scale-card dimension estimator (not a
 //!   fourth tool).
+//! - `evidence` — the Proof Graph CLI (`agenthand evidence`): read-only
+//!   queries and re-checks over the evidence database (rusqlite).
 //! - `heic` — the from-scratch HEIC decoder (in progress; see
 //!   STATUS.md).
 
@@ -46,6 +48,7 @@ pub mod billing;
 pub mod composite;
 pub mod comps;
 pub mod config;
+pub mod evidence;
 pub mod heic;
 pub mod image;
 pub mod ingest;
