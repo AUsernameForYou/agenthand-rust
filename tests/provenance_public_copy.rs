@@ -287,3 +287,61 @@ fn png_public_copy_keeps_only_allowlisted_chunks() {
     // Pixels identical.
     assert_eq!(rgba(&copy).pixel_sha256(), rgba(&clean).pixel_sha256());
 }
+
+/// Review aaa44dc defect 6: the HDR colour chunks (cICP coding-independent
+/// code points, mDCv mastering display, cLLi content light level) are
+/// colour rendering, not provenance: without them an HDR public copy
+/// renders the wrong colour. They move across byte for byte; the
+/// metadata carriers still do not.
+#[test]
+fn png_public_copy_keeps_hdr_colour_chunks() {
+    let img = RgbaImage::solid(5, 3, [40, 80, 160, 255]);
+    let clean = encode_png_rgba(&img);
+    // BT.2020 primaries, PQ transfer, RGB matrix, full range.
+    let cicp = png_chunk(b"cICP", &[9, 16, 0, 1]);
+    let mut mdcv_payload = Vec::new();
+    for v in [35400u16, 14600, 8500, 39850, 6550, 2300, 15635, 16450] {
+        mdcv_payload.extend_from_slice(&v.to_be_bytes());
+    }
+    mdcv_payload.extend_from_slice(&10_000_000u32.to_be_bytes());
+    mdcv_payload.extend_from_slice(&1u32.to_be_bytes());
+    let mdcv = png_chunk(b"mDCv", &mdcv_payload);
+    let mut clli_payload = 10_000_000u32.to_be_bytes().to_vec();
+    clli_payload.extend_from_slice(&4_000_000u32.to_be_bytes());
+    let clli = png_chunk(b"cLLi", &clli_payload);
+    let mut dirty = clean[..33].to_vec();
+    dirty.extend_from_slice(&cicp);
+    dirty.extend_from_slice(&mdcv);
+    dirty.extend_from_slice(&clli);
+    dirty.extend_from_slice(&png_chunk(b"caBX", b"\0\0\0\x20jumbc2pa.manifest"));
+    dirty.extend_from_slice(&png_chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0"));
+    dirty.extend_from_slice(&png_chunk(b"tEXt", b"Comment\0shot at 45.5N 122.75W"));
+    dirty.extend_from_slice(&clean[33..]);
+
+    let (copy, kind) = metadata_free_public_copy(&dirty).unwrap();
+    assert_eq!(kind, "png");
+    let kinds = png_chunk_kinds(&copy);
+    for (name, chunk) in [("cICP", &cicp), ("mDCv", &mdcv), ("cLLi", &clli)] {
+        assert!(
+            contains(&copy, chunk),
+            "{name} must move across byte for byte (CRC included); chunks: {:?}",
+            kinds
+                .iter()
+                .map(|k| String::from_utf8_lossy(k).into_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+    for banned in [b"caBX", b"eXIf", b"tEXt"] {
+        assert!(
+            !kinds.contains(banned),
+            "chunk {} survived into the public copy",
+            String::from_utf8_lossy(banned)
+        );
+    }
+    assert!(!contains(&copy, b"45.5N") && !contains(&copy, b"jumb"));
+    // Order kept: the colour chunks sit after IHDR, before IDAT.
+    let at = |k: &[u8; 4]| kinds.iter().position(|x| x == k).unwrap();
+    assert!(at(b"IHDR") < at(b"cICP") && at(b"cICP") < at(b"mDCv"));
+    assert!(at(b"mDCv") < at(b"cLLi") && at(b"cLLi") < at(b"IDAT"));
+    assert_eq!(rgba(&copy).pixel_sha256(), rgba(&clean).pixel_sha256());
+}

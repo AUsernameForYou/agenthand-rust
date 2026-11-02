@@ -1427,13 +1427,15 @@ pub fn set_public_copy_unavailable(block: &mut Value, reason: &str) {
 // ---------------------------------------------------------------------------
 
 /// The PNG chunks a public copy keeps: image data and the colour /
-/// display chunks needed to render it as the original renders. An
-/// ALLOWLIST: every other chunk (C2PA caBX, eXIf, the tEXt / zTXt
-/// / iTXt text and XMP carriers, tIME, and any ancillary or
-/// private chunk we do not recognise) is dropped.
-const PNG_PUBLIC_COPY_CHUNKS: [&[u8; 4]; 12] = [
+/// display chunks needed to render it as the original renders,
+/// including the HDR colour chunks (cICP coding-independent code
+/// points, mDCv mastering display, cLLi content light level: colour
+/// rendering, not provenance). An ALLOWLIST: every other chunk (C2PA
+/// caBX, eXIf, the tEXt / zTXt / iTXt text and XMP carriers, tIME,
+/// and any ancillary or private chunk we do not recognise) is dropped.
+const PNG_PUBLIC_COPY_CHUNKS: [&[u8; 4]; 15] = [
     b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"cHRM", b"sRGB", b"iCCP", b"sBIT",
-    b"bKGD", b"pHYs",
+    b"bKGD", b"pHYs", b"cICP", b"mDCv", b"cLLi",
 ];
 
 /// Strip all metadata from a PNG: only allowlisted chunks
