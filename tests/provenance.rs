@@ -183,10 +183,12 @@ fn ingest_mints_public_copy_and_draw_receipt_carries_the_block() {
 
     // A chained foreground draws; the receipt republishes the
     // block and still verifies end to end.
+    // The foreground is the source photo's own pixels under the cut
+    // (the verifier checks foreground_matches_source for every marked
+    // receipt).
     let parent = AssetStore::parse_handle(&source_handle).unwrap();
-    let mut pixels = vec![0u8; 64 * 48 * 4];
+    let mut pixels = store.read_image(&source_handle).unwrap().pixels;
     for i in 0..(64 * 48) {
-        pixels[i * 4] = 200;
         pixels[i * 4 + 3] = if i % 3 == 0 { 255 } else { 0 };
     }
     let fg = RgbaImage::new(64, 48, pixels);

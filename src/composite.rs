@@ -33,14 +33,16 @@ pub const RECEIPT_SCHEMA_VERSION: i64 = 2;
 /// Receipt schemas this verifier grades (Item 11, cross-build
 /// verification). This build still ISSUES schema 2; it VERIFIES:
 ///
-/// - 2: this build's receipts (and the Python build before paper-fill);
+/// - 2: this build's receipts (and the Python build before paper-fill),
+///   graded on the shared core, which includes foreground authenticity
+///   against the source photo (`foreground_matches_source`, run for
+///   every marked receipt as Python runs it for every receipt);
 /// - 3: the Python build's paper-fill receipts (python `main`,
 ///   ff72fcb): schema 2 plus a REQUIRED `reconstruction` block. Graded
 ///   on the shared core plus the schema-3 checks: the block's shape
 ///   and arithmetic, the paper layer / region map hashes, the paper
 ///   recount with zero overlap under any foreground alpha, the region
-///   map partition, foreground authenticity against the source photo,
-///   and the whole-delivery recomposition (plate, then paper, then
+///   map partition, and the whole-delivery recomposition (plate, then paper, then
 ///   product, rebuilt from the stored layers);
 /// - 4: ASSUMED to be schema 3 plus additive fields only, graded
 ///   exactly as schema 3 (unknown extra fields are ignored, as they
@@ -2892,6 +2894,14 @@ pub fn verify_receipt_from_disk(
     );
 
     let source_image = store.read_image(&source_handle)?;
+    // Foreground authenticity against the source photo, in Python's
+    // position (after the coverage verdict). Python runs it for every
+    // receipt; this build runs it for every MARKED receipt (schema 2,
+    // 3 and 4). Unmarked v1 receipts are left as they were: the
+    // frozen replay receipt is graded on the fields it carries.
+    if receipt_schema_version(receipt).is_some() {
+        foreground_matches_source_check(&foreground, &source_image, &mut checks, &mut problems);
+    }
     let source_profile = source_image.color_profile_sha256();
     let output_profile = composite_image.color_profile_sha256();
     recomputed.insert("color_profile_source_sha256".into(), json!(source_profile));
@@ -2920,7 +2930,6 @@ pub fn verify_receipt_from_disk(
             receipt,
             block,
             &foreground,
-            &source_image,
             &composite_image,
             &mut checks,
             &mut problems,
@@ -2959,12 +2968,50 @@ fn measure_reconstruction(foreground: &RgbaImage, layer: &RgbaImage) -> (u64, u6
     (paper, overlap)
 }
 
+/// Python `foreground_matches_source`: every fully opaque foreground
+/// pixel equals the source photo's pixel. Fabricated product pixels
+/// under a valid lineage otherwise pass every other check: their own
+/// hashes are self-consistent and the composite-versus-foreground
+/// recount still reads 0 changed.
+fn foreground_matches_source_check(
+    foreground: &RgbaImage,
+    source_image: &RgbaImage,
+    checks: &mut Map<String, Value>,
+    problems: &mut Vec<String>,
+) {
+    let (ok, detail) =
+        if (foreground.width, foreground.height) != (source_image.width, source_image.height) {
+            (
+                false,
+                format!(
+                    "foreground is {}x{} but the source photo is {}x{}",
+                    foreground.width, foreground.height, source_image.width, source_image.height
+                ),
+            )
+        } else {
+            let same = foreground
+                .pixels
+                .chunks_exact(4)
+                .zip(source_image.pixels.chunks_exact(4))
+                .all(|(fg, src)| fg[3] != OPAQUE_ALPHA_THRESHOLD || fg == src);
+            (
+                same,
+                "the foreground differs from the source photo on fully opaque pixels; the \
+                 product layer is not the photograph it claims to be"
+                    .to_string(),
+            )
+        };
+    checks.insert("foreground_matches_source".to_string(), Value::Bool(ok));
+    if !ok {
+        problems.push(format!("foreground_matches_source: {detail}"));
+    }
+}
+
 /// The schema-3 pixel checks of the Python verifier (python `main`,
-/// ff72fcb), run only for schema 3+ receipts:
+/// ff72fcb), run only for schema 3+ receipts
+/// (`foreground_matches_source` used to live here; it now runs for
+/// every marked receipt, see [`foreground_matches_source_check`]):
 ///
-/// - `foreground_matches_source`: every fully opaque foreground pixel
-///   equals the source photo's pixel (fabricated product pixels under
-///   a valid lineage otherwise pass every other check);
 /// - `recount_reconstruction_pixels` / `recount_overlap_zero`: the
 ///   stored paper layer, recounted, holds the claimed paper and none
 ///   of it sits under any foreground alpha;
@@ -2981,7 +3028,6 @@ fn schema3_pixel_checks(
     receipt: &Value,
     block: &Map<String, Value>,
     foreground: &RgbaImage,
-    source_image: &RgbaImage,
     composite_image: &RgbaImage,
     checks: &mut Map<String, Value>,
     problems: &mut Vec<String>,
@@ -2993,30 +3039,6 @@ fn schema3_pixel_checks(
             problems.push(format!("{name}: {detail}"));
         }
     };
-
-    // Foreground authenticity against the source photo.
-    if (foreground.width, foreground.height) != (source_image.width, source_image.height) {
-        set_check(
-            "foreground_matches_source",
-            false,
-            &format!(
-                "foreground is {}x{} but the source photo is {}x{}",
-                foreground.width, foreground.height, source_image.width, source_image.height
-            ),
-        );
-    } else {
-        let same = foreground
-            .pixels
-            .chunks_exact(4)
-            .zip(source_image.pixels.chunks_exact(4))
-            .all(|(fg, src)| fg[3] != OPAQUE_ALPHA_THRESHOLD || fg == src);
-        set_check(
-            "foreground_matches_source",
-            same,
-            "the foreground differs from the source photo on fully opaque pixels; the \
-             product layer is not the photograph it claims to be",
-        );
-    }
 
     // Paper recounts and the region-map partition.
     let mut layer_image: Option<RgbaImage> = None;

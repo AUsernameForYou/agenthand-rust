@@ -54,14 +54,16 @@ fn build(width: u32, height: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> RgbaImage 
 
 /// Store with a source photo and a chained foreground whose mask
 /// comes from its alpha (draw's `foreground_alpha` path);
-/// returns (photo handle, foreground handle).
+/// returns (photo handle, foreground handle). The foreground is
+/// honest: the photo's own pixels under the cut's alpha, as cut_out
+/// produces it (the verifier checks `foreground_matches_source`).
 fn seeded_store_alpha_mask() -> (AssetStore, std::path::PathBuf, String, String) {
     let (store, dir) = temp_store();
     let photo = build(6, 4, |_, _| [90, 90, 90, 255]);
     let photo_handle = store.put_image(&photo, KIND_SOURCE, None).unwrap();
     let fg = build(6, 4, |x, _| match x {
-        0..=2 => [255, 0, 0, 255],
-        3 => [0, 255, 0, 128],
+        0..=2 => [90, 90, 90, 255],
+        3 => [90, 90, 90, 128],
         _ => [0, 0, 0, 0],
     });
     let parent = AssetStore::parse_handle(&photo_handle).unwrap();
@@ -89,7 +91,7 @@ fn seeded_store_mask_asset() -> (AssetStore, std::path::PathBuf, String) {
         .unwrap();
     let mask_id = AssetStore::parse_handle(&mask_handle).unwrap();
     let fg = build(6, 4, |x, _| match x {
-        0..=2 => [255, 0, 0, 255],
+        0..=2 => [90, 90, 90, 255],
         _ => [0, 0, 0, 0],
     });
     let fg_handle = store
@@ -351,4 +353,51 @@ fn foreground_profile_pin_is_graded() {
     assert!(report["checks"]
         .get("foreground_profile_matches_receipt")
         .is_none());
+}
+
+/// Python runs `foreground_matches_source` for every receipt it
+/// grades; this build ran it only for schema 3 and 4. A schema-2
+/// receipt over a FABRICATED foreground (opaque pixels that are not
+/// the source photo's, under a valid lineage, with self-consistent
+/// hashes) passed every other check. It must fail; an honest
+/// foreground (the photo's own pixels, alpha from the cut) passes.
+#[test]
+fn schema_2_foreground_must_match_source() {
+    // Fabricated: the product layer is red; the photo is grey.
+    let (store, _dir) = temp_store();
+    let photo = build(6, 4, |_, _| [90, 90, 90, 255]);
+    let photo_handle = store.put_image(&photo, KIND_SOURCE, None).unwrap();
+    let parent = AssetStore::parse_handle(&photo_handle).unwrap();
+    let fabricated = build(6, 4, |x, _| match x {
+        0..=2 => [255, 0, 0, 255],
+        _ => [0, 0, 0, 0],
+    });
+    let fg = store
+        .put_image(&fabricated, KIND_FOREGROUND, Some(&parent))
+        .unwrap();
+    let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
+    assert_eq!(receipt["receipt_schema"], json!(2));
+    assert_eq!(receipt["changed_opaque_pixels"], json!(0));
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+    assert_eq!(report["ok"], json!(false));
+    assert_eq!(report["checks"]["foreground_matches_source"], json!(false));
+    let problems: Vec<String> = report["problems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        problems,
+        vec!["foreground_matches_source: the foreground differs from the source photo on \
+              fully opaque pixels; the product layer is not the photograph it claims to be"
+            .to_string()]
+    );
+
+    // Honest: the photo's own pixels wherever the foreground is opaque.
+    let (store, _dir, _photo, fg) = seeded_store_alpha_mask();
+    let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
+    let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
+    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(report["checks"]["foreground_matches_source"], json!(true));
 }

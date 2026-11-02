@@ -146,17 +146,25 @@ impl Chain {
                 "error": {"code": self.cut_error_code.borrow().clone(), "message": "not in this photo", "cost_counted_usd": CUT_COST},
             }));
         }
+        // The photo's own pixels under the cut's alpha, as the real
+        // cut_out produces them: the verifier checks
+        // foreground_matches_source for every marked receipt.
+        let photo = self.store.read_image(handle)?;
         let mut pixels = vec![0u8; 48 * 36 * 4];
         for y in 0..36usize {
             for x in 0..48usize {
                 let i = (y * 48 + x) * 4;
-                pixels[i..i + 4].copy_from_slice(if x < 20 {
-                    &[200, 30, 30, 255]
+                let alpha = if x < 20 {
+                    255
                 } else if x == 20 {
-                    &[0, 200, 30, 128]
+                    128
                 } else {
-                    &[0, 0, 0, 0]
-                });
+                    0
+                };
+                if alpha > 0 {
+                    pixels[i..i + 3].copy_from_slice(&photo.pixels[i..i + 3]);
+                    pixels[i + 3] = alpha;
+                }
             }
         }
         let fg = self.store.put_image(

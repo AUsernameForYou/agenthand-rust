@@ -43,8 +43,8 @@ fn seeded_store() -> (AssetStore, std::path::PathBuf, String, String) {
     let photo = build(6, 4, |_, _| [90, 90, 90, 255]);
     let photo_handle = store.put_image(&photo, KIND_SOURCE, None).unwrap();
     let fg = build(6, 4, |x, _| match x {
-        0..=2 => [255, 0, 0, 255],
-        3 => [0, 255, 0, 128],
+        0..=2 => [90, 90, 90, 255],
+        3 => [90, 90, 90, 128],
         _ => [0, 0, 0, 0],
     });
     let parent = AssetStore::parse_handle(&photo_handle).unwrap();
@@ -169,7 +169,7 @@ fn legacy_receipt_without_mask_hashes_uses_mask_integrity() {
         .unwrap();
     let mask_id = AssetStore::parse_handle(&mask_handle).unwrap();
     let fg = build(6, 4, |x, _| match x {
-        0..=2 => [255, 0, 0, 255],
+        0..=2 => [90, 90, 90, 255],
         _ => [0, 0, 0, 0],
     });
     let fg_handle = store

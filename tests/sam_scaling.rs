@@ -135,7 +135,9 @@ fn draw_with_mask_bytes(
         .unwrap();
     let fg_handle = store
         .put_image(
-            &RgbaImage::solid(6, 4, [200, 30, 30, 255]),
+            // The source photo's own pixels: the verifier checks
+            // foreground_matches_source for every marked receipt.
+            &RgbaImage::solid(6, 4, [0, 0, 0, 255]),
             KIND_FOREGROUND,
             Some(&bare_id(&mask_handle)),
         )
