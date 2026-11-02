@@ -147,7 +147,9 @@ fn bracket_without_its_ring_refuses() {
             }
         }
     }
-    let profile = root().join("tests/fixtures/layout-profile.json");
+    // ahbig_2x was rendered from scaled-card-profiles.json (see
+    // expected.json); the printed-card profile's ring is 0.43x its ring.
+    let profile = root().join("tests/fixtures/scaled-card-profiles.json");
     let card = load_card_profile(&profile, "AH-BIG").unwrap();
     let frame = MeasureFrame::from_rgba(&img);
     match estimate(&frame, &card, "AH-BIG", None, None) {
@@ -210,7 +212,9 @@ fn auto_extent_touching_frame_edge_refuses() {
             img.pixels[i..i + 3].copy_from_slice(&[90, 150, 220]);
         }
     }
-    let profile = root().join("tests/fixtures/layout-profile.json");
+    // ahbig_2x was rendered from scaled-card-profiles.json (see
+    // expected.json); the printed-card profile's ring is 0.43x its ring.
+    let profile = root().join("tests/fixtures/scaled-card-profiles.json");
     let card = load_card_profile(&profile, "AH-BIG").unwrap();
     let frame = MeasureFrame::from_rgba(&img);
     match estimate(&frame, &card, "AH-BIG", None, None) {

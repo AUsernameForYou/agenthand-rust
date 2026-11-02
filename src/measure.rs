@@ -2316,11 +2316,12 @@ fn card_evidence(frame: &MeasureFrame, card: &CardProfile, H: &H3, n_ticks: usiz
 
     // Ring: cyan along circles about the ring centre. The radius is
     // searched (0.25-0.95 of the profile's outer radius) rather than
-    // taken from the profile, because the printed v4 cards carry a
-    // ring about 0.43x the profile's (outer radius ~15.8 mm on AH-BIG
-    // against the profile's 36.75 mm) while the synthetic battery
-    // renders the profile's ring; the centre agrees in both. Off-frame
-    // samples count as not cyan.
+    // taken from the profile. The printed ring's band is 0.62-1.0 of
+    // its outer radius; until 2026-11-02 the print profile carried a
+    // ring 2.33x the printed one (AH-BIG outer 36.75 mm against 15.79
+    // printed), and the synthetic battery is still rendered and
+    // checked with those radii (tests/fixtures/scaled-card-profiles.json),
+    // so the search covers both. Off-frame samples count as not cyan.
     let c = card.ring_centre_mm;
     let r_out = card.ring_outer_mm;
     let cyan_at =

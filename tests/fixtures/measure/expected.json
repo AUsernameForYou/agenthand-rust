@@ -35,7 +35,7 @@
       "_sheet_seed": true
     },
     "renderer_card_px": 412.9765625,
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "ah46_far2x": {
     "file": "ah46_far2x.png",
@@ -73,7 +73,7 @@
       "_sheet_seed": true
     },
     "renderer_card_px": 201.0829315185547,
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "ah42_close": {
     "file": "ah42_close.png",
@@ -514,7 +514,7 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_clean3": {
     "file": "tm_clean3.png",
@@ -551,7 +551,7 @@
     "seeds": {
       "_sheet_seed": true
     },
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_deg1": {
     "file": "tm_deg1.png",
@@ -589,7 +589,7 @@
       "_sheet_seed": false,
       "_hough_quad_seed": true
     },
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_deg2": {
     "file": "tm_deg2.png",
@@ -627,7 +627,7 @@
       "_sheet_seed": false,
       "_hough_quad_seed": true
     },
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_mask_path": {
     "file": "ah46_close.png",
@@ -664,7 +664,7 @@
       "_sheet_seed": true
     },
     "mask_file": "tm_mask.png",
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_bbox_path": {
     "file": "ah46_close.png",
@@ -707,7 +707,7 @@
       515.31201171875,
       368.2721252441406
     ],
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   },
   "tm_blank": {
     "file": "tm_blank.png",
@@ -719,6 +719,6 @@
     "outcome": "refused",
     "error": "Cyan ring not found; card not detectable.",
     "seeds": {},
-    "profile": "layout-profile.json"
+    "profile": "measure/rendered-layout-profile.json"
   }
 }

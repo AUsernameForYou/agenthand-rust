@@ -288,9 +288,14 @@
      63.51,
      69.5
     ],
-    "outer_radius_mm": 20.21,
-    "inner_radius_mm": 12.59,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 8.686,
+    "inner_radius_mm": 5.414,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 20.21,
+     "inner_radius_mm": 12.59,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 8.47,
@@ -590,9 +595,14 @@
      107.96,
      106.72
     ],
-    "outer_radius_mm": 34.36,
-    "inner_radius_mm": 21.41,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 14.766,
+    "inner_radius_mm": 9.204,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 34.36,
+     "inner_radius_mm": 21.41,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 14.39,
@@ -893,9 +903,14 @@
      76.2,
      29.63
     ],
-    "outer_radius_mm": 22.05,
-    "inner_radius_mm": 13.74,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 9.476,
+    "inner_radius_mm": 5.906,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 22.05,
+     "inner_radius_mm": 13.74,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 16.16,
@@ -1201,9 +1216,14 @@
      127.0,
      59.967
     ],
-    "outer_radius_mm": 36.75,
-    "inner_radius_mm": 22.9,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 15.793,
+    "inner_radius_mm": 9.844,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 36.75,
+     "inner_radius_mm": 22.9,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 26.933,
@@ -1515,9 +1535,14 @@
      38.1,
      14.815
     ],
-    "outer_radius_mm": 11.025,
-    "inner_radius_mm": 6.87,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 4.738,
+    "inner_radius_mm": 2.953,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 11.025,
+     "inner_radius_mm": 6.87,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 8.08,
@@ -1823,9 +1848,14 @@
      53.975,
      20.963
     ],
-    "outer_radius_mm": 15.6,
-    "inner_radius_mm": 9.721,
-    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)"
+    "outer_radius_mm": 6.704,
+    "inner_radius_mm": 4.179,
+    "spec": "3 arcs x 92.0 deg, 3 gaps x 28.0 deg, gaps centred at 90/210/330 deg (screen, clockwise from east)",
+    "radii_superseded_mm": {
+     "outer_radius_mm": 15.6,
+     "inner_radius_mm": 9.721,
+     "note": "2026-11-02 (CARDDETECT): these radii (191 / 119 canvas units) were never printed; the print master card-final.png measures 82.07 / 51.16 units (ray edge fit, sd 0.04 units). Centre unchanged (agrees to 0.1 unit)."
+    }
    },
    "lockup_block_mm": {
     "x": 11.497,
@@ -1845,5 +1875,6 @@
    ],
    "note": "Arm's-length card. Geometry is the estimator size-test fixture 'AH-42' verbatim: a uniform scale of AH-46 x0.7075 centred in the 4.25 x 2.83 in trim. NOT PRINTED (2026-10-27, Daniel): dropped from the family sheet at v4 \u2014 its working range overlaps the postcard AH-46 and it earns no distinct slot. The entry and the estimator fixtures stay on file as a tested size."
   }
- }
+ },
+ "ring_correction": "2026-11-02 (CARDDETECT): every card's ring radii corrected to the printed art (card-final.png, the AH-FAMILY v4 print master): outer 82.071, inner 51.155 canvas units x image.scale_mm_per_unit. The previous values were 2.33x the printed ring. Bracket frame, stroke and all 24 tick cuts already matched the print (within 1 canvas unit) and are unchanged. Mirror this in print/layout-profile.json."
 }

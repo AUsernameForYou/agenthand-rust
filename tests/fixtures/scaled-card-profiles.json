@@ -968,5 +968,6 @@
     ]
    }
   }
- }
+ },
+ "ring_note": "2026-11-02 (CARDDETECT): the ring radii here are the values the synthetic battery was rendered with (a full ring of outer radius 191 canvas units). The printed card's ring is 0.43x that (outer 82.07, inner 51.16 units; see layout-profile.json ring_correction). Bracket frame and ticks match the print. Keep these values: they describe the rendered fixtures, not the printed card."
 }
