@@ -7,10 +7,13 @@
 //! - `agenthand verify <source> <final> <mask>` — the standalone
 //!   file checker (port of `agenthand-verify`); exit 0/1.
 //! - `agenthand measure <image> <card> [--profile <path>]
-//!   [--bbox x,y,w,h]` — the scale-card size estimator (port of
-//!   `python -m agenthand.measure`); `<card>` is the id printed on the
-//!   card in the photo (e.g. `AH-57`), `--bbox` is x,y,w,h in source
-//!   pixels; JSON on stdout, errors as
+//!   [--bbox x,y,w,h] [--mask <png>] [--garment] [--mask-edge-px <px>]
+//!   [--diagram <out.png>] [--diagram-note <text>]` — the scale-card
+//!   size estimator (port of `python -m agenthand.measure`); `<card>`
+//!   is the id printed on the card in the photo (e.g. `AH-57`),
+//!   `--bbox` is x,y,w,h in source pixels, `--mask` the product mask
+//!   (same size as the photo); `--garment` adds tailor flat-lay
+//!   measurements (docs/MEASURE-GARMENT.md); JSON on stdout, errors as
 //!   `{"error": ...}` on stderr with exit 1.
 //! - `agenthand heic-extract <file> [--out <dir>] [--hash-only]` —
 //!   the rust-100 M1 HEIF container inspector/extractor: parses the
@@ -306,12 +309,25 @@ fn run_parity(package_dir: &Path) -> Result<bool, String> {
     Ok(pass)
 }
 
+const MEASURE_USAGE: &str = "usage: agenthand measure <image> <card> [--profile <path>] \
+     [--bbox x,y,w,h] [--mask <mask.png>] [--garment] [--mask-edge-px <px>] \
+     [--diagram <out.png>] [--diagram-note <text>]";
+
 /// Port of `python -m agenthand.measure`: estimate a flat object's
 /// size from a photo with an agenthand scale card in the same plane.
+/// `--mask` takes the product mask (8-bit, product = 255, same size as
+/// the photo) so extents come from the product itself; `--garment`
+/// adds the top-wear flat-lay measurements (needs `--mask`);
+/// `--diagram` draws them.
 fn run_measure(args: &[String]) -> ExitCode {
     let mut positional: Vec<&String> = Vec::new();
     let mut profile: Option<String> = None;
     let mut bbox: Option<(f64, f64, f64, f64)> = None;
+    let mut mask_path: Option<String> = None;
+    let mut garment = false;
+    let mut diagram: Option<String> = None;
+    let mut diagram_note: Option<String> = None;
+    let mut mask_edge_px: Option<f64> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -319,10 +335,33 @@ fn run_measure(args: &[String]) -> ExitCode {
                 i += 1;
                 profile = args.get(i).cloned();
             }
+            "--mask" => {
+                i += 1;
+                mask_path = args.get(i).cloned();
+            }
+            "--garment" => garment = true,
+            "--diagram" => {
+                i += 1;
+                diagram = args.get(i).cloned();
+            }
+            "--diagram-note" => {
+                i += 1;
+                diagram_note = args.get(i).cloned();
+            }
+            "--mask-edge-px" => {
+                i += 1;
+                match args.get(i).and_then(|v| v.parse::<f64>().ok()) {
+                    Some(v) if v > 0.0 && v.is_finite() => mask_edge_px = Some(v),
+                    _ => {
+                        eprintln!("--mask-edge-px must be a positive number of source pixels");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             "--bbox" => {
                 i += 1;
                 let Some(raw) = args.get(i) else {
-                    eprintln!("usage: agenthand measure <image> <card> [--profile <path>] [--bbox x,y,w,h]");
+                    eprintln!("{MEASURE_USAGE}");
                     return ExitCode::from(2);
                 };
                 let parts: Vec<f64> = raw
@@ -344,7 +383,7 @@ fn run_measure(args: &[String]) -> ExitCode {
         i += 1;
     }
     if positional.len() != 2 {
-        eprintln!("usage: agenthand measure <image> <card> [--profile <path>] [--bbox x,y,w,h]");
+        eprintln!("{MEASURE_USAGE}");
         return ExitCode::from(2);
     }
     let (source, card_id) = (positional[0].as_str(), positional[1].as_str());
@@ -385,14 +424,84 @@ fn run_measure(args: &[String]) -> ExitCode {
         Ok(c) => c,
         Err(e) => return fail(e),
     };
-    let frame = agenthand::measure::MeasureFrame::from_rgba(&img);
-    match agenthand::measure::estimate(&frame, &card, card_id, bbox, None) {
-        Ok(est) => {
-            println!("{}", est.to_json_pretty());
-            ExitCode::SUCCESS
-        }
-        Err(e) => fail(e),
+    if (garment || diagram.is_some()) && mask_path.is_none() {
+        eprintln!("--garment and --diagram need --mask (the garment's own pixels)");
+        return ExitCode::from(2);
     }
+    let mask: Option<Vec<u8>> = match &mask_path {
+        None => None,
+        Some(mp) => {
+            let decoded = match std::fs::read(mp)
+                .map_err(|e| e.to_string())
+                .and_then(|b| decode_image(&b))
+            {
+                Ok(d) => d.into_rgba(),
+                Err(_) => return fail(format!("Could not decode mask: {mp}")),
+            };
+            if decoded.width != img.width || decoded.height != img.height {
+                return fail(format!(
+                    "Mask is {}x{} but the photo is {}x{}: the mask must be the same size \
+                     as the photo, in the same orientation.",
+                    decoded.width, decoded.height, img.width, img.height
+                ));
+            }
+            // Product = 255 (8-bit L); anything >= 128 counts as product.
+            Some(
+                decoded
+                    .pixels
+                    .chunks_exact(4)
+                    .map(|p| if p[0] >= 128 { 255 } else { 0 })
+                    .collect(),
+            )
+        }
+    };
+    let frame = agenthand::measure::MeasureFrame::from_rgba(&img);
+    let (est, plane) = match agenthand::measure::estimate_with_plane(
+        &frame,
+        &card,
+        card_id,
+        bbox,
+        mask.as_deref(),
+    ) {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+    let mut out = est.to_json_pretty();
+    if garment || diagram.is_some() {
+        let mut opts = agenthand::measure_garment::GarmentOptions::default();
+        if let Some(e) = mask_edge_px {
+            opts.mask_edge_px = e;
+        }
+        let g = match agenthand::measure_garment::analyse(
+            frame.width,
+            frame.height,
+            mask.as_deref().unwrap_or(&[]),
+            &plane,
+            &opts,
+        ) {
+            Ok(g) => g,
+            Err(e) => return fail(e),
+        };
+        let mut block = g.to_json();
+        block["card_print_scale_assumed"] = json!(est.card_print_scale_assumed);
+        let pretty = serde_json::to_string_pretty(&block).unwrap_or_default();
+        let indented = pretty.replace('\n', "\n  ");
+        // Additive: the estimate's fields stay as they were; the garment
+        // block is appended as the last key.
+        if let Some(stripped) = out.strip_suffix("\n}") {
+            out = format!("{stripped},\n  \"garment\": {indented}\n}}");
+        }
+        if let Some(dp) = &diagram {
+            let png = agenthand::image::encode_png_rgba(
+                &agenthand::measure_garment::render_diagram(&g, card_id, diagram_note.as_deref()),
+            );
+            if let Err(e) = std::fs::write(dp, png) {
+                return fail(format!("Could not write diagram {dp}: {e}"));
+            }
+        }
+    }
+    println!("{out}");
+    ExitCode::SUCCESS
 }
 
 /// rust-100 M1: HEIF container inspection + `hvc1` item extraction.

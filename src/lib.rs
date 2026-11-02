@@ -55,6 +55,8 @@ pub mod ingest;
 pub mod ledger;
 pub mod market_pricing;
 pub mod measure;
+mod measure_font;
+pub mod measure_garment;
 pub mod meta;
 pub mod pricing;
 pub mod provenance;
