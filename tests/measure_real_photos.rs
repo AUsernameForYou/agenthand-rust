@@ -30,7 +30,7 @@
 //! JPEG (quality 85, no EXIF).
 
 use agenthand::image::decode_image;
-use agenthand::measure::{estimate, load_card_profile, MeasureFrame};
+use agenthand::measure::{detect_card, estimate, load_card_profile, MeasureFrame};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -165,12 +165,10 @@ fn bracket_without_its_ring_refuses() {
     }
 }
 
-/// Full-resolution frames that are not in the repo (run on the Mac):
-/// AGENTHAND_MEASURE_IMG_1491=<IMG_1491.HEIC or source.jpg> and
-/// AGENTHAND_MEASURE_IMG_1405=<IMG_1405 640-px intake preview>.
-/// Both earlier "acceptances" were phantom fits (1491: every fit
-/// candidate sits on the jacket front, the anchor is denim; 1405: a
-/// 278-px "card" in a 640-px yard-wide frame), so both must refuse.
+/// Frames that are not in the repo (run on the Mac):
+/// AGENTHAND_MEASURE_IMG_1405=<IMG_1405 640-px intake preview>. Its
+/// earlier "acceptance" was a phantom fit (a 278-px "card" in a 640-px
+/// yard-wide frame), so it must refuse.
 fn env_case(var: &str, card_id: &str) {
     let Some(path) = std::env::var_os(var) else {
         println!("{var} not set; skipped");
@@ -181,10 +179,72 @@ fn env_case(var: &str, card_id: &str) {
     assert_known_refusal(&err);
 }
 
+/// IMG_1491: Daniel's AH-BIG print lies flat on the floor beside a
+/// denim jacket, turned a quarter, on an untrimmed sheet. Every earlier
+/// "acceptance" of this photo (both builds) was a phantom fit on the
+/// jacket front, anchored at the centroid of all cyan (the denim); the
+/// card itself was never fitted. Seeded from its ring, the card must be
+/// found WHERE IT LIES: every fitted frame corner on the printed sheet.
+/// `sheet` is the sheet's image box (x0, y0, x1, y1), `jacket` the
+/// jacket's bbox (x, y, w, h).
+fn assert_1491_on_the_card(path: &Path, sheet: [f64; 4], jacket: (f64, f64, f64, f64)) {
+    let profile = root().join("tests/fixtures/layout-profile.json");
+    let card = load_card_profile(&profile, "AH-BIG").unwrap();
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let frame = MeasureFrame::from_rgba(&decode_image(&bytes).unwrap().into_rgba());
+    let det = detect_card(&frame, &card)
+        .unwrap_or_else(|e| panic!("{}: printed card refused: {e}", path.display()));
+    for q in det.quad {
+        assert!(
+            q[0] >= sheet[0] && q[0] <= sheet[2] && q[1] >= sheet[1] && q[1] <= sheet[3],
+            "fitted frame corner ({:.0}, {:.0}) is off the printed sheet {sheet:?}",
+            q[0],
+            q[1]
+        );
+    }
+    assert!(det.tick_pairs.len() >= 18, "ticks {}", det.tick_pairs.len());
+    let est = estimate(&frame, &card, "AH-BIG", Some(jacket), None)
+        .unwrap_or_else(|e| panic!("{}: boxed estimate refused: {e}", path.display()));
+    println!(
+        "{}: {} (ticks {}, card {} px, rms {}, print scale assumed {})",
+        path.display(),
+        est.display,
+        est.ticks_matched,
+        est.card_width_px,
+        est.reprojection_rms_px,
+        est.card_print_scale_assumed
+    );
+}
+
+/// The 1600 x 1200 film copy (film/v8/html/bg/jacket1491_src.jpg, byte
+/// for byte: JFIF only, no EXIF; turned upright from the 4284 x 5712
+/// original). Sheet at x 700-905, y 665-808; the jacket bbox is the
+/// cut_out (SAM) mask box of the original, mapped into this frame.
+#[test]
+fn jacket_1600_1491_accepts_on_the_printed_card() {
+    assert_1491_on_the_card(
+        &root().join("tests/fixtures/measure/real/IMG_1491_1600.jpg"),
+        [695.0, 660.0, 910.0, 815.0],
+        (31.0, 55.0, 1518.0, 584.0),
+    );
+}
+
+/// Full resolution: AGENTHAND_MEASURE_IMG_1491=<IMG_1491.HEIC decoded
+/// upright, or P18/reshoot-2026-11-01/source.jpg> (4284 x 5712; sheet
+/// at x 1389-1926, y 2491-3217; jacket bbox from cut_out's mask review
+/// [2003, 110, 4089, 5531]).
 #[test]
 #[ignore = "needs AGENTHAND_MEASURE_IMG_1491 (full-res photo, not in the repo)"]
-fn jacket_full_res_1491_refuses() {
-    env_case("AGENTHAND_MEASURE_IMG_1491", "AH-BIG");
+fn jacket_full_res_1491_accepts_on_the_printed_card() {
+    let Some(path) = std::env::var_os("AGENTHAND_MEASURE_IMG_1491") else {
+        println!("AGENTHAND_MEASURE_IMG_1491 not set; skipped");
+        return;
+    };
+    assert_1491_on_the_card(
+        Path::new(&path),
+        [1380.0, 2480.0, 1935.0, 3225.0],
+        (2003.0, 110.0, 2087.0, 5422.0),
+    );
 }
 
 #[test]
