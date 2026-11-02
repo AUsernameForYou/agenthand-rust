@@ -4,6 +4,13 @@
 //! Reservations are written before the call runs; a call that raises
 //! leaves its reservation counted (money that may have been spent is
 //! treated as spent).
+//!
+//! One cap, all spend (fix pass F4): every reservation and settle goes
+//! to the CUMULATIVE store (`config::get_ledger_store`), and the cap is
+//! checked there. When `AGENTHAND_LEDGER_PATH` names a mirror ledger
+//! (the room runner's `<room>/ledger.jsonl`), each row is ALSO
+//! appended to that JSONL file, so a room's own spend stays readable
+//! from its directory without the room ever owning the cap.
 
 use crate::config;
 use crate::ledger::{self, Receipt, PHASE_PENDING, PHASE_SETTLED};
@@ -51,6 +58,26 @@ fn lock_file() -> Result<std::fs::File, String> {
     Ok(fh)
 }
 
+/// The mirror ledger for this call, if any: `AGENTHAND_LEDGER_PATH`,
+/// unless it names the cumulative store's own file (a row is never
+/// written twice to one ledger).
+fn mirror_ledger(store: &config::LedgerStore) -> Option<std::path::PathBuf> {
+    let mirror = config::get_mirror_ledger_path()?;
+    let store_path = match store {
+        config::LedgerStore::Jsonl(p) | config::LedgerStore::Sqlite(p) => p,
+    };
+    let same = &mirror == store_path
+        || matches!(
+            (mirror.canonicalize(), store_path.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        );
+    if same {
+        None
+    } else {
+        Some(mirror)
+    }
+}
+
 /// Run one billable call under the spend cap. `f` performs the call
 /// and returns its usage; errors propagate with the reservation left
 /// counted. The caller supplies the call_id (the Python passes it via
@@ -83,6 +110,7 @@ where
     let cap_usd = config::get_total_spend_cap_usd()?;
     let call_id = call_id.to_string();
     let store = config::get_ledger_store()?;
+    let mirror = mirror_ledger(&store);
 
     // Reserve: check + append pending, atomically — under the file
     // lock for the JSONL store, inside one IMMEDIATE transaction for
@@ -98,9 +126,16 @@ where
                 let _lock = lock_file()?;
                 ledger::check_spend_cap(ledger_path, projected_usd, cap_usd)?;
                 ledger::append_receipt(ledger_path, &receipt)?;
+                if let Some(mirror) = &mirror {
+                    ledger::append_receipt(mirror, &receipt)?;
+                }
             }
             config::LedgerStore::Sqlite(ledger_path) => {
                 crate::sqlledger::reserve(ledger_path, &receipt, cap_usd)?;
+                if let Some(mirror) = &mirror {
+                    let _lock = lock_file()?;
+                    ledger::append_receipt(mirror, &receipt)?;
+                }
             }
         }
     }
@@ -127,11 +162,18 @@ where
             config::LedgerStore::Jsonl(ledger_path) => {
                 let _lock = lock_file()?;
                 ledger::append_receipt(ledger_path, &receipt)?;
+                if let Some(mirror) = &mirror {
+                    ledger::append_receipt(mirror, &receipt)?;
+                }
                 // Keep the lock file from looking stale to other tools.
                 let _ = std::io::stdout().flush();
             }
             config::LedgerStore::Sqlite(ledger_path) => {
                 crate::sqlledger::append_receipt(ledger_path, &receipt)?;
+                if let Some(mirror) = &mirror {
+                    let _lock = lock_file()?;
+                    ledger::append_receipt(mirror, &receipt)?;
+                }
             }
         }
     }

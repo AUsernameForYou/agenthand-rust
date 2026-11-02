@@ -65,17 +65,34 @@ fn shellexpand_home(path: &str) -> String {
     path.to_string()
 }
 
-/// Path of the JSONL ledger inside the data dir.
+/// The JSONL ledger this context reads its own receipts from:
+/// `AGENTHAND_LEDGER_PATH` when set and non-empty (the room runner
+/// points it at the room's own ledger for the duration of a run, and
+/// `billing::billed_call` mirrors every row into it — see
+/// [`get_mirror_ledger_path`]), otherwise the data dir's
+/// `ledger.jsonl`. This is NOT where the spend cap is checked: the
+/// cap always runs against the cumulative store
+/// ([`get_ledger_store`]).
 pub fn get_ledger_path() -> PathBuf {
-    // Mirror of the Python config: AGENTHAND_LEDGER_PATH, when set and
-    // non-empty, wins outright (the room runner points it at the room's
-    // own ledger for the duration of a run); otherwise the ledger lives
-    // in the data dir.
+    get_mirror_ledger_path().unwrap_or_else(|| get_data_dir().join("ledger.jsonl"))
+}
+
+/// The mirror ledger (fix pass F4): `AGENTHAND_LEDGER_PATH`, when set
+/// and non-empty, names a JSONL file that `billing::billed_call`
+/// copies every pending and settled row into, IN ADDITION to the
+/// cumulative store. The room runner points it at the room's own
+/// ledger, so a run's cost stays provable from the room directory
+/// alone (room totals read back from that file), while every
+/// reservation is checked against the one cumulative ledger, so the
+/// cap cannot reset per run. Before F4 this variable REPLACED the
+/// JSONL store's path, which let each room run start at $0.
+pub fn get_mirror_ledger_path() -> Option<PathBuf> {
     let raw = env_trimmed("AGENTHAND_LEDGER_PATH");
-    if !raw.is_empty() {
-        return PathBuf::from(shellexpand_home(&raw));
+    if raw.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(shellexpand_home(&raw)))
     }
-    get_data_dir().join("ledger.jsonl")
 }
 
 /// Which ledger store `billing::billed_call` writes to, selected by
@@ -89,16 +106,19 @@ pub fn get_ledger_path() -> PathBuf {
 /// An unrecognized value is an error: a store we cannot identify
 /// must stop spend, not silently pick one.
 ///
-/// Precedence between the two ledger knobs (consolidation, tracker
-/// event 166): they are orthogonal. `AGENTHAND_LEDGER` selects the
-/// store; `AGENTHAND_LEDGER_PATH` (see `get_ledger_path`) overrides
-/// the path of the JSONL store only — it does not relocate the
-/// SQLite store, whose path comes from the data dir or an explicit
-/// `sqlite:<path>`. The room runner rides on the path override with
-/// its selected store: it pins `AGENTHAND_LEDGER=jsonl` plus
-/// `AGENTHAND_LEDGER_PATH=<room>/ledger.jsonl` for the run's
-/// duration, so a room run's isolated ledger is unaffected by the
-/// server's shipped SQLite default.
+/// The selected store is the CUMULATIVE ledger: every billed call,
+/// room runs included, reserves and settles there, so the spend cap
+/// is checked against all spend, never against one run's slice.
+///
+/// Relation to `AGENTHAND_LEDGER_PATH` (fix pass F4): that variable
+/// no longer relocates any store. It names a mirror JSONL file that
+/// receives a copy of every row (see `get_mirror_ledger_path`); the
+/// room runner pins it to `<room>/ledger.jsonl` so room totals stay
+/// readable from the room directory. A plain `jsonl` selection means
+/// the data dir's `ledger.jsonl`; use `jsonl:<path>` to move the
+/// cumulative JSONL ledger elsewhere. (Before F4 the room runner also
+/// pinned `AGENTHAND_LEDGER=jsonl` with the path override, so every
+/// run spent against its own fresh ledger and the cap reset per run.)
 pub enum LedgerStore {
     Jsonl(PathBuf),
     Sqlite(PathBuf),
@@ -112,7 +132,7 @@ pub fn get_ledger_store() -> Result<LedgerStore, String> {
         return Ok(LedgerStore::Sqlite(get_data_dir().join("ledger.sqlite3")));
     }
     if raw == "jsonl" {
-        return Ok(LedgerStore::Jsonl(get_ledger_path()));
+        return Ok(LedgerStore::Jsonl(get_data_dir().join("ledger.jsonl")));
     }
     if let Some(path) = raw.strip_prefix("jsonl:") {
         if path.trim().is_empty() {

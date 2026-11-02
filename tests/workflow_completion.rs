@@ -328,9 +328,28 @@ fn wav_file(path: &Path, seconds: f64, rate: u32, peak: f64) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Fix pass F4: narration is billed through the CUMULATIVE ledger in
+/// the data dir. Point the data dir at a per-process scratch folder
+/// unless it already points into the temp dir, so no test row ever
+/// reaches a real ledger (including one named by an exported
+/// AGENTHAND_DATA_DIR).
+fn scratch_data_dir() {
+    let tmp = std::env::temp_dir();
+    let already_scratch = std::env::var_os("AGENTHAND_DATA_DIR")
+        .map(|v| std::path::PathBuf::from(v).starts_with(&tmp))
+        .unwrap_or(false);
+    if !already_scratch {
+        std::env::set_var(
+            "AGENTHAND_DATA_DIR",
+            tmp.join(format!("agenthand-test-data-{}", std::process::id())),
+        );
+    }
+}
+
 #[test]
 fn narration_items_merge_with_origins_and_refutation() {
     let _guard = env_lock();
+    scratch_data_dir();
     let root = temp_root("origins");
     let photos = vec![photo(&root, "room.png", [120, 60, 20, 255])];
     let chain = Chain::new(&root, plan("air purifier"), None, &["filter", "suitcase"]);
@@ -684,6 +703,7 @@ fn no_comps_run_manifest_shape() {
 #[test]
 fn mentioned_refutation_forces_no_match_but_named_keeps_probe_code() {
     let _guard = env_lock();
+    scratch_data_dir();
     let root = temp_root("forced");
     let photos = vec![photo(&root, "room.png", [120, 60, 20, 255])];
     let chain = Chain::new(&root, plan("air purifier"), None, &[]);

@@ -922,9 +922,13 @@ fn default_verifier_reproves_a_real_draw() {
 }
 
 // ---------------------------------------------------------------------------
-// Ledger isolation: a room run's receipts land in its own ledger
-// (default <out>/ledger.jsonl); the configured (cumulative) ledger is
-// never touched, and the manifest total is the room ledger's.
+// Room ledger: a room run's receipts are mirrored into its own ledger
+// (default <out>/ledger.jsonl) and the manifest total is the room
+// ledger's; the caller's AGENTHAND_LEDGER_PATH is restored afterwards.
+// (Since fix pass F4, billed_call ALSO reserves and settles in the
+// cumulative store, where the spend cap lives; see
+// room_run_narration_is_capped_by_the_cumulative_ledger below and
+// tests/billing_cap.rs.)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1359,11 +1363,30 @@ const NARRATION_REPLY: &str = "TRANSCRIPT\n\
     MENTIONED\n\
     suitcase\n";
 
+/// Fix pass F4: narration is billed through the CUMULATIVE ledger in
+/// the data dir. Point the data dir at a per-process scratch folder
+/// unless it already points into the temp dir, so no test row ever
+/// reaches a real ledger (including one named by an exported
+/// AGENTHAND_DATA_DIR).
+fn scratch_data_dir() {
+    let tmp = std::env::temp_dir();
+    let already_scratch = std::env::var_os("AGENTHAND_DATA_DIR")
+        .map(|v| std::path::PathBuf::from(v).starts_with(&tmp))
+        .unwrap_or(false);
+    if !already_scratch {
+        std::env::set_var(
+            "AGENTHAND_DATA_DIR",
+            tmp.join(format!("agenthand-test-data-{}", std::process::id())),
+        );
+    }
+}
+
 fn narrated_opts(
     fake: &Rc<FakeChain>,
     data_dir: &Path,
     narration: &Rc<FakeNarration>,
 ) -> RoomRunOptions {
+    scratch_data_dir();
     let mut opts = base_opts(fake, data_dir);
     opts.narration_fn = Some(narration.as_fn());
     opts
@@ -2618,4 +2641,67 @@ fn unreported_narration_usage_settles_at_the_projection() {
         1.0,
     );
     assert_eq!((reported.input_tokens, reported.output_tokens), (1000, 500));
+}
+
+/// F4: a room run's own ledger is a mirror, never the cap. Spend
+/// already in the operator's cumulative ledger (the shipped SQLite
+/// default) counts against the cap inside the run: $0.95 spent under
+/// a $1.00 cap leaves no room for the narration's ~$0.07 projection,
+/// even though the room's own ledger starts empty.
+#[test]
+fn room_run_narration_is_capped_by_the_cumulative_ledger() {
+    let _guard = env_lock();
+    let root = temp_root("shared-cap");
+    let data_dir = root.join("data");
+    let photos = vec![photo(&root, "purifier.png", [120, 60, 20, 255])];
+    let audio = wav_file(&root.join("walk.wav"), 1.0, 8000, 0.5);
+    let narration = FakeNarration::new(NARRATION_REPLY);
+    let out = root.join("out");
+    let manifest = with_env(
+        &[
+            ("AGENTHAND_DATA_DIR", Some(data_dir.as_os_str())),
+            ("AGENTHAND_LEDGER", None),
+            ("AGENTHAND_LEDGER_PATH", None),
+            (
+                "AGENTHAND_TOTAL_SPEND_CAP_USD",
+                Some(std::ffi::OsStr::new("1.00")),
+            ),
+        ],
+        || {
+            agenthand::billing::billed_call(
+                "draw",
+                Some("muse-image-1.0"),
+                0.95,
+                "ok",
+                "",
+                "earlier-spend",
+                || {
+                    Ok(agenthand::pricing::Usage {
+                        images: 95,
+                        ..Default::default()
+                    })
+                },
+            )
+            .unwrap();
+            let fake = FakeChain::new(
+                &root,
+                vec![plan("air purifier")],
+                contents(&[((0, "filter"), "filter1")]),
+            );
+            let mut opts = narrated_opts(&fake, &root, &narration);
+            opts.narrated_audios = vec![audio.clone()];
+            run_room(&photos, &[], &out, opts).unwrap()
+        },
+    );
+    let record = &manifest["narration"]["files"][0];
+    assert_eq!(record["error"]["code"], "SPEND_CAP_REFUSED", "{record}");
+    assert!(narration.calls.borrow().is_empty(), "no Baseten call over the cap");
+    // The cap ledger is the cumulative one; the room ledger holds no
+    // narration row (refused before the reservation was written).
+    let cumulative =
+        agenthand::sqlledger::ledger_total_usd(&data_dir.join("ledger.sqlite3")).unwrap();
+    assert!((cumulative - 0.95).abs() < 1e-9, "cumulative {cumulative}");
+    assert!(ledger_rows(&out.join("ledger.jsonl"))
+        .iter()
+        .all(|r| r["tool"] != "narration"));
 }

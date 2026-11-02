@@ -257,8 +257,27 @@ fn verify_ok() -> VerifyFn {
     })
 }
 
+/// Fix pass F4: narration is billed through the CUMULATIVE ledger in
+/// the data dir. Point the data dir at a per-process scratch folder
+/// unless it already points into the temp dir, so no test row ever
+/// reaches a real ledger (including one named by an exported
+/// AGENTHAND_DATA_DIR).
+fn scratch_data_dir() {
+    let tmp = std::env::temp_dir();
+    let already_scratch = std::env::var_os("AGENTHAND_DATA_DIR")
+        .map(|v| std::path::PathBuf::from(v).starts_with(&tmp))
+        .unwrap_or(false);
+    if !already_scratch {
+        std::env::set_var(
+            "AGENTHAND_DATA_DIR",
+            tmp.join(format!("agenthand-test-data-{}", std::process::id())),
+        );
+    }
+}
+
 #[test]
 fn narrated_run_with_sell_keep_mentioned_and_no_match() {
+    scratch_data_dir();
     let root = temp_root("room");
     let photos = vec![
         photo(&root, "bike.png", [200, 60, 60, 255], false),
@@ -482,6 +501,7 @@ fn gps_photo(dir: &Path, name: &str, color: [u8; 4]) -> PathBuf {
 /// while the record still verifies 0 changed.
 #[test]
 fn keep_run_with_gps_photo_carries_provenance_and_mints_public_copy() {
+    scratch_data_dir();
     let root = temp_root("gps");
     let photos = vec![gps_photo(&root, "garage.png", [60, 200, 120, 255])];
     let wav = narration_wav(&root);

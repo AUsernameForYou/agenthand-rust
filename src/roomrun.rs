@@ -4515,27 +4515,24 @@ pub fn run_room(
         let uuid = uuid::Uuid::new_v4().simple().to_string();
         format!("room-{}", &uuid[..8])
     });
-    // The room spends against its OWN ledger: the run's cost must be
-    // provable from the room directory alone, and a room run must
-    // never move the operator's cumulative production ledger.
+    // The room's cost stays provable from the room directory alone:
+    // every billed call during the run is MIRRORED into the room's
+    // own JSONL ledger (AGENTHAND_LEDGER_PATH, pinned here for the
+    // run's duration and restored afterwards), and the run's totals
+    // are read back from that file (Python parity).
     //
-    // Ledger-knob precedence (consolidation, tracker event 166):
-    // `AGENTHAND_LEDGER` selects the store and `AGENTHAND_LEDGER_PATH`
-    // overrides the JSONL store's path — the two are orthogonal. The
-    // room ledger is an isolated JSONL file by design (Python parity:
-    // the run's totals are read back from that file), so the run pins
-    // BOTH knobs for its duration: the store selection to `jsonl`
-    // (otherwise the shipped SQLite default would resolve to the
-    // data-dir ledger and the path override would not apply) and the
-    // path to the room's own file. Both are restored afterwards.
+    // The spend cap is NOT the room's (fix pass F4): reservations and
+    // settles always go to the operator's cumulative store, whatever
+    // `AGENTHAND_LEDGER` selects, so the cap sees every run's spend.
+    // Before F4 the run also pinned `AGENTHAND_LEDGER=jsonl`, which
+    // made the room file the ONLY ledger and reset the cap to $0 on
+    // every run ($0.90 + $0.90 passed a $1.00 cap). That pin is gone.
     let room_ledger = opts
         .ledger_path
         .clone()
         .unwrap_or_else(|| out_dir.join("ledger.jsonl"));
     let previous = std::env::var_os("AGENTHAND_LEDGER_PATH");
     std::env::set_var("AGENTHAND_LEDGER_PATH", &room_ledger);
-    let previous_store = std::env::var_os("AGENTHAND_LEDGER");
-    std::env::set_var("AGENTHAND_LEDGER", "jsonl");
     let result = run_room_body(
         still_paths,
         video_paths,
@@ -4548,10 +4545,6 @@ pub fn run_room(
     match previous {
         Some(value) => std::env::set_var("AGENTHAND_LEDGER_PATH", value),
         None => std::env::remove_var("AGENTHAND_LEDGER_PATH"),
-    }
-    match previous_store {
-        Some(value) => std::env::set_var("AGENTHAND_LEDGER", value),
-        None => std::env::remove_var("AGENTHAND_LEDGER"),
     }
     result
 }
