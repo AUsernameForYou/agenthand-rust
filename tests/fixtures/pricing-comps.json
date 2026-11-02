@@ -1,0 +1,777 @@
+{
+  "generated": "2026-11-01",
+  "source": "Facebook Marketplace via facebook-cli",
+  "method": "suggested/recommended = median of cleaned comps; range = min-max span of cleaned comps (possible prices); percentile_band = 25th-75th percentile (linear interpolation); confidence: high if n>=10 and (p75-p25)/median<=0.8, medium if n>=6 and ratio<=1.3, else low",
+  "categories": [
+    {
+      "key": "kids_bmx_bike",
+      "item": "Kids 20-inch BMX bike (Haro Shredder kids blue BMX)",
+      "queries": [
+        "Haro kids bike",
+        "kids BMX bike 20 inch"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "Haro SE racing kids bike",
+          "price": 125,
+          "location": "Gresham, OR",
+          "listing_id": "1528879582682918"
+        },
+        {
+          "title": "Haro Shredder 12\u201d Kids Bike",
+          "price": 80,
+          "location": "Vancouver, WA",
+          "listing_id": "1080062685029484"
+        },
+        {
+          "title": "Ninebot Kids Bike 18\"",
+          "price": 115,
+          "location": "Beaverton, OR",
+          "listing_id": "925956020452692"
+        },
+        {
+          "title": "Kids Bike",
+          "price": 75,
+          "location": "Portland, OR",
+          "listing_id": "1601293128437197"
+        },
+        {
+          "title": "Schwinn Fernite Kids Bike 20\u201d",
+          "price": 35,
+          "location": "Portland, OR",
+          "listing_id": "4538144349847642"
+        },
+        {
+          "title": "Kids Electra Cruiser Bike",
+          "price": 30,
+          "location": "Happy Valley, OR",
+          "listing_id": "1067486499639859"
+        },
+        {
+          "title": "Kent Terra 2.0 ATB20 Mountain Bike",
+          "price": 50,
+          "location": "Beaverton, OR",
+          "listing_id": "1013147948482867"
+        },
+        {
+          "title": "RoyalBaby Freestyle Kids Bike with training wheels",
+          "price": 44,
+          "location": "Vancouver, WA",
+          "listing_id": "2056286295068785"
+        },
+        {
+          "title": "GT Berm BMX Bike 20in Wheels",
+          "price": 45,
+          "location": "Washougal, WA",
+          "listing_id": "1562595515552403"
+        }
+      ],
+      "stats": {
+        "count": 9,
+        "min": 30,
+        "p25": 44,
+        "median": 50,
+        "p75": 80,
+        "max": 125
+      },
+      "recommended": 50,
+      "suggested": 50,
+      "range": [
+        30,
+        125
+      ],
+      "percentile_band": [
+        44,
+        80
+      ],
+      "confidence": "medium",
+      "dropped": 15,
+      "total_unique_results": 24,
+      "drop_reasons": "Out-of-area results Facebook returned past the 25 mi radius; adult 24-26 inch mountain bikes and a women's mountain bike (wrong size/type); duplicate listings across the two queries."
+    },
+    {
+      "key": "white_kids_bike",
+      "item": "White kids bike (P12 second bike)",
+      "queries": [
+        "kids bike white"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "GT Siren Kids Bike",
+          "price": 25,
+          "location": "Happy Valley, OR",
+          "listing_id": "1438080117682519"
+        },
+        {
+          "title": "RoyalBaby Freestyle Kids Bike with training wheels",
+          "price": 44,
+          "location": "Vancouver, WA",
+          "listing_id": "2056286295068785"
+        },
+        {
+          "title": "16\" Kids Bike",
+          "price": 55,
+          "location": "Portland, OR",
+          "listing_id": "1727703884955433"
+        },
+        {
+          "title": "Pink and white Kids 20\u201d bike",
+          "price": 20,
+          "location": "Oregon City, OR",
+          "listing_id": "1253789170280375"
+        },
+        {
+          "title": "Kids bike 14\u201d with training wheels",
+          "price": 30,
+          "location": "Aurora, OR",
+          "listing_id": "2007266736606452"
+        },
+        {
+          "title": "Pacific Cloud Dancer Kids' Bike",
+          "price": 25,
+          "location": "Camas, WA",
+          "listing_id": "2124294888179075"
+        },
+        {
+          "title": "Hot Wheels Kids Bike",
+          "price": 20,
+          "location": "Portland, OR",
+          "listing_id": "1082251324440630"
+        }
+      ],
+      "stats": {
+        "count": 7,
+        "min": 20,
+        "p25": 22.5,
+        "median": 25,
+        "p75": 37,
+        "max": 55
+      },
+      "recommended": 25,
+      "suggested": 25,
+      "range": [
+        20,
+        55
+      ],
+      "percentile_band": [
+        22.5,
+        37
+      ],
+      "confidence": "medium",
+      "dropped": 8,
+      "total_unique_results": 15,
+      "drop_reasons": "Balance bikes and a tricycle (not pedal bikes); out-of-area results. Color note: only two kept comps are verifiably white or part-white (see MD)."
+    },
+    {
+      "key": "patio_set",
+      "item": "Outdoor patio furniture set with chairs",
+      "queries": [
+        "patio furniture set",
+        "outdoor patio set"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "6-Piece Outdoor Patio Dining Set \u2013 Great for Entertaining!",
+          "price": 125,
+          "location": "Camas, WA",
+          "listing_id": "968786139635577"
+        },
+        {
+          "title": "5-Piece Outdoor Patio Dining Set with Glass Top Table and 4 Sling Chairs",
+          "price": 40,
+          "location": "Portland, OR",
+          "listing_id": "1762165378381152"
+        },
+        {
+          "title": "5-Piece Tile Top Patio Dining Set",
+          "price": 45,
+          "location": "Portland, OR",
+          "listing_id": "2179726235974694"
+        },
+        {
+          "title": "7- piece outdoor wicker sectional + rain cover",
+          "price": 450,
+          "location": "Portland, OR",
+          "listing_id": "1793336975295847"
+        },
+        {
+          "title": "3-Piece Wicker Patio Set with Swivel Rocker Chairs & Covers",
+          "price": 200,
+          "location": "Beaverton, OR",
+          "listing_id": "2208405453438120"
+        },
+        {
+          "title": "Heavy Backyard / Patio / Deck Furniture Set",
+          "price": 300,
+          "location": "Washougal, WA",
+          "listing_id": "1746245826466669"
+        },
+        {
+          "title": "Outdoor patio set",
+          "price": 100,
+          "location": "Portland, OR",
+          "listing_id": "1488430283191218"
+        },
+        {
+          "title": "Outdoor Dining Table Set with Umbrella",
+          "price": 260,
+          "location": "Camas, WA",
+          "listing_id": "1100079239409169"
+        },
+        {
+          "title": "60x60 Outdoor Firepit Table set + 4 Matching Chairs",
+          "price": 400,
+          "location": "Portland, OR",
+          "listing_id": "1590203736186992"
+        },
+        {
+          "title": "6-Piece Wicker Patio Furniture Set",
+          "price": 75,
+          "location": "Happy Valley, OR",
+          "listing_id": "989372323435909"
+        },
+        {
+          "title": "Outdoor patio set barrel propane fire pit table and four oversized chairs with cushions",
+          "price": 300,
+          "location": "Tualatin, OR",
+          "listing_id": "1383234503586669"
+        },
+        {
+          "title": "Brown Outdoor Patio / Deck Furniture Set",
+          "price": 275,
+          "location": "Washougal, WA",
+          "listing_id": "1145068551543442"
+        },
+        {
+          "title": "3pc Patio Furniture Set",
+          "price": 75,
+          "location": "Portland, OR",
+          "listing_id": "2039708320031460"
+        },
+        {
+          "title": "Patio or Deck Furniture Set with Table",
+          "price": 95,
+          "location": "Wilsonville, OR",
+          "listing_id": "28998638183080191"
+        },
+        {
+          "title": "Sofa and Patio Table Set",
+          "price": 225,
+          "location": "Vancouver, WA",
+          "listing_id": "2288953975172533"
+        },
+        {
+          "title": "7-Piece Outdoor Wicker Sectional Sofa Set with Red Cushions",
+          "price": 499,
+          "location": "Beaverton, OR",
+          "listing_id": "1138523871897801"
+        },
+        {
+          "title": "Costco outdoor sectional furniture set",
+          "price": 899,
+          "location": "Beaverton, OR",
+          "listing_id": "1402523918703077"
+        },
+        {
+          "title": "Patio Furniture Set",
+          "price": 20,
+          "location": "Portland, OR",
+          "listing_id": "2331930930908534"
+        }
+      ],
+      "stats": {
+        "count": 18,
+        "min": 20,
+        "p25": 80,
+        "median": 212.5,
+        "p75": 300,
+        "max": 899
+      },
+      "recommended": 212.5,
+      "suggested": 212.5,
+      "range": [
+        20,
+        899
+      ],
+      "percentile_band": [
+        80,
+        300
+      ],
+      "confidence": "medium",
+      "dropped": 5,
+      "total_unique_results": 23,
+      "drop_reasons": "A $1 \"moving sale\" lot (not an item price); out-of-area results including a free set at 33 mi; duplicates across the two queries."
+    },
+    {
+      "key": "gas_grill",
+      "item": "Gas barbecue grill",
+      "queries": [
+        "gas grill",
+        "Weber grill"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "Char-Broil Commercial Series 2-Burner Gas Grill",
+          "price": 20,
+          "location": "Lake Oswego, OR",
+          "listing_id": "1744875573235405"
+        },
+        {
+          "title": "Tuscany 4-Burner Propane Gas Grill with Side Burner FREE Propane Tank ",
+          "price": 150,
+          "location": "Fairview, OR",
+          "listing_id": "2405859003554464"
+        },
+        {
+          "title": "PROPANE GAS GRILL- 4 Burner with propane tank-OBO",
+          "price": 70,
+          "location": "Beaverton, OR",
+          "listing_id": "2694789510977460"
+        },
+        {
+          "title": "Nexgrill 4-Burner Stainless Steel Gas Grill",
+          "price": 80,
+          "location": "Portland, OR",
+          "listing_id": "1415370180095154"
+        },
+        {
+          "title": "Weber Summit Silver Grill",
+          "price": 75,
+          "location": "Camas, WA",
+          "listing_id": "1622726636560925"
+        },
+        {
+          "title": "Char Broil Gas BBQ Grill",
+          "price": 50,
+          "location": "Beaverton, OR",
+          "listing_id": "966360335992902"
+        },
+        {
+          "title": "Nexgrill 4-Burner Propane Gas Grill with Side Burner",
+          "price": 60,
+          "location": "Portland, OR",
+          "listing_id": "2092173018330692"
+        },
+        {
+          "title": "Nexgrill 4 burner propane gas grill",
+          "price": 100,
+          "location": "Beaverton, OR",
+          "listing_id": "953810494123382"
+        },
+        {
+          "title": "Master Forge 3-Burner Gas Grill",
+          "price": 40,
+          "location": "Portland, OR",
+          "listing_id": "1777610496861211"
+        },
+        {
+          "title": "Weber Summit Gas Grill",
+          "price": 75,
+          "location": "Lake Oswego, OR",
+          "listing_id": "1073121129098917"
+        },
+        {
+          "title": "Grill (gas & propane)",
+          "price": 50,
+          "location": "Brush Prairie, WA",
+          "listing_id": "1766992991193102"
+        },
+        {
+          "title": "Weber Spirit E-325 Propane Grill",
+          "price": 350,
+          "location": "Beaverton, OR",
+          "listing_id": "1047279624999354"
+        }
+      ],
+      "stats": {
+        "count": 12,
+        "min": 20,
+        "p25": 50,
+        "median": 72.5,
+        "p75": 85,
+        "max": 350
+      },
+      "recommended": 72.5,
+      "suggested": 72.5,
+      "range": [
+        20,
+        350
+      ],
+      "percentile_band": [
+        50,
+        85
+      ],
+      "confidence": "high",
+      "dropped": 16,
+      "total_unique_results": 28,
+      "drop_reasons": "Charcoal/kettle Webers (wrong fuel); FREE listings (no price signal); a $5 grill with a rusted-out fire box (junk); one Weber with no description to confirm fuel type; out-of-area results."
+    },
+    {
+      "key": "denim_jacket",
+      "item": "Women's cropped denim jacket (GAP light-wash cropped, P18)",
+      "queries": [
+        "denim jacket women",
+        "GAP denim jacket"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "American eagle denim jacket",
+          "price": 5,
+          "location": "Portland, OR",
+          "listing_id": "1615810307011403"
+        },
+        {
+          "title": "Levi\u2019s Denim Jacket \u2013 Women\u2019s Size Small",
+          "price": 20,
+          "location": "Portland, OR",
+          "listing_id": "1799340807777829"
+        },
+        {
+          "title": "Women\u2019s Jean Jacket/Denim, Size Small, Quilted Lining",
+          "price": 15,
+          "location": "Happy Valley, OR",
+          "listing_id": "1801630967747473"
+        },
+        {
+          "title": "Gap Icons Denim Jacket Women's S",
+          "price": 20,
+          "location": "Portland, OR",
+          "listing_id": "2186125138927895"
+        },
+        {
+          "title": "Women's Cat & Jack Blue Denim Hooded Shirt Jacket Size L",
+          "price": 5,
+          "location": "Portland, OR",
+          "listing_id": "989383403490339"
+        },
+        {
+          "title": "Women\u2019s KanCan Denim Jacket",
+          "price": 15,
+          "location": "Battle Ground, WA",
+          "listing_id": "2229255377632570"
+        },
+        {
+          "title": "Women\u2019s Zara Sherpa Denim Jacket - size M",
+          "price": 20,
+          "location": "Oregon City, OR",
+          "listing_id": "2639509666496211"
+        },
+        {
+          "title": "Women\u2019s Denim Jacket",
+          "price": 7,
+          "location": "Hillsboro, OR",
+          "listing_id": "1626589862350245"
+        },
+        {
+          "title": "NWT Christopher & Banks Denim Jacket Embroidered Dark Wash Trucker Women\u2019s M",
+          "price": 34.99,
+          "location": "Vancouver, WA",
+          "listing_id": "1180035281226441"
+        },
+        {
+          "title": "New denim jacket  Women/medium size",
+          "price": 100,
+          "location": "Portland, OR",
+          "listing_id": "1411147811047845"
+        },
+        {
+          "title": "Women\u2019s Gap Denim Jacket",
+          "price": 25,
+          "location": "Sandy, OR",
+          "listing_id": "2201019084186187"
+        },
+        {
+          "title": "Disney The Nightmare Before Christmas Jack Skellington Denim Jacket",
+          "price": 69,
+          "location": "Gresham, OR",
+          "listing_id": "1404962928388254"
+        },
+        {
+          "title": "Genuine Harley Davidson Denim Women\u2019s Jacket",
+          "price": 99,
+          "location": "Vancouver, WA",
+          "listing_id": "1097037616468825"
+        },
+        {
+          "title": "Gap Denim Jacket Size L",
+          "price": 25,
+          "location": "Portland, OR",
+          "listing_id": "1086004510905717"
+        },
+        {
+          "title": "Gap Denim Work-Force Chore Coat",
+          "price": 35,
+          "location": "Portland, OR",
+          "listing_id": "1622507689475117"
+        },
+        {
+          "title": "Gap Stretch Denim Jacket",
+          "price": 10,
+          "location": "Sherwood, OR",
+          "listing_id": "1128464782861710"
+        },
+        {
+          "title": "Gap Denim Jacket(size M)",
+          "price": 20,
+          "location": "Beaverton, OR",
+          "listing_id": "1084503071058293"
+        },
+        {
+          "title": "Size M Gap 1969 Denim Jacket",
+          "price": 50,
+          "location": "Vancouver, WA",
+          "listing_id": "1394344749529672"
+        },
+        {
+          "title": "Gap women\u2019s Denim Jacket - Small",
+          "price": 30,
+          "location": "Portland, OR",
+          "listing_id": "2094172834571218"
+        },
+        {
+          "title": "Vintage Style GAP 1969 Denim Jacket Type II Dark Wash Pleated Trucker Size M",
+          "price": 45,
+          "location": "Gresham, OR",
+          "listing_id": "2334232054017316"
+        },
+        {
+          "title": "Vintage Gap and Pendleton Denim Jean Jacket",
+          "price": 85,
+          "location": "West Linn, OR",
+          "listing_id": "4523256234629324"
+        },
+        {
+          "title": "Vintage 90s GAP Floral Embroidered Denim Blue Jean Jacket USA Made 1990s Flower",
+          "price": 45,
+          "location": "Beaverton, OR",
+          "listing_id": "1095102253224816"
+        }
+      ],
+      "stats": {
+        "count": 22,
+        "min": 5,
+        "p25": 16.25,
+        "median": 25,
+        "p75": 45,
+        "max": 100
+      },
+      "recommended": 25,
+      "suggested": 25,
+      "range": [
+        5,
+        100
+      ],
+      "percentile_band": [
+        16.25,
+        45
+      ],
+      "confidence": "medium",
+      "dropped": 6,
+      "total_unique_results": 28,
+      "drop_reasons": "A $1 clothing lot; two Baby Gap toddler jackets (not women's); out-of-area results; duplicates across the two queries. Kept set mixes regular and vintage/premium Gap and comparable brands, which is why the top of the range runs high."
+    },
+    {
+      "key": "climbing_dome_jungle_gym",
+      "item": "Kids climbing dome / jungle gym",
+      "queries": [
+        "climbing dome",
+        "jungle gym"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "Play Climbing Dome",
+          "price": 50,
+          "location": "Portland, OR",
+          "listing_id": "1841553333508379"
+        },
+        {
+          "title": "Brand New Climbing Dome",
+          "price": 200,
+          "location": "Vancouver, WA",
+          "listing_id": "1817233176250346"
+        },
+        {
+          "title": "Lily & River Little Indoor Climbing Dome",
+          "price": 450,
+          "location": "Portland, OR",
+          "listing_id": "1158759569916871"
+        },
+        {
+          "title": "Avenlur Grove Natural Foldable Wall Mounted Indoor Jungle Gym",
+          "price": 300,
+          "location": "Portland, OR",
+          "listing_id": "1132257542477177"
+        },
+        {
+          "title": "Wallbarz Indoor Wall-Mounted Jungle Gym",
+          "price": 50,
+          "location": "Portland, OR",
+          "listing_id": "935013069489005"
+        },
+        {
+          "title": "Kids Indoor Jungle Gym / Climbing Playset",
+          "price": 1000,
+          "location": "Washougal, WA",
+          "listing_id": "1542996037845808"
+        },
+        {
+          "title": "Avenlur Large Magnolia Indoor Wooden Jungle Gym with Monkey Bars, Rock Wall & Swing",
+          "price": 500,
+          "location": "Portland, OR",
+          "listing_id": "1653594286555316"
+        },
+        {
+          "title": "Pikler climbing set",
+          "price": 75,
+          "location": "Vancouver, WA",
+          "listing_id": "1142968565153422"
+        }
+      ],
+      "stats": {
+        "count": 8,
+        "min": 50,
+        "p25": 68.75,
+        "median": 250,
+        "p75": 462.5,
+        "max": 1000
+      },
+      "recommended": 250,
+      "suggested": 250,
+      "range": [
+        50,
+        1000
+      ],
+      "percentile_band": [
+        68.75,
+        462.5
+      ],
+      "confidence": "low",
+      "dropped": 21,
+      "total_unique_results": 29,
+      "drop_reasons": "Trampolines (different product, several free); a $15 wooden climbing arch (accessory, not a dome or gym); the rest were out-of-area (Facebook returned results 47-160 mi away). This is the thinnest category inside 25 mi."
+    },
+    {
+      "key": "nissan_versa",
+      "item": "Gray Nissan Versa sedan (P16 car)",
+      "queries": [
+        "Nissan Versa"
+      ],
+      "searched_at": "2026-11-01T15:41-08:00",
+      "area": "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius",
+      "comps": [
+        {
+          "title": "2015 Nissan Versa Note \u00b7 SV Hatchback 4D",
+          "price": 3800,
+          "location": "Portland, OR",
+          "listing_id": "4391459461106974"
+        },
+        {
+          "title": "2012 Nissan Versa \u00b7 SL Hatchback 4D",
+          "price": 1700,
+          "location": "Portland, OR",
+          "listing_id": "2096326854340945"
+        },
+        {
+          "title": "2014 Nissan Versa Note \u00b7 SV Hatchback 4D",
+          "price": 3200,
+          "location": "Camas, WA",
+          "listing_id": "1797155304756423"
+        },
+        {
+          "title": "2012 Nissan Versa",
+          "price": 2450,
+          "location": "Happy Valley, OR",
+          "listing_id": "1657201162722368"
+        },
+        {
+          "title": "2016 Nissan Versa \u00b7 S Plus Sedan 4D",
+          "price": 1100,
+          "location": "Beaverton, OR",
+          "listing_id": "2171559183711171"
+        },
+        {
+          "title": "2009 Nissan Versa \u00b7 Hace",
+          "price": 1500,
+          "location": "Portland, OR",
+          "listing_id": "1484307937127837"
+        },
+        {
+          "title": "2013 Nissan Versa \u00b7 SV Sedan 4D",
+          "price": 2250,
+          "location": "Vancouver, WA",
+          "listing_id": "1817991196020752"
+        },
+        {
+          "title": "2019 Nissan Versa \u00b7 SV Sedan 4D",
+          "price": 4200,
+          "location": "Beaverton, OR",
+          "listing_id": "1000095603118863"
+        },
+        {
+          "title": "2014 Nissan Versa Note \u00b7 S Hatchback 4D",
+          "price": 4500,
+          "location": "Portland, OR",
+          "listing_id": "2010422619658305"
+        },
+        {
+          "title": "2012 Nissan Versa",
+          "price": 1150,
+          "location": "Portland, OR",
+          "listing_id": "1082372624793626"
+        },
+        {
+          "title": "2015 Nissan Versa \u00b7 Sl",
+          "price": 4000,
+          "location": "Portland, OR",
+          "listing_id": "1100459559288695"
+        },
+        {
+          "title": "2007 Nissan Versa \u00b7 Note S Hatchback 4D",
+          "price": 1000,
+          "location": "Vancouver, WA",
+          "listing_id": "1164959792871362"
+        },
+        {
+          "title": "2009 Nissan Versa \u00b7 Note S Hatchback 4D",
+          "price": 2500,
+          "location": "Hillsboro, OR",
+          "listing_id": "2295805284575970"
+        }
+      ],
+      "stats": {
+        "count": 13,
+        "min": 1000,
+        "p25": 1500,
+        "median": 2450,
+        "p75": 3800,
+        "max": 4500
+      },
+      "recommended": 2450,
+      "suggested": 2450,
+      "range": [
+        1000,
+        4500
+      ],
+      "percentile_band": [
+        1500,
+        3800
+      ],
+      "confidence": "medium",
+      "dropped": 2,
+      "total_unique_results": 15,
+      "drop_reasons": "Two out-of-area results (32 mi and 50 mi). All kept comps are whole Versa vehicles, 2007-2019, 84K-230K miles."
+    }
+  ]
+}

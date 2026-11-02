@@ -714,3 +714,59 @@ fn mentioned_refutation_forces_no_match_but_named_keeps_probe_code() {
     assert_eq!(items["ghost item"]["failure"]["code"], "SEGMENTATION_EMPTY");
     assert_eq!(items["ghost item"]["origin"], "named");
 }
+
+// ----------------------------------------------------------------------
+// S5: category comps pricing on the staged record's listing
+// ----------------------------------------------------------------------
+
+fn category_comps_doc() -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pricing-comps.json");
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn staged_record_listing_carries_range_and_recommended() {
+    let _guard = env_lock();
+    let root = temp_root("compsrecord");
+    let photos = vec![photo(&root, "bike.png", [40, 80, 200, 255])];
+    // Lowercase: the run normalises concepts before cut_out, and
+    // the fake chain matches its known set exactly.
+    let chain = Chain::new(&root, plan("kids bmx bike"), None, &["kids bmx bike"]);
+    let mut opts = chain.base_opts(&root);
+    opts.item_names = vec!["kids bmx bike".to_string()];
+    opts.comps = Some(category_comps_doc());
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged", "{item}");
+    // The identify-fed listing copy is unchanged ...
+    assert_eq!(item["listing"]["title"], "Listing: kids bmx bike");
+    assert_eq!(item["listing"]["source"], "photo_plan");
+    // ... and now carries the comps pricing block.
+    let pricing = &item["listing"]["pricing"];
+    assert_eq!(pricing["status"], "priced", "{pricing}");
+    assert_eq!(pricing["category"], "kids_bmx_bike");
+    assert_eq!(pricing["range"], json!([30, 125]));
+    assert_eq!(pricing["recommended"], json!(50));
+    assert_eq!(pricing["percentile_band"], json!([44, 80]));
+    assert_eq!(pricing["confidence"], "medium");
+    assert_eq!(pricing["advisory"], true);
+    // The per-run market pricing field keeps its own shape: a
+    // category document has no "items" table, so it reports
+    // no_comps_supplied exactly as before.
+    assert_eq!(item["pricing"]["status"], "no_comps_supplied");
+}
+
+#[test]
+fn unmatched_listing_gets_no_comps() {
+    let _guard = env_lock();
+    let root = temp_root("compsnomatch");
+    let photos = vec![photo(&root, "shelf.png", [120, 60, 20, 255])];
+    let chain = Chain::new(&root, plan("straw hat"), None, &["straw hat"]);
+    let mut opts = chain.base_opts(&root);
+    opts.item_names = vec!["straw hat".to_string()];
+    opts.comps = Some(category_comps_doc());
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged");
+    assert_eq!(item["listing"]["pricing"], json!({"status": "no_comps"}));
+}

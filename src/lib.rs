@@ -44,6 +44,7 @@ pub mod assets;
 pub mod backdrop;
 pub mod billing;
 pub mod composite;
+pub mod comps;
 pub mod config;
 pub mod heic;
 pub mod image;

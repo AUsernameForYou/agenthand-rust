@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased: pricing
+
+- **Range plus recommended price.** New `src/comps.rs` loads a
+  category comps file (`AGENTHAND_COMPS_FILE`, default
+  `<data dir>/pricing-comps.json`), matches an item to a category by
+  normalised token overlap with the category's item text, queries and
+  comp titles (head-noun gate, minimum score 0.6), and returns
+  `pricing`: range [min, max], recommended (median), percentile_band
+  [p25, p75], confidence, comps_count, searched_at, area, basis,
+  advisory and a footnote. No match, or a missing or malformed file,
+  returns `{"status": "no_comps"}` (with a one-line note for file
+  problems), never an error.
+- **Where it shows.** Ok identify results gain `pricing` (computed
+  after identify returns; the identify prompt, model schema and MCP
+  definition are byte-identical). Room-run item records gain
+  `listing.pricing`. New code-only `price` tool (`item_name`).
+- Real comps file shipped as `tests/fixtures/pricing-comps.json`;
+  tests in `tests/comps_pricing.rs`, `tests/server_e2e.rs`,
+  `tests/workflow_completion.rs`.
+
 ## 0.3.0 — M6 packaging
 
 The submission build. Everything below is on the consolidate master;

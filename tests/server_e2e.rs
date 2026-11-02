@@ -18,8 +18,14 @@ struct Server {
 
 impl Server {
     fn spawn(data_dir: &std::path::Path) -> Server {
+        Server::spawn_with_comps(data_dir, "")
+    }
+
+    fn spawn_with_comps(data_dir: &std::path::Path, comps_file: &str) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_agenthand"))
             .env("AGENTHAND_DATA_DIR", data_dir)
+            // Empty means the default (<data dir>/pricing-comps.json).
+            .env("AGENTHAND_COMPS_FILE", comps_file)
             .env("AGENTHAND_DRAW_PLACEHOLDER_PLATE", "1")
             // Empty (not removed): config's .env loader never
             // overrides a variable that is already present, so an
@@ -111,7 +117,19 @@ fn stdio_server_end_to_end_offline() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["identify", "cut_out", "draw"]);
+    assert_eq!(names, vec!["identify", "cut_out", "draw", "price"]);
+    // identify's MCP definition is untouched by the pricing work.
+    let identify_def = &tools["result"]["tools"][0];
+    assert_eq!(
+        identify_def["inputSchema"],
+        json!({
+            "type": "object",
+            "properties": {
+                "image": {"type": "string", "description": "The product photo — an asset handle (asset://<id>), an http(s) URL, or a base64 data URI."}
+            },
+            "required": ["image"]
+        })
+    );
 
     // identify without a key: structured NOT_CONFIGURED, no call made.
     let resp = server.call(
@@ -121,6 +139,21 @@ fn stdio_server_end_to_end_offline() {
     let result = tool_result(&resp);
     assert_eq!(result["status"], "error");
     assert_eq!(result["error"]["code"], "NOT_CONFIGURED");
+    // An error result is not priced (and keeps its shape).
+    assert!(result.get("pricing").is_none());
+
+    // price with no comps file in the data dir: no_comps plus a
+    // one-line note, never an error.
+    let resp = server.call(
+        "tools/call",
+        json!({"name": "price", "arguments": {"item_name": "gas grill"}}),
+    );
+    assert!(resp.get("error").is_none(), "price never errors: {resp}");
+    let result = tool_result(&resp);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["pricing"]["status"], "no_comps");
+    let note = result["pricing"]["note"].as_str().expect("note");
+    assert!(note.contains("pricing-comps.json") && !note.contains('\n'), "{note}");
 
     // cut_out without a key and without a concept: the internal plan
     // fails the same way, surfaced as NO_CONCEPT.
@@ -202,6 +235,58 @@ fn stdio_server_end_to_end_offline() {
     let uri = result["output_asset"].as_str().unwrap().to_string();
     let resp = server.call("resources/read", json!({"uri": uri}));
     assert!(resp["result"]["contents"][0]["blob"].is_string());
+
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+#[test]
+fn stdio_price_tool_with_the_real_comps_file() {
+    let data_dir =
+        std::env::temp_dir().join(format!("agenthand-e2e-price-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&data_dir);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let comps = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/pricing-comps.json");
+    let mut server = Server::spawn_with_comps(&data_dir, comps.to_str().unwrap());
+    server.call(
+        "initialize",
+        json!({"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
+    );
+
+    let resp = server.call(
+        "tools/call",
+        json!({"name": "price", "arguments": {"item_name": "Haro Shredder kids BMX bike"}}),
+    );
+    let result = tool_result(&resp);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["tool"], "price");
+    assert_eq!(result["cost_usd"], 0.0);
+    let pricing = &result["pricing"];
+    assert_eq!(pricing["status"], "priced");
+    assert_eq!(pricing["category"], "kids_bmx_bike");
+    assert_eq!(pricing["range"], json!([30, 125]));
+    assert_eq!(pricing["recommended"], json!(50));
+    assert_eq!(pricing["percentile_band"], json!([44, 80]));
+    assert_eq!(pricing["confidence"], "medium");
+    assert_eq!(pricing["comps_count"], 9);
+    assert_eq!(pricing["basis"], "asking prices, Facebook Marketplace comps");
+    assert_eq!(pricing["advisory"], true);
+    assert!(pricing["footnote"].as_str().unwrap().contains("Advisory only"));
+    // The text block carries the same JSON as structuredContent.
+    let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(text).unwrap(), result);
+
+    let resp = server.call(
+        "tools/call",
+        json!({"name": "price", "arguments": {"item_name": "rubber duck"}}),
+    );
+    assert_eq!(tool_result(&resp)["pricing"], json!({"status": "no_comps"}));
+
+    // A missing argument is a structured tool error, not a crash.
+    let resp = server.call("tools/call", json!({"name": "price", "arguments": {}}));
+    let result = tool_result(&resp);
+    assert_eq!(result["status"], "error");
+    assert_eq!(result["error"]["code"], "BAD_ARGUMENT");
 
     let _ = std::fs::remove_dir_all(&data_dir);
 }

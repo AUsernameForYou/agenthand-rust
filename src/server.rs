@@ -1,5 +1,6 @@
-//! The MCP server: the three tools (identify / cut_out / draw) with
-//! the same result shapes as the Python `server.py`, over a
+//! The MCP server: the three model tools (identify / cut_out / draw)
+//! with the same result shapes as the Python `server.py`, plus the
+//! code-only `price` tool (comps pricing, no model call), over a
 //! hand-rolled JSON-RPC stdio loop.
 //!
 //! Why not the rmcp crate: the port's first job is byte-level parity
@@ -13,6 +14,7 @@ use crate::assets::{AssetStore, HANDLE_PREFIX, KIND_MASK, KIND_OVERLAY, KIND_PLA
 use crate::backdrop;
 use crate::billing::{self, BillingSummary};
 use crate::composite;
+use crate::comps;
 use crate::config;
 use crate::ingest;
 use crate::meta::{self, IdentifyError, CUT_OUT_MODEL, DRAW_BACKGROUND_MODEL, IDENTIFY_MODEL};
@@ -154,7 +156,7 @@ pub fn tool_identify(image: &str) -> Result<Value, String> {
             "error": error,
         }));
     }
-    Ok(json!({
+    let mut out = json!({
         "status": "ok",
         "tool": "identify",
         "image": handle,
@@ -169,7 +171,36 @@ pub fn tool_identify(image: &str) -> Result<Value, String> {
         "usage": result["usage"],
         "call_id": result["call_id"],
         "attempts": result["attempts"],
-    }))
+    });
+    // Pricing is post-processing on the finished result: matched
+    // code-side from the concept / alternates / title identify
+    // already returned. The identify prompt and model schema are
+    // untouched (longer identify wording caused empty 200 bodies).
+    comps::attach_identify_pricing(&mut out, &comps::load_configured_book());
+    Ok(out)
+}
+
+/// The `price` tool handler: the same pricing block identify
+/// attaches, for an item named directly. Code only, no model call.
+pub fn tool_price(item_name: &str) -> Value {
+    let name = item_name.trim();
+    if name.is_empty() {
+        return json!({
+            "status": "error",
+            "tool": "price",
+            "item_name": item_name,
+            "pricing": null,
+            "error": {"code": "BAD_ARGUMENT", "message": "item_name is required"},
+        });
+    }
+    let book = comps::load_configured_book();
+    json!({
+        "status": "ok",
+        "tool": "price",
+        "item_name": name,
+        "pricing": comps::pricing_for_item_name(&book, name, None),
+        "cost_usd": 0.0,
+    })
 }
 
 /// The `cut_out` tool handler: ingest, segment the concept, shape the
@@ -1022,6 +1053,17 @@ fn tool_definitions() -> Value {
                 },
                 "required": ["asset", "scene_prompt"]
             }
+        },
+        {
+            "name": "price",
+            "description": "Price an item from local marketplace comps, code only (no model call, no cost). Matches the item name to a comps category and returns a pricing block: range [min, max] of possible asking prices, recommended price (the comps median), percentile_band [p25, p75], confidence (high / medium / low), comps_count, searched_at, area, basis, advisory: true and a footnote. identify results carry the same block as `pricing`. No matching category, or no comps file, returns pricing {\"status\": \"no_comps\"}.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_name": {"type": "string", "description": "What the item is, e.g. the concept or listing title identify returned (\"kids BMX bike\", \"gas grill\")."}
+                },
+                "required": ["item_name"]
+            }
         }
     ])
 }
@@ -1091,6 +1133,10 @@ fn call_tool_inner(name: &str, args: &Value) -> Result<Value, String> {
             let plate = args.get("plate").and_then(|v| v.as_str());
             let (result, preview) = tool_draw_with_plate(asset, scene, plate)?;
             Ok(wrap(result, preview))
+        }
+        "price" => {
+            let item_name = args.get("item_name").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(wrap(tool_price(item_name), Vec::new()))
         }
         other => Err(format!("Unknown tool: {other}")),
     }

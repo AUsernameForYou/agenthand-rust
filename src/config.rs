@@ -161,6 +161,22 @@ pub fn get_total_spend_cap_usd() -> Result<f64, String> {
     Ok(value.min(HARD_CEILING_USD))
 }
 
+/// The pricing comps file: `AGENTHAND_COMPS_FILE` when set and
+/// non-empty (a leading `~/` expands), else `pricing-comps.json` in
+/// the data dir. Read at call time, so a new file needs no restart.
+pub fn get_comps_file() -> PathBuf {
+    comps_file_from(&env_trimmed("AGENTHAND_COMPS_FILE"), &get_data_dir())
+}
+
+/// Resolution rule behind `get_comps_file`, as a pure function.
+pub fn comps_file_from(raw: &str, data_dir: &std::path::Path) -> PathBuf {
+    let raw = raw.trim();
+    if !raw.is_empty() {
+        return PathBuf::from(shellexpand_home(raw));
+    }
+    data_dir.join(crate::comps::DEFAULT_COMPS_FILE_NAME)
+}
+
 /// The operator's Meta API key, from the environment or a local `.env`.
 pub fn get_meta_api_key() -> Option<String> {
     let raw = env_trimmed("META_API_KEY");

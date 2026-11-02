@@ -47,6 +47,18 @@ Staging is fine. Proof is the missing piece.
   staged image ships with a receipt, and an independent verifier can
   recount the product pixels from disk and prove none changed.
 
+**Pricing.** An ok identify result also carries a `pricing` block,
+computed in code after identify returns (the identify prompt and
+schema are unchanged): a range of possible asking prices, a
+recommended price (the comps median), the 25th to 75th percentile
+band and a confidence, from the comps category the item matches in a
+local comps file (`AGENTHAND_COMPS_FILE`, default
+`pricing-comps.json` in the data dir). A fourth tool, **price**,
+returns the same block for an item name with no model call. Prices
+are asking prices from local Facebook Marketplace comps and are
+advisory; an item with no matching category, or no comps file,
+returns `{"status": "no_comps"}`.
+
 One operator key, `META_API_KEY`, covers all model calls. The server
 starts and lists its tools without one; the key is required when a
 tool makes a model call. Every billable call passes a single choke

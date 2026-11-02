@@ -38,7 +38,7 @@ use crate::meta::{
     project_cut_out_cost_usd, project_draw_cost_usd, project_identify_cost_usd, CUT_OUT_MODEL,
     DRAW_BACKGROUND_MODEL, IDENTIFY_MAX_ATTEMPTS, IDENTIFY_MODEL,
 };
-use crate::{backdrop, composite, config, ingest, ledger, market_pricing};
+use crate::{backdrop, composite, comps, config, ingest, ledger, market_pricing};
 
 pub const MAX_PHOTOS_PER_ITEM: usize = 3;
 pub const MAX_SAM_CALLS_PER_ITEM: usize = 6;
@@ -4904,6 +4904,19 @@ fn run_room_body(
     notes.extend(collision_notes);
     // Market pricing: every item record carries a pricing entry,
     // priced from the supplied comps or marked as unsupplied.
+    // Comps pricing (category comps file): each record's listing
+    // also carries listing.pricing (range + recommended), matched
+    // code-side from the item name and the identify-written listing
+    // title. A --comps document in the category format is used
+    // directly; otherwise the configured comps file is read.
+    let comps_book = match opts
+        .comps
+        .as_ref()
+        .filter(|doc| doc.get("categories").is_some())
+    {
+        Some(doc) => comps::parse_book(doc),
+        None => comps::load_configured_book(),
+    };
     for record in item_records.iter_mut() {
         let item_name = record
             .get("name")
@@ -4911,6 +4924,14 @@ fn run_room_body(
             .unwrap_or("")
             .to_string();
         record["pricing"] = market_pricing::pricing_for_item(opts.comps.as_ref(), &item_name);
+        if record.get("listing").map(Value::is_object).unwrap_or(false) {
+            let title = record["listing"]
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            record["listing"]["pricing"] =
+                comps::pricing_for_item_name(&comps_book, &item_name, title.as_deref());
+        }
     }
     let total_cost = python_round(spend_probe()? - spend_before, 6);
 
