@@ -5,7 +5,7 @@
 /// Version of the pricing table below; bumped on any rate change.
 pub const PRICING_TABLE_VERSION: &str = "2026-10-26.2";
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct Usage {
     pub input_tokens: i64,
     pub output_tokens: i64,

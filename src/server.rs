@@ -552,7 +552,7 @@ fn generate_background_plate(
     prompt: &str,
     width: Option<u32>,
     height: Option<u32>,
-) -> Result<(String, BillingSummary), meta::ImageError> {
+) -> Result<(String, BillingSummary), PlateFailure> {
     let key = meta::require_meta_api_key().map_err(|e| meta::ImageError {
         code: "NOT_CONFIGURED".to_string(),
         message: e,
@@ -569,7 +569,7 @@ fn generate_background_plate(
     let handle_cell: RefCell<Option<String>> = RefCell::new(None);
     let err_cell: RefCell<Option<meta::ImageError>> = RefCell::new(None);
     let call_id = new_call_id();
-    let result = billing::billed_call(
+    let result = billing::billed_call_detailed(
         "draw",
         Some(DRAW_BACKGROUND_MODEL),
         projected,
@@ -602,10 +602,131 @@ fn generate_background_plate(
     );
     match result {
         Ok(billing) => Ok((handle_cell.into_inner().expect("plate handle set"), billing)),
-        Err(message) => Err(err_cell.into_inner().unwrap_or(meta::ImageError {
+        Err(billing::BillingFailure::CallFailed {
+            message,
+            reserved_usd,
+        }) => {
+            let e = err_cell.into_inner().unwrap_or(meta::ImageError {
+                code: "IMAGE_CALL_FAILED".to_string(),
+                message,
+            });
+            Err(PlateFailure {
+                code: e.code,
+                message: e.message,
+                details: json!({"cost_counted_usd": reserved_usd}),
+            })
+        }
+        // Billing stopped it: before the call, or after a generation
+        // that succeeded (its plate was stored inside the call).
+        Err(stop) => Err(billing_stop_failure(
+            stop,
+            &call_id,
+            "plate generation",
+            handle_cell.into_inner().map(Ok),
+        )),
+    }
+}
+
+/// A plate-stage failure: the code and message draw reports, and the
+/// details merged into its error object (always `cost_counted_usd`:
+/// what the ledger counts for the plate call).
+struct PlateFailure {
+    code: String,
+    message: String,
+    details: Value,
+}
+
+impl From<meta::ImageError> for PlateFailure {
+    /// A failure before any billed call ran: nothing was reserved.
+    fn from(e: meta::ImageError) -> Self {
+        PlateFailure {
+            code: e.code,
+            message: e.message,
+            details: json!({"cost_counted_usd": 0.0}),
+        }
+    }
+}
+
+/// What draw reports when the billing choke point, not the image
+/// call, stopped a plate call (`step`: "plate edit" or "plate
+/// generation"). `paid_plate` is the plate a call that succeeded
+/// returned, as kept in the store (or why it could not be kept).
+///
+/// - Before the call (spend cap, ledger, pricing table): nothing was
+///   called. `SPEND_CAP_REFUSED` for the cap's own refusal, else
+///   `BILLING_REFUSED`; counts what was reserved (normally nothing).
+/// - After a call that SUCCEEDED (fix pass F5 over-cap settle, or a
+///   settle write / pricing error): the call was made and paid for.
+///   `BILLING_STOPPED_AFTER_CALL`, counting what the ledger counts
+///   (the actual cost once settled), with the over-cap amount when
+///   that is the cause, and the paid plate's handle. The draw still
+///   fails loudly (F5: no further spend), but nothing paid for is lost.
+/// - A failed call is not a billing stop; it stays `IMAGE_CALL_FAILED`
+///   with its reservation counted (callers handle it before here).
+fn billing_stop_failure(
+    stop: billing::BillingFailure,
+    call_id: &str,
+    step: &str,
+    paid_plate: Option<Result<String, String>>,
+) -> PlateFailure {
+    match stop {
+        billing::BillingFailure::BeforeCall {
+            message,
+            reserved_usd,
+        } => PlateFailure {
+            code: if message.starts_with("Spend cap") {
+                "SPEND_CAP_REFUSED"
+            } else {
+                "BILLING_REFUSED"
+            }
+            .to_string(),
+            message: format!("Billing refused the {step} before any call was made: {message}"),
+            details: json!({"cost_counted_usd": reserved_usd, "call_made": false, "call_id": call_id}),
+        },
+        billing::BillingFailure::AfterCall {
+            message,
+            counted_usd,
+            actual_usd,
+            overage,
+            ..
+        } => {
+            let (plate, plate_error, kept) = match paid_plate {
+                Some(Ok(handle)) => (
+                    Some(handle.clone()),
+                    None,
+                    format!(" The paid plate is kept as {handle} (stored, not staged)."),
+                ),
+                Some(Err(e)) => (
+                    None,
+                    Some(e.clone()),
+                    format!(" The paid plate could not be kept: {e}."),
+                ),
+                None => (None, None, String::new()),
+            };
+            PlateFailure {
+                code: "BILLING_STOPPED_AFTER_CALL".to_string(),
+                message: format!(
+                    "Billing stopped the draw after the {step} call succeeded; the call was made and paid for. {message}{kept}"
+                ),
+                details: json!({
+                    "cost_counted_usd": counted_usd,
+                    "actual_usd": actual_usd,
+                    "over_cap_usd": overage.map(|o| o.overage_usd),
+                    "call_made": true,
+                    "call_id": call_id,
+                    "paid_plate_asset": plate,
+                    "paid_plate_error": plate_error,
+                }),
+            }
+        }
+        billing::BillingFailure::CallFailed {
+            message,
+            reserved_usd,
+        } => PlateFailure {
             code: "IMAGE_CALL_FAILED".to_string(),
             message,
-        })),
+            details: json!({"cost_counted_usd": reserved_usd}),
+        },
     }
 }
 
@@ -634,7 +755,7 @@ fn stage_source_plate(
     angle: &staging::AngleEstimate,
     scene_prompt: &str,
     thin_trigger: &staging::ThinTrigger,
-) -> Result<StagedPlate, meta::ImageError> {
+) -> Result<StagedPlate, PlateFailure> {
     let staging_err = |message: String| meta::ImageError {
         code: "STAGING_FAILED".to_string(),
         message,
@@ -648,7 +769,8 @@ fn stage_source_plate(
         return Err(staging_err(format!(
             "source {}x{} and foreground {}x{} frames differ; the plate must share the product's frame",
             source.width, source.height, foreground.width, foreground.height
-        )));
+        ))
+        .into());
     }
     let size = meta::closest_image_size(Some(source.width), Some(source.height));
     let (ref_w, ref_h) = size
@@ -684,7 +806,7 @@ fn stage_source_plate(
     let bytes_cell: RefCell<Option<Vec<u8>>> = RefCell::new(None);
     let err_cell: RefCell<Option<meta::ImageError>> = RefCell::new(None);
     let call_id = new_call_id();
-    let result = billing::billed_call(
+    let result = billing::billed_call_detailed(
         "draw",
         Some(DRAW_BACKGROUND_MODEL),
         projected,
@@ -711,56 +833,74 @@ fn stage_source_plate(
             }
         },
     );
-    let edited = match &result {
-        Ok(_) => bytes_cell.into_inner().and_then(|b| {
-            crate::image::decode_image(&b)
-                .ok()
-                .map(|d| (crate::image::sha256_hex(&b), d.into_rgba()))
-        }),
-        Err(_) => None,
-    };
-    let (plate, kind, edit, billing, fallback) = match (result, edited, err_cell.into_inner()) {
-        (Ok(billing), Some((output_sha256, image)), _) => (
-            staging::plate_from_edit(&image, source.width, source.height),
-            backdrop::PLATE_KIND_SOURCE_EDIT,
-            json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "output_sha256": output_sha256}),
+    let bytes = bytes_cell.into_inner();
+    let call_error = err_cell.into_inner();
+    // The code-only plate stands in when the edit call itself failed
+    // or its image did not decode; the failure is reported.
+    let fallback = |code: String, message: String, billing: BillingSummary| {
+        (
+            staging::fallback_plate(&source, foreground),
+            backdrop::PLATE_KIND_SOURCE_BLUR,
+            json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "failed": {"code": code, "message": message}}),
             billing,
-            None,
-        ),
-        // Refused before any call (spend cap, ledger, pricing): no
-        // reservation was written, so nothing is staged or counted.
-        (Err(message), _, None) => {
-            return Err(meta::ImageError {
-                code: "IMAGE_CALL_FAILED".to_string(),
-                message,
-            })
-        }
-        (outcome, _, failure) => {
-            let (code, message) = match failure {
+            Some(json!({"code": code, "message": message})),
+        )
+    };
+    let (plate, kind, edit, billing, fallback) = match result {
+        Ok(billing) => match bytes.as_deref().and_then(|b| {
+            crate::image::decode_image(b)
+                .ok()
+                .map(|d| (crate::image::sha256_hex(b), d.into_rgba()))
+        }) {
+            Some((output_sha256, image)) => (
+                staging::plate_from_edit(&image, source.width, source.height),
+                backdrop::PLATE_KIND_SOURCE_EDIT,
+                json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "output_sha256": output_sha256}),
+                billing,
+                None,
+            ),
+            None => fallback(
+                "BAD_IMAGE_RESPONSE".to_string(),
+                "the edit image did not decode".to_string(),
+                billing,
+            ),
+        },
+        // The edit call itself failed: its reservation stays counted
+        // under the fail-closed ledger rule; report that amount.
+        Err(billing::BillingFailure::CallFailed {
+            message,
+            reserved_usd,
+        }) => {
+            let (code, message) = match call_error {
                 Some(e) => (e.code, e.message),
-                None => (
-                    "BAD_IMAGE_RESPONSE".to_string(),
-                    "the edit image did not decode".to_string(),
-                ),
+                None => ("IMAGE_CALL_FAILED".to_string(), message),
             };
-            let billing = match outcome {
-                Ok(settled) => settled,
-                // The failed call's reservation stays counted under the
-                // fail-closed ledger rule; report that amount.
-                Err(_) => BillingSummary {
+            fallback(
+                code,
+                message,
+                BillingSummary {
                     call_id: call_id.clone(),
                     projected_usd: projected,
-                    actual_usd: projected,
+                    actual_usd: reserved_usd,
                     usage: crate::pricing::Usage::default(),
                 },
-            };
-            (
-                staging::fallback_plate(&source, foreground),
-                backdrop::PLATE_KIND_SOURCE_BLUR,
-                json!({"model": DRAW_BACKGROUND_MODEL, "path": cfg.path, "size": size, "failed": {"code": code, "message": message}}),
-                billing,
-                Some(json!({"code": code, "message": message})),
             )
+        }
+        // Billing stopped it, before the call (spend cap, ledger,
+        // pricing) or after an edit that succeeded and was paid for
+        // (F5 over-cap settle, settle write or pricing error). Fail
+        // loudly; a paid edit is kept in the store, not staged.
+        Err(stop) => {
+            let paid = match (&stop, bytes) {
+                (billing::BillingFailure::AfterCall { .. }, Some(b)) => Some(store.put_bytes(
+                    &b,
+                    KIND_PLATE,
+                    ".png",
+                    Some(&source_record.asset_id),
+                )),
+                _ => None,
+            };
+            return Err(billing_stop_failure(stop, &call_id, "plate edit", paid));
         }
     };
     // --- insertion point: light and thin (docs/LIGHT-AND-THIN.md) ---
@@ -774,9 +914,15 @@ fn stage_source_plate(
     });
     let finished = staging::finish_plate_lit(&plate, foreground, geometry, offset);
     let (finished, thin) = composite::soften_thin_holes(&finished, foreground, thin_trigger);
+    // The plate call has been billed by now: a failure to store the
+    // finished plate reports what the ledger counts for it.
     let handle = store
         .put_image(&finished, KIND_PLATE, Some(&source_record.asset_id))
-        .map_err(staging_err)?;
+        .map_err(|message| PlateFailure {
+            code: "STAGING_FAILED".to_string(),
+            message,
+            details: json!({"cost_counted_usd": billing.actual_usd, "call_id": billing.call_id}),
+        })?;
     let mut reference_record = json!({
         "sha256": crate::image::sha256_hex(&reference_png),
         "size": size,
@@ -973,7 +1119,9 @@ pub fn tool_draw_with_plate(
         return Ok((error("NOT_CONFIGURED", &e, Value::Null), Vec::new()));
     }
 
-    let projected = meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
+    // Priced before any work (an unpriced model raises here); the plate
+    // paths report what the ledger counts on failure.
+    meta::project_draw_cost_usd(DRAW_BACKGROUND_MODEL)?;
     // --- insertion point: light and thin (docs/LIGHT-AND-THIN.md) ---
     // The concept cut_out recorded in the mask, and the thin-structure
     // trigger (concept words or enclosed mask holes; AGENTHAND_THIN=off).
@@ -1032,10 +1180,7 @@ pub fn tool_draw_with_plate(
                 }),
             },
             Err(e) => {
-                return Ok((
-                    error(&e.code, &e.message, json!({"cost_counted_usd": projected})),
-                    Vec::new(),
-                ));
+                return Ok((error(&e.code, &e.message, e.details), Vec::new()));
             }
         }
     } else {
@@ -1050,10 +1195,7 @@ pub fn tool_draw_with_plate(
         ) {
             Ok(staged) => staged,
             Err(e) => {
-                return Ok((
-                    error(&e.code, &e.message, json!({"cost_counted_usd": projected})),
-                    Vec::new(),
-                ));
+                return Ok((error(&e.code, &e.message, e.details), Vec::new()));
             }
         }
     };
@@ -1406,6 +1548,96 @@ pub fn run_stdio() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a plate call that SUCCEEDED, billing can still stop the
+    /// draw (F5 over-cap settle, settle write or pricing error). That
+    /// is not a refusal and not a failed image call: it says the call
+    /// was made and paid for, counts the actual cost, carries the
+    /// overage, and keeps the paid plate's handle so nothing paid for
+    /// is lost. Before the call, a refusal counts what was reserved
+    /// (nothing, normally).
+    #[test]
+    fn billing_stop_says_whether_the_plate_was_paid_for() {
+        let over = billing::BillingFailure::AfterCall {
+            message: "SPEND CAP EXCEEDED at settle: draw call c1 ...".to_string(),
+            counted_usd: 0.95,
+            actual_usd: Some(0.95),
+            overage: Some(crate::ledger::SettleOverage {
+                total_usd: 1.05,
+                overage_usd: 0.05,
+                cap_usd: 1.0,
+            }),
+            usage: crate::pricing::Usage::default(),
+        };
+        let f = billing_stop_failure(
+            over,
+            "c1",
+            "plate edit",
+            Some(Ok("asset://paidplate".to_string())),
+        );
+        assert_eq!(f.code, "BILLING_STOPPED_AFTER_CALL");
+        assert!(!f.message.contains("Refused before any call"), "{}", f.message);
+        assert!(
+            f.message.starts_with(
+                "Billing stopped the draw after the plate edit call succeeded; the call was made and paid for."
+            ),
+            "{}",
+            f.message
+        );
+        assert!(f.message.contains("SPEND CAP EXCEEDED at settle"), "{}", f.message);
+        assert!(f.message.contains("asset://paidplate"), "{}", f.message);
+        assert_eq!(f.details["cost_counted_usd"], json!(0.95));
+        assert_eq!(f.details["actual_usd"], json!(0.95));
+        assert_eq!(f.details["over_cap_usd"], json!(0.05));
+        assert_eq!(f.details["call_made"], json!(true));
+        assert_eq!(f.details["call_id"], json!("c1"));
+        assert_eq!(f.details["paid_plate_asset"], json!("asset://paidplate"));
+
+        // A settle write error after a paid call: the reservation is
+        // what the ledger counts; no overage; a plate that could not
+        // be kept says why.
+        let unsettled = billing::BillingFailure::AfterCall {
+            message: "cannot lock ledger: disk full".to_string(),
+            counted_usd: 0.01,
+            actual_usd: Some(0.012),
+            overage: None,
+            usage: crate::pricing::Usage::default(),
+        };
+        let f = billing_stop_failure(
+            unsettled,
+            "c2",
+            "plate generation",
+            Some(Err("no space left".to_string())),
+        );
+        assert_eq!(f.code, "BILLING_STOPPED_AFTER_CALL");
+        assert_eq!(f.details["cost_counted_usd"], json!(0.01));
+        assert_eq!(f.details["actual_usd"], json!(0.012));
+        assert!(f.details["over_cap_usd"].is_null());
+        assert!(f.details["paid_plate_asset"].is_null());
+        assert_eq!(f.details["paid_plate_error"], json!("no space left"));
+
+        // Before the call: the spend cap's refusal counts nothing; any
+        // other billing refusal is BILLING_REFUSED and counts what
+        // was reserved.
+        let refused = billing::BillingFailure::BeforeCall {
+            message: "Spend cap: ledger total $0.00 + projected $0.0100 would exceed the $0.00 cap. Call refused before it ran.".to_string(),
+            reserved_usd: 0.0,
+        };
+        let f = billing_stop_failure(refused, "c3", "plate edit", None);
+        assert_eq!(f.code, "SPEND_CAP_REFUSED");
+        assert!(f
+            .message
+            .starts_with("Billing refused the plate edit before any call was made: Spend cap"));
+        assert_eq!(f.details["cost_counted_usd"], json!(0.0));
+        assert_eq!(f.details["call_made"], json!(false));
+        let mirror = billing::BillingFailure::BeforeCall {
+            message: "cannot append mirror ledger".to_string(),
+            reserved_usd: 0.01,
+        };
+        let f = billing_stop_failure(mirror, "c4", "plate edit", None);
+        assert_eq!(f.code, "BILLING_REFUSED");
+        assert_eq!(f.details["cost_counted_usd"], json!(0.01));
+    }
 
     /// The sidecar's whole contract: an independent decoder reads
     /// the rendered PNG back to exactly the payload URL.
