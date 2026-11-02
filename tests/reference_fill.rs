@@ -256,6 +256,45 @@ fn whole_frame_footprint_has_nothing_to_fill_from() {
         .all(|p| p == [128, 128, 128, 255]));
 }
 
+/// Review aaa44dc defect 4: when the footprint covers the whole frame
+/// the hole is flat grey, so the receipt fields say grey (not
+/// `inpaint_diffusion`, not "filled from the photo pixels outside it").
+#[test]
+fn whole_frame_footprint_is_recorded_as_grey() {
+    let src = textured(40, 30);
+    let all = GrayImage {
+        width: 40,
+        height: 30,
+        pixels: vec![255; 1200],
+        icc_profile: None,
+    };
+    let fg = extract_foreground(&src, &all);
+    let r = edit_reference(&src, &fg, 40, 30, ReferenceFill::InpaintDiffusion);
+    assert!(r.image.pixels.chunks_exact(4).all(|p| p == [128, 128, 128, 255]));
+    let record = r.fill_record();
+    assert_eq!(record["fill"], json!("grey"), "{record}");
+    assert_eq!(record["fill_rgb"], json!([128, 128, 128]));
+    assert_eq!(record["fill_iterations"], json!(0));
+    assert_eq!(record["fill_texture"], json!(null));
+    let note = r.product_region_note();
+    assert!(!note.contains("photo pixels outside it"), "{note}");
+    assert!(note.contains("grey"), "{note}");
+    assert!(note.contains("no product pixel was sent"), "{note}");
+    // A frame with something outside the footprint is still the inpaint.
+    let mut corner = all.clone();
+    for y in 0..30 {
+        for x in 0..40 {
+            if x < 20 && y < 12 {
+                corner.pixels[y * 40 + x] = 0;
+            }
+        }
+    }
+    let fg = extract_foreground(&src, &corner);
+    let r = edit_reference(&src, &fg, 40, 30, ReferenceFill::InpaintDiffusion);
+    assert_eq!(r.fill_record()["fill"], json!("inpaint_diffusion"));
+    assert!(r.product_region_note().contains("photo pixels outside it"));
+}
+
 /// The only test in this binary that touches the environment.
 #[test]
 fn grey_env_restores_the_legacy_fill_and_the_record_says_which() {

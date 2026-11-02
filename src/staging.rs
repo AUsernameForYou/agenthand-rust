@@ -623,7 +623,12 @@ pub struct EditReference {
     /// The footprint's dilation in reference px (`reference_dilate_px`:
     /// 8, wider for upscaled small sources).
     pub dilate_px: usize,
+    /// The fill actually applied: `Grey` when asked for, and also when
+    /// the footprint covered the whole frame (`whole_frame`), since then
+    /// nothing outside it was left to inpaint from.
     pub fill: ReferenceFill,
+    /// The footprint covered every reference pixel.
+    pub whole_frame: bool,
     /// Total Gauss-Seidel sweeps over all pyramid levels (0 for grey,
     /// or when nothing outside the footprint was left to fill from).
     pub fill_iterations: u64,
@@ -663,6 +668,9 @@ impl EditReference {
 
     /// The receipt's `product_region` sentence for this fill.
     pub fn product_region_note(&self) -> &'static str {
+        if self.whole_frame {
+            return "every visible product pixel's footprint plus the dilation covered the whole frame, so nothing outside it was left to fill from: it was filled grey before upload; no product pixel was sent";
+        }
         match self.fill {
             ReferenceFill::Grey => "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
             ReferenceFill::InpaintDiffusion => "every visible product pixel's footprint plus the dilation was filled from the photo pixels outside it before upload; no product pixel was sent",
@@ -714,6 +722,7 @@ pub fn edit_reference_with_budget(
             hole_pixels,
             dilate_px,
             fill,
+            whole_frame: hole_pixels == out_w as u64 * out_h as u64,
             fill_iterations: 0,
             fill_work_px: 0,
         };
@@ -723,6 +732,7 @@ pub fn edit_reference_with_budget(
     let known: Vec<bool> = hole.iter().map(|&v| v == 0).collect();
     let hole_pixels = known.iter().filter(|&&k| !k).count() as u64;
     let (mut fill_iterations, mut fill_work_px) = (0u64, 0u64);
+    let whole_frame = hole_pixels > 0 && hole_pixels as usize == known.len();
     if hole_pixels > 0 {
         let mut rgb: Vec<[f32; 3]> = reference
             .pixels
@@ -738,7 +748,7 @@ pub fn edit_reference_with_budget(
                 }
             })
             .collect();
-        if known.iter().any(|&k| k) {
+        if !whole_frame {
             let texture = mirrored_texture(&rgb, &known, w, h);
             (fill_iterations, fill_work_px) = diffuse_fill(&mut rgb, &known, w, h, budget);
             for (i, t) in texture.iter().enumerate() {
@@ -768,7 +778,14 @@ pub fn edit_reference_with_budget(
         image: reference,
         hole_pixels,
         dilate_px,
-        fill,
+        // Nothing outside the footprint: the hole is the flat grey, and
+        // the record says so.
+        fill: if whole_frame {
+            ReferenceFill::Grey
+        } else {
+            fill
+        },
+        whole_frame,
         fill_iterations,
         fill_work_px,
     }

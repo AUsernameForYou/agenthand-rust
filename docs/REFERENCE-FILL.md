@@ -33,7 +33,7 @@ Why "no product pixel was sent" stays literally true, at every source size:
 - `tests/reference_leak.rs` proves it differentially (two sources that differ only in their alpha > 0 pixels give byte-identical references, both fills) at 300x225, 512x384, 600x450 and 1024x768 (upscaled) and 2856x2142 (downscaled), with centred, edge-touching and frame-filling masks; outside the hole the reference equals the plain resized photo. `tests/reference_fill.rs` does the same on synthetic bikes (same size, 2x down, a stretch) and on the real IMG_1443 run.
 - Fixed in the aaa44dc review (defect 1): before, the source was resized with its product pixels in place and the dilation was a flat 8 px. At a 300x225 source 244k reference pixels (max 37/255) depended on product pixels with the inpaint, 8k with the grey fill; at 512x384, 32-45k (max 6); at 600x450, 858 (max 2); at 640 px and up, none.
 
-Edge case: a footprint that covers the whole frame has nothing outside it to fill from. The hole is then neutral grey and `fill_iterations` is 0.
+Edge case: a footprint that covers the whole frame (a near-full surface mask once dilated) has nothing outside it to fill from. The hole is then neutral grey, `fill_iterations` is 0, and the record says so: `fill` is `"grey"`, `fill_rgb` `[128, 128, 128]`, `fill_texture` `null`, and `product_region` says the footprint covered the whole frame and was filled grey (review aaa44dc defect 4; it used to claim `inpaint_diffusion`, "filled from the photo pixels outside it"). The prompt wording still follows `AGENTHAND_REFERENCE_FILL`.
 
 Cost: the fine-level cap (review aaa44dc defect 2) bounds the work at under 44 hole-sized sweeps; it was up to 200 x 1.33. Release build, 2-vCPU VM, `edit_reference` at 1536x1024 including the 24 MP resize:
 
@@ -70,6 +70,8 @@ The grey reference costs about 1.6-2.1 s there (the resize), so the lawn's inpai
 | `hole_pixels`, `size`, `sha256` | as before | as before |
 | `dilate_px` | the dilation used: 8, wider for upscaled small sources (`reference_dilate_px`) | same |
 | `product_region` | "...filled from the photo pixels outside it before upload; no product pixel was sent" | the old grey sentence |
+
+When the footprint covers the whole frame the record is the grey column whatever was asked for, with its own `product_region` sentence ("...covered the whole frame, so nothing outside it was left to fill from: it was filled grey before upload...").
 
 No key was removed and none changed meaning; verification is unaffected.
 
