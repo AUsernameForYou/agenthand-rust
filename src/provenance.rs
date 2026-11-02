@@ -1413,8 +1413,11 @@ pub fn set_public_copy_unavailable(block: &mut Value, reason: &str) {
 
 // ---------------------------------------------------------------------------
 // The metadata-free public copy. JPEG and PNG copies are pure
-// container surgery: the image data moves byte for byte, only
-// metadata segments/chunks are dropped. HEIC has no byte-level
+// container surgery: the image data moves byte for byte, and only
+// the segments/chunks on an explicit ALLOWLIST (decode and colour
+// rendering needs) are kept; everything else, known metadata
+// carrier or not, is dropped (fix pass F1/F2: the old denylist let
+// C2PA, Photoshop IRB, private chunks and inter-scan APPn through). HEIC has no byte-level
 // surgery available (the metadata lives in its own item inside a
 // box structure we decode but do not rewrite), so its copy is a
 // lossless decode re-encoded as PNG with no metadata at all; the
@@ -1439,6 +1442,121 @@ fn strip_png(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Is a JPEG marker segment allowed in the public copy? An
+/// ALLOWLIST: anything not named here (every other APPn, COM, and
+/// any marker we do not recognise) is dropped.
+///
+/// Before the first scan the copy keeps only what decoding and
+/// colour rendering need: quantisation and Huffman tables (DQT,
+/// DHT), arithmetic-coding conditioning (DAC), restart interval
+/// (DRI), the frame header (SOFn, 0xC0-0xCF minus the DHT / JPG /
+/// DAC codes), JFIF/JFXX in APP0, the ICC profile in APP2 (colour
+/// rendering, not provenance) and the Adobe colour-transform flag
+/// in APP14. Between scans (progressive and multi-scan files) only
+/// table segments (DHT, DQT, DAC, DRI, DNL) survive: every APPn
+/// and COM there is dropped too.
+fn jpeg_segment_allowed(marker: u8, payload: &[u8], after_first_scan: bool) -> bool {
+    match marker {
+        0xDB | 0xC4 | 0xCC | 0xDD => true, // DQT, DHT, DAC, DRI
+        0xDC => after_first_scan,          // DNL only follows a scan
+        _ if after_first_scan => false,
+        0xC0..=0xCF => marker != 0xC8, // SOFn (0xC4 / 0xCC matched above; 0xC8 is JPG, reserved)
+        0xE0 => payload.starts_with(b"JFIF\0") || payload.starts_with(b"JFXX\0"),
+        0xE2 => payload.starts_with(b"ICC_PROFILE\0"),
+        0xEE => payload.starts_with(b"Adobe"),
+        _ => false,
+    }
+}
+
+/// The JPEG public copy: an allowlist walk over the whole stream,
+/// scans included. Segments are kept or dropped by
+/// [`jpeg_segment_allowed`]; each scan's entropy-coded data moves
+/// byte for byte (0xFF00 stuffing and RST0-7 are data, not
+/// markers); the walk ends at EOI, which is emitted, and anything
+/// after it (trailing data) is dropped. A stream that ends inside
+/// scan data keeps the data it has and gains an EOI.
+fn strip_jpeg(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out: Vec<u8> = Vec::with_capacity(data.len());
+    out.extend_from_slice(&[0xFF, 0xD8]);
+    let mut pos = 2usize;
+    let mut after_first_scan = false;
+    loop {
+        if pos >= data.len() {
+            // Ran out without an EOI: close the stream.
+            if !after_first_scan {
+                return Err("JPEG has no SOS segment".to_string());
+            }
+            out.extend_from_slice(&[0xFF, 0xD9]);
+            return Ok(out);
+        }
+        if data[pos] != 0xFF {
+            return Err(format!("JPEG marker expected at byte {pos}"));
+        }
+        // Fill bytes: any run of 0xFF before the marker code.
+        while pos + 1 < data.len() && data[pos + 1] == 0xFF {
+            pos += 1;
+        }
+        if pos + 1 >= data.len() {
+            pos = data.len();
+            continue;
+        }
+        let marker = data[pos + 1];
+        match marker {
+            0xD9 => {
+                if !after_first_scan {
+                    return Err("JPEG has no SOS segment".to_string());
+                }
+                out.extend_from_slice(&[0xFF, 0xD9]);
+                return Ok(out);
+            }
+            // Standalone markers outside scan data (TEM, a stray
+            // RSTn, a repeated SOI): no payload, not needed, dropped.
+            0x01 | 0xD0..=0xD8 => {
+                pos += 2;
+                continue;
+            }
+            _ => {}
+        }
+        if pos + 4 > data.len() {
+            return Err("JPEG segment header is truncated".to_string());
+        }
+        let seg_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        if seg_len < 2 || pos + 2 + seg_len > data.len() {
+            return Err("JPEG segment runs past the end of the file".to_string());
+        }
+        let seg_end = pos + 2 + seg_len;
+        if marker == 0xDA {
+            // SOS header, then its entropy-coded data up to the next
+            // real marker.
+            out.extend_from_slice(&data[pos..seg_end]);
+            let mut i = seg_end;
+            while i < data.len() {
+                if data[i] == 0xFF {
+                    if i + 1 >= data.len() {
+                        break;
+                    }
+                    match data[i + 1] {
+                        0x00 | 0xD0..=0xD7 => {
+                            i += 2;
+                            continue;
+                        }
+                        _ => break,
+                    }
+                }
+                i += 1;
+            }
+            out.extend_from_slice(&data[seg_end..i]);
+            after_first_scan = true;
+            pos = i;
+            continue;
+        }
+        if jpeg_segment_allowed(marker, &data[pos + 4..seg_end], after_first_scan) {
+            out.extend_from_slice(&data[pos..seg_end]);
+        }
+        pos = seg_end;
+    }
+}
+
 pub fn metadata_free_public_copy(data: &[u8]) -> Result<(Vec<u8>, &'static str), String> {
     match detect_format(data) {
         PhotoFormat::Jpeg => {
@@ -1446,46 +1564,7 @@ pub fn metadata_free_public_copy(data: &[u8]) -> Result<(Vec<u8>, &'static str),
             if !walk.has_scan {
                 return Err("JPEG carries no image scan".to_string());
             }
-            let mut out: Vec<u8> = vec![0xFF, 0xD8];
-            let mut sos_span: Option<std::ops::Range<usize>> = None;
-            for seg in &walk.segments {
-                if seg.marker == 0xDA {
-                    sos_span = Some(seg.span.clone());
-                    break;
-                }
-                // APP1 carries both EXIF and XMP; COM carries
-                // free-text comments. Both go. Everything else
-                // (including the ICC profile in APP2, which is
-                // colour rendering, not provenance) stays.
-                if seg.marker == 0xE1 || seg.marker == 0xFE {
-                    continue;
-                }
-                out.extend_from_slice(&data[seg.span.clone()]);
-            }
-            let sos = sos_span.ok_or("JPEG has no SOS segment")?;
-            // From the SOS marker to the true EOI, byte for byte;
-            // anything after the EOI is trailing data and does
-            // not ride into the copy.
-            let scan_start = sos.start;
-            let mut i = sos.end;
-            let mut eoi_end = data.len();
-            while i + 1 < data.len() {
-                if data[i] != 0xFF {
-                    i += 1;
-                    continue;
-                }
-                match data[i + 1] {
-                    0x00 | 0xD0..=0xD7 => i += 2,
-                    0xFF => i += 1,
-                    0xD9 => {
-                        eoi_end = i + 2;
-                        break;
-                    }
-                    _ => i += 2,
-                }
-            }
-            out.extend_from_slice(&data[scan_start..eoi_end]);
-            Ok((out, "jpeg"))
+            Ok((strip_jpeg(data)?, "jpeg"))
         }
         PhotoFormat::Png => strip_png(data)
             .map(|bytes| (bytes, "png"))
