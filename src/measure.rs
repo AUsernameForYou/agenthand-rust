@@ -157,7 +157,7 @@ fn project(H: &H3, points: &[Pt]) -> Vec<Pt> {
         .collect()
 }
 
-fn project1(H: &H3, p: Pt) -> Pt {
+pub(crate) fn project1(H: &H3, p: Pt) -> Pt {
     project(H, &[p])[0]
 }
 
@@ -171,7 +171,7 @@ fn mat3_mul(a: &H3, b: &H3) -> H3 {
     out
 }
 
-fn mat3_inv(m: &H3) -> Option<H3> {
+pub(crate) fn mat3_inv(m: &H3) -> Option<H3> {
     let (a, b, c) = (m[0], m[1], m[2]);
     let (d, e, f) = (m[3], m[4], m[5]);
     let (g, h, i) = (m[6], m[7], m[8]);
@@ -1619,7 +1619,7 @@ fn approx_simple(chain: &[Pt]) -> Vec<Pt> {
 /// raster order of each component's start pixel; `simple` applies
 /// the CHAIN_APPROX_SIMPLE direction-change compression, otherwise
 /// the full chain (CHAIN_APPROX_NONE) is returned.
-fn external_contours(mask: &[u8], w: usize, h: usize, simple: bool) -> Vec<Vec<Pt>> {
+pub(crate) fn external_contours(mask: &[u8], w: usize, h: usize, simple: bool) -> Vec<Vec<Pt>> {
     // Label components (8-connectivity) in raster order.
     let mut labels = vec![0i32; w * h];
     let mut starts: Vec<(i64, i64)> = Vec::new();
@@ -3105,7 +3105,7 @@ fn extent_from_points(points: &[Pt]) -> (f64, f64, Pt) {
     )
 }
 
-fn contour_area(chain: &[Pt]) -> f64 {
+pub(crate) fn contour_area(chain: &[Pt]) -> f64 {
     let n = chain.len();
     if n < 3 {
         return 0.0;
@@ -3219,6 +3219,12 @@ fn object_extent(
         if points.len() < 10 {
             return Err("Supplied mask is empty.".to_string());
         }
+        warnings.push(
+            "Extent from a caller-supplied mask (the object's own pixels), mapped \
+             into the card plane through the card homography: this assumes the \
+             object lies flat on the same surface as the card."
+                .to_string(),
+        );
         let projected: Vec<Pt> = points.iter().map(|p| project1(&H_inv, *p)).collect();
         return Ok(extent_from_points(&projected));
     }
@@ -3397,6 +3403,58 @@ impl Estimate {
     }
 }
 
+/// The card plane an accepted estimate rests on: what a measurement
+/// made elsewhere in that plane (the garment landmarks) needs to map
+/// pixels to millimetres and to carry the same range model.
+#[derive(Clone, Debug)]
+pub struct Plane {
+    /// Card mm -> image px.
+    pub H: [f64; 9],
+    /// Image px -> card mm.
+    pub H_inv: [f64; 9],
+    /// Card fit reprojection RMS, image px.
+    pub rms: f64,
+    /// Small-card systematic fraction (0 at or above COMFORT_CARD_PX).
+    pub sys_frac: f64,
+    /// Centroid and diagonal of the card's bracket frame, card mm (the
+    /// lever arm of the range model is measured from here).
+    pub frame_centroid_mm: [f64; 2],
+    pub frame_diag_mm: f64,
+}
+
+impl Plane {
+    /// Image pixels per card millimetre at a card-plane point (mean of
+    /// the two axis Jacobian norms, as the range model uses).
+    pub fn px_per_mm(&self, p_mm: [f64; 2]) -> f64 {
+        let c = project1(&self.H, p_mm);
+        let jx = sub(project1(&self.H, pt(p_mm[0] + 1.0, p_mm[1])), c);
+        let jy = sub(project1(&self.H, pt(p_mm[0], p_mm[1] + 1.0)), c);
+        (norm(jx) + norm(jy)) / 2.0
+    }
+
+    /// Card-fit half range (mm) for a length `len_mm` whose midpoint is
+    /// `mid_mm`: the estimator's own model, 2u + 1% + small-card term,
+    /// with u = (rms / px_per_mm) * (1 + lever)^2.
+    pub fn card_half_range_mm(&self, len_mm: f64, mid_mm: [f64; 2]) -> f64 {
+        let ppm = self.px_per_mm(mid_mm);
+        if ppm <= 0.0 {
+            return f64::INFINITY;
+        }
+        let sigma_mm = self.rms / ppm;
+        let lever = norm(sub(mid_mm, self.frame_centroid_mm)) / self.frame_diag_mm;
+        let u = sigma_mm * (1.0 + lever).powi(2);
+        2.0 * u + 0.01 * len_mm + self.sys_frac * len_mm
+    }
+
+    pub fn to_mm(&self, p_px: [f64; 2]) -> [f64; 2] {
+        project1(&self.H_inv, p_px)
+    }
+
+    pub fn to_px(&self, p_mm: [f64; 2]) -> [f64; 2] {
+        project1(&self.H, p_mm)
+    }
+}
+
 /// Port of Python `estimate` (frame already decoded; see the CLI
 /// for source loading, including asset:// handles).
 pub fn estimate(
@@ -3406,6 +3464,17 @@ pub fn estimate(
     bbox: Option<(f64, f64, f64, f64)>,
     mask_obj: Option<&[u8]>,
 ) -> Result<Estimate, String> {
+    estimate_with_plane(frame, card, card_id, bbox, mask_obj).map(|(est, _)| est)
+}
+
+/// `estimate`, also returning the card plane it rests on.
+pub fn estimate_with_plane(
+    frame: &MeasureFrame,
+    card: &CardProfile,
+    card_id: &str,
+    bbox: Option<(f64, f64, f64, f64)>,
+    mask_obj: Option<&[u8]>,
+) -> Result<(Estimate, Plane), String> {
     let mut warnings: Vec<String> =
         vec!["Prototype: flat object in the same plane as the card only.".to_string()];
     let det = detect_card(frame, card)?;
@@ -3529,7 +3598,16 @@ pub fn estimate(
          here scales by that factor.",
         bracket[0], bracket[1], bracket[0]
     );
-    Ok(Estimate {
+    let plane = Plane {
+        H: det.H,
+        H_inv: mat3_inv(&det.H)
+            .ok_or_else(|| "Degenerate homography at the object location.".to_string())?,
+        rms: det.rms,
+        sys_frac,
+        frame_centroid_mm: frame_centroid,
+        frame_diag_mm: frame_diag,
+    };
+    let est = Estimate {
         width_mm: round_n(width_mm, 1),
         height_mm: round_n(height_mm, 1),
         range_pct,
@@ -3549,5 +3627,6 @@ pub fn estimate(
         card_outer_bracket_mm: bracket,
         card_print_check,
         warnings,
-    })
+    };
+    Ok((est, plane))
 }
