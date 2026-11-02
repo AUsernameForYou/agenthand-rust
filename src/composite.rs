@@ -30,6 +30,61 @@ pub const OPAQUE_ALPHA_THRESHOLD: u8 = 255;
 /// policy in `receipt_schema_problems`.
 pub const RECEIPT_SCHEMA_VERSION: i64 = 2;
 
+/// Receipt schemas this verifier grades (Item 11, cross-build
+/// verification). This build still ISSUES schema 2; it VERIFIES:
+///
+/// - 2: this build's receipts (and the Python build before paper-fill);
+/// - 3: the Python build's paper-fill receipts (python `main`,
+///   ff72fcb): schema 2 plus a REQUIRED `reconstruction` block. Graded
+///   on the shared core plus the schema-3 checks: the block's shape
+///   and arithmetic, the paper layer / region map hashes, the paper
+///   recount with zero overlap under any foreground alpha, the region
+///   map partition, foreground authenticity against the source photo,
+///   and the whole-delivery recomposition (plate, then paper, then
+///   product, rebuilt from the stored layers);
+/// - 4: ASSUMED to be schema 3 plus additive fields only, graded
+///   exactly as schema 3 (unknown extra fields are ignored, as they
+///   are in every schema).
+///
+/// TODO(schema-4): no real schema-4 receipt has been seen by this
+/// build. A real sample must confirm that (a) every schema-3 field
+/// is still present with the same meaning and type, (b) the
+/// `reconstruction` block keeps its keys and arithmetic (overlap 0,
+/// regions summing to reconstruction_pixels, the fraction formula),
+/// (c) the recomposition order is still plate, paper, product with
+/// no new layer, and (d) no new field changes how an existing check
+/// must be graded. If any of those fails, schema 4 needs its own
+/// branch here instead of riding on schema 3.
+///
+/// Any other marker (and a missing marker on a receipt carrying
+/// current-schema fields) is refused, as before.
+pub const VERIFIABLE_RECEIPT_SCHEMAS: [i64; 3] = [2, 3, 4];
+
+/// Python `paperfill.REGION_CLASS_CODES`: the region map's pixel code
+/// per region class (0 = no paper).
+const REGION_CLASS_CODES: [(&str, u8); 3] = [("hole", 1), ("support", 2), ("occluder", 3)];
+
+/// The reconstruction block's required keys (Python
+/// `_RECONSTRUCTION_BLOCK_KEYS`). Extra keys are tolerated.
+const RECONSTRUCTION_BLOCK_KEYS: [&str; 16] = [
+    "status",
+    "renderer",
+    "layer_asset",
+    "layer_sha256",
+    "layer_pixel_sha256",
+    "region_map_asset",
+    "region_map_sha256",
+    "region_map_pixel_sha256",
+    "reconstruction_pixels",
+    "reconstruction_overlap_product_pixels",
+    "reconstruction_fraction",
+    "guard_ring_px",
+    "motif",
+    "regions",
+    "refusals",
+    "unfilled_gap_pixels",
+];
+
 /// Pillow's fast divide-by-255: `(((a >> 8) + a) >> 8)`.
 fn shift_for_div_255(a: u32) -> u32 {
     ((a >> 8) + a) >> 8
@@ -1195,6 +1250,203 @@ const V2_ONLY_FIELDS: [&str; 14] = [
     "mask_scale_method",
 ];
 
+fn is_hex64(v: &Value) -> bool {
+    v.as_str()
+        .map(|s| s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+        .unwrap_or(false)
+}
+
+fn is_hash_or_null(v: &Value) -> bool {
+    v.is_null() || is_hex64(v)
+}
+
+fn is_handle_or_null(v: &Value) -> bool {
+    v.is_null()
+        || v.as_str()
+            .map(|s| s.starts_with(HANDLE_PREFIX))
+            .unwrap_or(false)
+}
+
+fn is_fraction(v: &Value) -> bool {
+    !v.is_boolean() && v.as_f64().map(|f| (0.0..=1.0).contains(&f)).unwrap_or(false)
+}
+
+/// The verifiable schema a receipt is marked with: Some(2 | 3 | 4)
+/// for a JSON integer marker in [`VERIFIABLE_RECEIPT_SCHEMAS`],
+/// None otherwise (unmarked, or a marker this verifier refuses).
+pub fn receipt_schema_version(receipt: &Value) -> Option<i64> {
+    match receipt.get("receipt_schema") {
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .filter(|v| VERIFIABLE_RECEIPT_SCHEMAS.contains(v)),
+        _ => None,
+    }
+}
+
+/// Python `_is_reconstruction_block`: every required key present and
+/// well-typed (status, assets, hashes, counts, fraction, motif,
+/// regions, refusals).
+fn is_reconstruction_block(value: &Value) -> bool {
+    let Some(block) = value.as_object() else {
+        return false;
+    };
+    if !RECONSTRUCTION_BLOCK_KEYS.iter().all(|k| block.contains_key(*k)) {
+        return false;
+    }
+    if !matches!(block["status"].as_str(), Some("none" | "applied" | "refused")) {
+        return false;
+    }
+    if !(block["renderer"].is_null() || block["renderer"].is_string()) {
+        return false;
+    }
+    if !is_handle_or_null(&block["layer_asset"]) || !is_handle_or_null(&block["region_map_asset"]) {
+        return false;
+    }
+    for name in [
+        "layer_sha256",
+        "layer_pixel_sha256",
+        "region_map_sha256",
+        "region_map_pixel_sha256",
+    ] {
+        if !is_hash_or_null(&block[name]) {
+            return false;
+        }
+    }
+    for name in [
+        "reconstruction_pixels",
+        "reconstruction_overlap_product_pixels",
+        "unfilled_gap_pixels",
+    ] {
+        if !is_count(&block[name]) {
+            return false;
+        }
+    }
+    if !is_fraction(&block["reconstruction_fraction"]) {
+        return false;
+    }
+    if !(block["guard_ring_px"].is_null() || is_count(&block["guard_ring_px"])) {
+        return false;
+    }
+    let motif = &block["motif"];
+    if !motif.is_null() {
+        let Some(m) = motif.as_object() else {
+            return false;
+        };
+        let opacity_ok = m
+            .get("opacity")
+            .map(|o| o.is_number() && !o.is_boolean())
+            .unwrap_or(false);
+        if !m.get("diameter_px").map(is_count).unwrap_or(false)
+            || !opacity_ok
+            || !m.get("color").map(Value::is_string).unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    let Some(regions) = block["regions"].as_array() else {
+        return false;
+    };
+    for region in regions {
+        let Some(r) = region.as_object() else {
+            return false;
+        };
+        let class_ok = r
+            .get("class")
+            .and_then(Value::as_str)
+            .map(|c| REGION_CLASS_CODES.iter().any(|(name, _)| *name == c))
+            .unwrap_or(false);
+        let bbox_ok = r
+            .get("bbox")
+            .and_then(Value::as_array)
+            .map(|b| b.len() == 4 && b.iter().all(is_count))
+            .unwrap_or(false);
+        if !r.get("id").map(is_count).unwrap_or(false)
+            || !class_ok
+            || !r.get("pixels").map(is_count).unwrap_or(false)
+            || !bbox_ok
+            || !r.get("provenance").map(Value::is_object).unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    let Some(refusals) = block["refusals"].as_array() else {
+        return false;
+    };
+    for refusal in refusals {
+        let Some(r) = refusal.as_object() else {
+            return false;
+        };
+        if !r.get("code").map(Value::is_string).unwrap_or(false)
+            || !r.get("detail").map(Value::is_string).unwrap_or(false)
+            || !r.get("pixels").map(is_count).unwrap_or(false)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Schema 3+ shape problems of the reconstruction block (Python
+/// `_validate_receipt`, `version >= 3` branches): presence and shape,
+/// then the block's own arithmetic. Empty = acceptable.
+fn reconstruction_problems(receipt: &Value) -> Vec<String> {
+    let Some(block) = receipt.get("reconstruction") else {
+        return vec!["missing field: reconstruction".to_string()];
+    };
+    if !is_reconstruction_block(block) {
+        return vec![format!(
+            "field reconstruction has the wrong type or shape: {}",
+            serde_json::to_string(block).unwrap_or_default()
+        )];
+    }
+    let mut problems = Vec::new();
+    let pixels = block["reconstruction_pixels"].as_u64().unwrap_or(0);
+    let region_sum: u64 = block["regions"]
+        .as_array()
+        .map(|rs| rs.iter().map(|r| r["pixels"].as_u64().unwrap_or(0)).sum())
+        .unwrap_or(0);
+    if block["reconstruction_overlap_product_pixels"].as_u64() != Some(0) {
+        problems.push(
+            "reconstruction_overlap_product_pixels must be 0; paper on product pixels is \
+             not a weaker claim, it is a broken one"
+                .to_string(),
+        );
+    }
+    if region_sum != pixels {
+        problems.push("reconstruction regions do not sum to reconstruction_pixels".to_string());
+    }
+    if block["status"].as_str() == Some("applied") {
+        if block["layer_asset"].is_null() || pixels == 0 {
+            problems.push(
+                "reconstruction status is 'applied' but no layer asset or no paper pixels \
+                 are claimed"
+                    .to_string(),
+            );
+        }
+        let opaque = receipt["opaque_pixels"].as_u64().unwrap_or(0);
+        let total = pixels + opaque;
+        let expected = if total > 0 {
+            round6(pixels as f64 / total as f64)
+        } else {
+            0.0
+        };
+        let stated = block["reconstruction_fraction"].as_f64().unwrap_or(f64::NAN);
+        if !((stated - expected).abs() <= 1e-9) {
+            problems.push(
+                "reconstruction_fraction disagrees with reconstruction_pixels / \
+                 (reconstruction_pixels + opaque_pixels)"
+                    .to_string(),
+            );
+        }
+    } else if !block["layer_asset"].is_null() || pixels != 0 {
+        problems.push(format!(
+            "reconstruction status is {} but a layer asset or paper pixels are claimed",
+            serde_json::to_string(&block["status"]).unwrap_or_default()
+        ));
+    }
+    problems
+}
+
 /// The schema-marker policy of the Python verifier's
 /// `_validate_receipt`, as the front door of
 /// `verify_receipt_from_disk`: a receipt stamped with the current
@@ -1217,21 +1469,33 @@ fn receipt_schema_problems(receipt: &Value) -> Vec<String> {
         Some(Value::Null) | None => None,
         Some(v) => Some(v),
     };
-    // Python: type(schema) is int and schema == RECEIPT_SCHEMA_VERSION.
-    // A JSON float (2.0), string ("2"), or bool is NOT the marker.
-    let strict = matches!(
-        schema,
-        Some(Value::Number(n)) if n.as_i64() == Some(RECEIPT_SCHEMA_VERSION)
-    );
+    // Python: type(schema) is int and schema in the graded set
+    // (VERIFIABLE_RECEIPT_SCHEMAS: 2, 3, 4). A JSON float (2.0),
+    // string ("2"), or bool is NOT the marker.
+    let version = receipt_schema_version(receipt);
+    let strict = version.is_some();
     if let Some(v) = schema {
         if !strict {
             problems.push(format!(
                 "unsupported receipt_schema {}; this verifier grades \
-                 schema {} receipts and unmarked v1 receipts",
+                 schema 2, 3 and 4 receipts and unmarked v1 receipts",
                 serde_json::to_string(v).unwrap_or_default(),
-                RECEIPT_SCHEMA_VERSION
             ));
         }
+    }
+    // Python: `0 < version < 3 and "reconstruction" in receipt`. Paper
+    // disclosed on an unmarked or schema-2 receipt would otherwise be
+    // carried as an ignored extra field: the blind spot schema 3
+    // exists to close.
+    if (schema.is_none() || version == Some(2)) && receipt.get("reconstruction").is_some() {
+        problems.push(
+            "receipt carries a reconstruction block but is not marked schema 3; \
+             refusing to grade reconstruction under an older policy"
+                .to_string(),
+        );
+    }
+    if version.map(|v| v >= 3).unwrap_or(false) {
+        problems.extend(reconstruction_problems(receipt));
     }
     if !strict && V2_ONLY_FIELDS.iter().any(|f| receipt.get(f).is_some()) {
         problems.push(
@@ -1480,6 +1744,71 @@ pub fn verify_receipt_from_disk(
         }
     }
 
+    // Schema 3+ (Item 11): the paper-fill reconstruction block's
+    // assets must still match their records, and the receipt's hashes
+    // must name them. Schema-2 receipts never reach this branch, so
+    // their reports are unchanged.
+    let recon_block: Option<&Map<String, Value>> = if receipt_schema_version(receipt)
+        .map(|v| v >= 3)
+        .unwrap_or(false)
+    {
+        receipt.get("reconstruction").and_then(Value::as_object)
+    } else {
+        None
+    };
+    if let Some(block) = recon_block {
+        for (label, asset_key, sha_key, pixel_key, hash_check) in [
+            (
+                "reconstruction_layer",
+                "layer_asset",
+                "layer_sha256",
+                "layer_pixel_sha256",
+                "reconstruction_hash_matches_receipt",
+            ),
+            (
+                "reconstruction_region_map",
+                "region_map_asset",
+                "region_map_sha256",
+                "region_map_pixel_sha256",
+                "region_map_hash_matches_receipt",
+            ),
+        ] {
+            let Some(handle) = block.get(asset_key).and_then(Value::as_str) else {
+                continue;
+            };
+            match store.verify_integrity(handle) {
+                Ok(()) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    &format!("{label}_file_integrity"),
+                    true,
+                    "",
+                ),
+                Err(e) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    &format!("{label}_file_integrity"),
+                    false,
+                    &e,
+                ),
+            }
+            match store.get_record(handle) {
+                Ok(record) => set_check(
+                    &mut checks,
+                    &mut problems,
+                    hash_check,
+                    block.get(sha_key).and_then(Value::as_str) == Some(record.sha256.as_str())
+                        && block.get(pixel_key).and_then(Value::as_str)
+                            == record.pixel_sha256.as_deref(),
+                    &format!(
+                        "the receipt's {label} hashes do not match the asset's sidecar record"
+                    ),
+                ),
+                Err(e) => set_check(&mut checks, &mut problems, hash_check, false, &e),
+            }
+        }
+    }
+
     let foreground = store.read_image(&foreground_handle)?;
     let composite_image = store.read_image(composite_handle)?;
     set_check(
@@ -1613,6 +1942,20 @@ pub fn verify_receipt_from_disk(
         "the delivered composite's colour profile differs from the source photo's; identical pixel values would display as different colours",
     );
 
+    if let Some(block) = recon_block {
+        schema3_pixel_checks(
+            store,
+            receipt,
+            block,
+            &foreground,
+            &source_image,
+            &composite_image,
+            &mut checks,
+            &mut problems,
+            &mut recomputed,
+        );
+    }
+
     let ok = checks.values().all(|v| v.as_bool().unwrap_or(false));
     Ok(json!({
         "ok": ok,
@@ -1623,6 +1966,209 @@ pub fn verify_receipt_from_disk(
         "foreground_asset": foreground_handle,
         "source_asset": source_handle,
     }))
+}
+
+/// Paper (alpha > 0 in the layer) and its overlap with the product
+/// (any foreground alpha > 0): Python `_measure_reconstruction`.
+fn measure_reconstruction(foreground: &RgbaImage, layer: &RgbaImage) -> (u64, u64) {
+    let (mut paper, mut overlap) = (0u64, 0u64);
+    for (fg, ly) in foreground
+        .pixels
+        .chunks_exact(4)
+        .zip(layer.pixels.chunks_exact(4))
+    {
+        if ly[3] > 0 {
+            paper += 1;
+            if fg[3] > 0 {
+                overlap += 1;
+            }
+        }
+    }
+    (paper, overlap)
+}
+
+/// The schema-3 pixel checks of the Python verifier (python `main`,
+/// ff72fcb), run only for schema 3+ receipts:
+///
+/// - `foreground_matches_source`: every fully opaque foreground pixel
+///   equals the source photo's pixel (fabricated product pixels under
+///   a valid lineage otherwise pass every other check);
+/// - `recount_reconstruction_pixels` / `recount_overlap_zero`: the
+///   stored paper layer, recounted, holds the claimed paper and none
+///   of it sits under any foreground alpha;
+/// - `region_map_partition`: the region map covers exactly the paper
+///   pixels, uses only known class codes, and each class's pixel
+///   count equals the sum of that class's region counts;
+/// - `layer_reproduction`: rebuilding plate, then paper, then product
+///   from the stored layers reproduces the delivered file pixel for
+///   pixel. Without a plate asset the check is a NAMED skip in
+///   `recomputed`, never a silent pass.
+#[allow(clippy::too_many_arguments)]
+fn schema3_pixel_checks(
+    store: &AssetStore,
+    receipt: &Value,
+    block: &Map<String, Value>,
+    foreground: &RgbaImage,
+    source_image: &RgbaImage,
+    composite_image: &RgbaImage,
+    checks: &mut Map<String, Value>,
+    problems: &mut Vec<String>,
+    recomputed: &mut Map<String, Value>,
+) {
+    let mut set_check = |name: &str, ok: bool, detail: &str| {
+        checks.insert(name.to_string(), Value::Bool(ok));
+        if !ok {
+            problems.push(format!("{name}: {detail}"));
+        }
+    };
+
+    // Foreground authenticity against the source photo.
+    if (foreground.width, foreground.height) != (source_image.width, source_image.height) {
+        set_check(
+            "foreground_matches_source",
+            false,
+            &format!(
+                "foreground is {}x{} but the source photo is {}x{}",
+                foreground.width, foreground.height, source_image.width, source_image.height
+            ),
+        );
+    } else {
+        let same = foreground
+            .pixels
+            .chunks_exact(4)
+            .zip(source_image.pixels.chunks_exact(4))
+            .all(|(fg, src)| fg[3] != OPAQUE_ALPHA_THRESHOLD || fg == src);
+        set_check(
+            "foreground_matches_source",
+            same,
+            "the foreground differs from the source photo on fully opaque pixels; the \
+             product layer is not the photograph it claims to be",
+        );
+    }
+
+    // Paper recounts and the region-map partition.
+    let mut layer_image: Option<RgbaImage> = None;
+    if let Some(layer_handle) = block.get("layer_asset").and_then(Value::as_str) {
+        let recount = (|| -> Result<(), String> {
+            let layer = store.read_image(layer_handle)?;
+            if (layer.width, layer.height) != (foreground.width, foreground.height) {
+                return Err(format!(
+                    "reconstruction layer is {}x{}, foreground is {}x{}",
+                    layer.width, layer.height, foreground.width, foreground.height
+                ));
+            }
+            let (paper, overlap) = measure_reconstruction(foreground, &layer);
+            recomputed.insert("reconstruction_pixels".into(), json!(paper));
+            recomputed.insert(
+                "reconstruction_overlap_product_pixels".into(),
+                json!(overlap),
+            );
+            let claimed = block["reconstruction_pixels"].as_u64().unwrap_or(0);
+            set_check(
+                "recount_reconstruction_pixels",
+                paper == claimed,
+                &format!("stored layer holds {paper} paper pixels; receipt says {claimed}"),
+            );
+            set_check(
+                "recount_overlap_zero",
+                overlap == 0,
+                &format!(
+                    "{overlap} paper pixels sit under foreground alpha; paper there changes \
+                     the delivered product edge"
+                ),
+            );
+            if let Some(map_handle) = block.get("region_map_asset").and_then(Value::as_str) {
+                let map = store.read_gray_image(map_handle)?;
+                if (map.width, map.height) != (layer.width, layer.height) {
+                    return Err(format!(
+                        "region map is {}x{}, layer is {}x{}",
+                        map.width, map.height, layer.width, layer.height
+                    ));
+                }
+                let partition_ok = map
+                    .pixels
+                    .iter()
+                    .zip(layer.pixels.chunks_exact(4))
+                    .all(|(&code, px)| (code > 0) == (px[3] > 0));
+                let mut class_ok = map
+                    .pixels
+                    .iter()
+                    .all(|&code| code == 0 || REGION_CLASS_CODES.iter().any(|(_, c)| *c == code));
+                let regions = block["regions"].as_array().cloned().unwrap_or_default();
+                for (class, code) in REGION_CLASS_CODES {
+                    let expected: u64 = regions
+                        .iter()
+                        .filter(|r| r["class"].as_str() == Some(class))
+                        .map(|r| r["pixels"].as_u64().unwrap_or(0))
+                        .sum();
+                    let found = map.pixels.iter().filter(|&&c| c == code).count() as u64;
+                    if found != expected {
+                        class_ok = false;
+                    }
+                }
+                set_check(
+                    "region_map_partition",
+                    partition_ok && class_ok,
+                    "the region map disagrees with the layer's paper pixels or the per-class \
+                     counts",
+                );
+            }
+            layer_image = Some(layer);
+            Ok(())
+        })();
+        if let Err(e) = recount {
+            set_check(
+                "reconstruction_files_decodable",
+                false,
+                &format!("reconstruction assets could not be decoded: {e}"),
+            );
+        }
+    }
+
+    // Whole-delivery recomposition: plate, then paper, then product.
+    match receipt.get("plate_asset").and_then(Value::as_str) {
+        Some(plate_handle) => {
+            let rebuilt = (|| -> Result<RgbaImage, String> {
+                let plate = store.read_image(plate_handle)?;
+                let (mut base, _) = fit_plate(&plate, foreground.width, foreground.height);
+                if block.get("layer_asset").and_then(Value::as_str).is_some() {
+                    let layer = layer_image
+                        .as_ref()
+                        .ok_or("the reconstruction layer could not be read")?;
+                    let (_, overlap) = measure_reconstruction(foreground, layer);
+                    if overlap > 0 {
+                        return Err(format!(
+                            "reconstruction layer places paper on {overlap} pixels the \
+                             foreground occupies"
+                        ));
+                    }
+                    base = alpha_composite(&base, layer);
+                }
+                Ok(alpha_composite(&base, foreground))
+            })();
+            match rebuilt {
+                Ok(rebuilt) => set_check(
+                    "layer_reproduction",
+                    rebuilt.width == composite_image.width
+                        && rebuilt.height == composite_image.height
+                        && rebuilt.pixels == composite_image.pixels,
+                    "the delivered file is not the composite of its stored plate, paper layer, \
+                     and foreground; pixels outside the three layers are present",
+                ),
+                Err(e) => set_check(
+                    "layer_reproduction",
+                    false,
+                    &format!("rebuild from stored layers failed: {e}"),
+                ),
+            }
+        }
+        None => {
+            recomputed.insert(
+                "layer_reproduction".into(),
+                json!("skipped: no plate asset (local placeholder plate)"),
+            );
+        }
+    }
 }
 
 /// Standalone verification of exported files (port of `verify.py`):

@@ -171,7 +171,23 @@ fn nulled_marker_on_a_current_receipt_is_refused() {
 fn lowered_or_raised_marker_is_unsupported() {
     let (store, _dir, _photo, fg) = seeded_store_alpha_mask();
     let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
-    for bad in [json!(1), json!(3), json!("2"), json!(2.0), json!(true)] {
+    // Item 11: schemas 3 and 4 are now graded (cross-build), so a
+    // raised marker that is still refused as unknown is 5. A schema-2
+    // receipt relabelled 3 or 4 is refused too, for lacking the
+    // reconstruction block those schemas require.
+    for relabel in [json!(3), json!(4)] {
+        let mut forged = receipt.clone();
+        forged["receipt_schema"] = relabel.clone();
+        let report = composite::verify_receipt_from_disk(&store, &handle, Some(&forged)).unwrap();
+        assert_eq!(report["ok"], json!(false), "marker {relabel} must fail");
+        assert_eq!(report["checks"]["receipt_shape"], json!(false));
+        let problems = report["problems"].to_string();
+        assert!(
+            problems.contains("missing field: reconstruction"),
+            "marker {relabel}, problems: {problems}"
+        );
+    }
+    for bad in [json!(1), json!(5), json!("2"), json!(2.0), json!(true)] {
         let mut forged = receipt.clone();
         forged["receipt_schema"] = bad.clone();
         let report = composite::verify_receipt_from_disk(&store, &handle, Some(&forged)).unwrap();
