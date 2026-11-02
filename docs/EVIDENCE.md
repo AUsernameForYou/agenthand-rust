@@ -1,0 +1,203 @@
+# Proof Graph CLI: `agenthand evidence`
+
+`agenthand evidence` reads the evidence database (SQLite, schema v2) and
+prints its claims, runs, model calls, receipts and film chapters, re-runs
+the reference checks over them, and walks the graph edges between them.
+
+- Read-only: the database is opened with `SQLITE_OPEN_READ_ONLY` and
+  `PRAGMA query_only = ON`. No verb writes to the database or to any
+  receipt file.
+- Offline: no verb opens a network connection. No API key is read.
+- The database contents, `schema.sql` and the importer
+  (`import_inventory.py`) are maintained in the evidence layer. This
+  subcommand mirrors them; it does not build or edit the database.
+
+```sh
+agenthand evidence verify --all
+agenthand evidence trace chapter:3
+agenthand evidence root
+```
+
+## Database location
+
+First match wins:
+
+1. `--db <path>`
+2. `AGENTHAND_EVIDENCE_DB` (environment)
+3. `evidence/evidence.db` under the current directory (the repo root,
+   when run from there)
+4. `evidence/evidence.db` beside the binary, or in any parent directory
+   of the binary (covers `target/release/agenthand` inside the repo)
+
+If `--db` or `AGENTHAND_EVIDENCE_DB` names a file that does not exist,
+the command stops with exit 2 and names the path; it does not fall
+through to the later locations. If nothing is found, the error lists
+every path that was tried.
+
+## Receipt base directory
+
+`receipts.source_file` is either absolute or relative. Relative paths
+resolve against:
+
+1. `--base-dir <dir>`
+2. `AGENTHAND_EVIDENCE_BASE` (environment)
+3. the parent of the database's directory
+
+Rule 3 is the rule `verify_db.py` uses (its `ROOT` is the parent of the
+directory holding `evidence.db`). For a database at
+`<repo>/evidence/evidence.db` the base is `<repo>`. `verify` prints the
+base it used, and the rule that chose it, on a `# receipt base dir:`
+line.
+
+## Verbs
+
+Implemented:
+
+| Verb | What it prints |
+|---|---|
+| `list [--chapter <c>] [--status <s>]` | Claims with status, rubric criterion and chapters. `--status` is one of `verified`, `corrected`, `withdrawn`, `refused`. |
+| `show <claim-id>` | One claim: text, scope fields, reason, source, each `evidence_map` row with its run (calls, totals, verify result) and receipt (sha256, source file, verify command, expected line), and the chapters that cite it. |
+| `verify <claim-id>` / `verify --all` / `verify-all` | The reference checks, one line per check, then `OVERALL: PASS` or `OVERALL: FAIL`. See below. |
+| `trace <node-id>` | The directed walk over `edges` from a node, as an indented tree, then the reverse walk (incoming edges). |
+| `chapter <c>` | The film chapter at a timestamp (or by id or label), its claim, and its trace. |
+| `root` | The receipts root recomputed from the `receipts.file_sha256` rows, and whether `meta` holds the same value and count. |
+| `graph [--format mermaid\|dot]` | Every node in the `nodes` view and every row in `edges` (default `mermaid`). |
+| `rubric` | `evidence_map` rows grouped by rubric criterion. |
+| `calls [--by-model] [--run <id>]` | `calls` rows, or per-model counts and settled-cost sums. |
+| `tamper <receipt-id>` | Reads the receipt file, flips one byte in memory, and shows the sha256 of the altered copy no longer matches the database. The file on disk is not modified. |
+
+Planned, not implemented (the verb prints `planned, not implemented`
+and exits 3):
+
+| Verb | Status |
+|---|---|
+| `parity` | Cross-build parity node. The database has no parity rows yet. |
+| `export --dir <dir>` | Replay pack export. |
+
+`--json` works on every verb and prints one JSON document on stdout.
+
+Identifiers:
+
+- Claim ids: `N` or `claim:N` (`show`, `verify`).
+- Node ids (`trace`): `claim:N`, `run:N`, `call:N`, `receipt:N`,
+  `chapter:N`, `criterion:<name>`, `model:<name>`, `build:<hash>`, as
+  defined by the `nodes` view in `schema.sql`. A bare `N` means
+  `claim:N`.
+- Chapter selectors (`chapter`, `list --chapter`): a chapter id (`7`),
+  `chapter:7`, a timestamp (`1:42`, `0:01:42`, `102.5`, `102.5s`), or
+  the first token of the narration line (`Ch5`, `ChClose`). A bare
+  integer is a chapter id, not seconds. Timestamps match
+  `t_start_s <= t <= t_end_s`; on a shared boundary the chapter that
+  starts there is chosen.
+
+## `verify`
+
+`verify --all` runs the checks of `verify_db.py`, in the same order,
+with the same line text and the same statuses:
+
+| Section | Check |
+|---|---|
+| (a) | Each receipt with a `file_sha256`: the sha256 of the file on disk equals it. A file that is not present is `SKIP` (`file not present locally`), not a failure. |
+| (b) | Each run with a `total_settled_usd`: it equals the sum of its costed calls within 1e-6. No costed calls, or a difference with non-blank `runs.notes`, is `REPORT`. A difference with blank notes is `FAIL`. |
+| (c) | No call or receipt without its run; every call and receipt has its `has_call` / `has_receipt` edge; each claim's directed walk reaches a receipt. Withdrawn and refused claims without a receipt are `PASS` by design. |
+| (d) | `meta.receipts_root` and `meta.receipt_count_rooted` equal the recomputed root and count. |
+| (e) | Each claim has `scope_photo`, `scope_build` and `scope_date`, or a reason; withdrawn and refused claims have a reason. |
+
+Statuses: `PASS`, `FAIL`, `REPORT` (a fact with its explanation on
+record), `SKIP` (not checked: file absent). Only `FAIL` lines count
+toward `OVERALL`. The output starts with `# db:` and
+`# receipt base dir:` lines; every other line has the same text as
+`verify_db.py` prints.
+
+`verify <claim-id>` runs the same sections limited to that claim: (a)
+and (b) for the receipts and runs its directed walk reaches, (c) for its
+walk, (d) as in `--all` (the root covers every receipt), and (e) for the
+claim. A `# scope:` line states this.
+
+## `root`
+
+The construction is the one in `schema.sql` and
+`import_inventory.py`:
+
+```
+root = sha256( concat( sort_ascending( receipts.file_sha256 where not NULL ) ) )
+```
+
+The hex digests are sorted as strings, concatenated with no separator,
+and hashed as UTF-8 bytes; duplicates are kept. It is one hash over the
+sorted list, not a Merkle tree: there are no per-leaf hashes and no
+pairing, so it does not yield per-receipt inclusion proofs.
+
+`root` always prints the recomputed value on its first line
+(`receipts root: <hex>`). It then states whether `meta.receipts_root`
+and `meta.receipt_count_rooted` match. A stored value is printed only
+when it differs, and labelled as the stored value. Exit 1 when either
+differs.
+
+Value for `evidence.db` of 2026-11-02 (29 hashed receipts of 32):
+`54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`.
+
+## `trace` output
+
+```
+downstream (outgoing edges):
+  chapter:3  [0:37.080-0:51.850] Ch2 hero: ...
+    supports -> claim:1  [verified] Fidelity Lock receipt for the hero bike run ...
+      evidenced_by -> run:6  Hero run IMG_1443 (...)  build=166ea6b date=2026-11-02 total_settled_usd=0.019175
+        has_call -> call:11  identify (muse-spark-1.3)  settled_usd=0.006675
+          uses_model -> model:muse-spark-1.3
+        has_receipt -> receipt:6  fidelity_receipt 5072763 checked / 0 changed
+            sha256: c98fc09c...
+            source_file: film-assets/P04-P09/run-1443-v102/receipt.json
+            verify_cmd: agenthand verify source.png staged.png mask.png
+            expected_line: verify PASS : checked 5,072,763 px, changed 0 px, ok=True
+        built_with -> build:166ea6b
+      evidenced_by -> receipt:6  (shown above)
+      addresses -> criterion:Technical Depth & Execution
+upstream (incoming edges into chapter:3): none
+```
+
+Each line is `<relation> -> <node>` followed by the node's row. Lines
+without `->` are attributes of the node above them. A node reached a
+second time is printed once more with `(shown above)` and not expanded.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success; `verify`: `OVERALL: PASS`; `root`: meta matches or is absent; `tamper`: the altered copy fails the check, or the file is not checked |
+| 1 | `verify`: `OVERALL: FAIL`; `root`: meta differs; `tamper`: the file on disk already differs from the database |
+| 2 | Usage error, unknown id, database not found or not schema v2 |
+| 3 | Planned verb, not implemented |
+
+## Parity with `verify_db.py`
+
+Recorded 2026-11-02 against `evidence.db`
+(sha256 `67c50e21637fc90b5b2c3a136568c762285fa6cd2689e1e7d0f622c2eabbd930`)
+and `verify_db.py`
+(sha256 `351b16d028470cf6b96e719b4e3c1eb73799c06c2ef974fa584f961311950e51`):
+after the two `# ` header lines, `agenthand evidence verify --all`
+printed the same bytes as `python3 verify_db.py`, and both exited 0
+with `OVERALL: PASS (0 failing line(s))`. On that machine none of the 29
+hashed receipt files were present, so section (a) was 29 `SKIP` lines
+in both. Three synthetic databases (all-pass; a mix of every `FAIL`,
+`REPORT` and `SKIP` case; a wrong stored root) also gave identical
+output and exit codes.
+
+## Tests
+
+`tests/evidence_cli.rs` builds small databases from
+`tests/fixtures/evidence/schema.sql` (a byte copy of the evidence
+layer's `schema.sql`, sha256
+`a61a63193c61ae652a76a25ed24effc7664113a5eb9e9aedf4ffaf3a4ad3bf67`) in a
+temp dir and runs the binary: a passing database, a tampered receipt
+file and a tampered database sha (exit 1), withdrawn claims with and
+without a reason, the root for 1, 2 and 3 receipts against
+hand-computed values, a wrong stored root, the database left unchanged
+by every verb, trace, graph, tamper, planned verbs, and database
+location. One `#[ignore]` test runs against the real database:
+
+```sh
+AGENTHAND_EVIDENCE_DB=/path/to/evidence.db \
+  cargo test --release --test evidence_cli -- --ignored
+```

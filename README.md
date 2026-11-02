@@ -105,8 +105,8 @@ themselves run on the hosted Meta models in the table above.
 ## Architecture
 
 One binary, two halves: a library crate where all the policy lives,
-and a thin `main.rs` with six subcommands (`serve`, `parity`,
-`verify`, `measure`, `heic-extract`, `room-run`). The MCP server is
+and a thin `main.rs` with seven subcommands (`serve`, `parity`,
+`verify`, `measure`, `heic-extract`, `room-run`, `evidence`). The MCP server is
 a hand-rolled JSON-RPC stdio loop; each tool handler is a thin edge
 that ingests, calls one policy function, and shapes the result JSON.
 
@@ -124,6 +124,7 @@ that ingests, calls one policy function, and shapes the result JSON.
 | `roomrun` | The room run: photos, video frames, and narration in; one staged, receipted listing per item out, plus the priced table |
 | `backdrop`, `market_pricing` | The code-rendered stage plates (wallpaper, studio gray) and the deterministic comp-pricing rule behind the priced table |
 | `heic` | From-scratch HEIC decoder, integrated into ingest: no external decoding library anywhere in the shipped path |
+| `evidence` | The Proof Graph CLI: read-only queries and re-checks over the evidence database (docs/EVIDENCE.md) |
 
 Three invariants hold everywhere:
 
@@ -323,6 +324,10 @@ agenthand verify <source.png> <staged.png> <mask.png>
 
 It recounts the product pixels in the staged image against the source
 and mask and reports how many changed. The count is the claim.
+
+To re-check every claim in the evidence database:
+`agenthand evidence verify --all` (verbs and exit codes in
+[docs/EVIDENCE.md](docs/EVIDENCE.md)).
 
 ## Refusals and limits
 

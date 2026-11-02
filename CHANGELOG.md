@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased: Proof Graph CLI (`agenthand evidence`)
+
+- **New subcommand `agenthand evidence`** over the evidence database
+  (SQLite, schema v2: runs, calls, receipts, claims, meta, evidence_map,
+  video_chapters, the `nodes` view and the derived `edges` table).
+  Read-only (`SQLITE_OPEN_READ_ONLY` + `query_only`), no network, no key.
+  Verbs: `list`, `show`, `verify <claim-id> | --all` (alias
+  `verify-all`), `trace`, `chapter`, `root`, `graph --format
+  mermaid|dot`, `rubric`, `calls [--by-model]`, `tamper`; `--json` on
+  each. `parity` and `export` are listed as planned and exit 3.
+- `verify --all` re-runs the checks of the evidence layer's
+  `verify_db.py` in the same order with the same line text and
+  PASS / FAIL / REPORT / SKIP semantics; a receipt file that is not
+  present is SKIP. Exit 0 only on `OVERALL: PASS`. Against the
+  2026-11-02 `evidence.db` the check lines are byte-identical to
+  `python3 verify_db.py` (OVERALL PASS, 29 receipt files not present on
+  that machine).
+- `root` recomputes the receipts root from the `receipts.file_sha256`
+  rows with the importer's construction (sha256 over the sorted hex
+  digests, concatenated) and compares it with `meta`; it never prints
+  the stored value as the result. 2026-11-02 value:
+  `54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`
+  (29 receipts).
+- Database location: `--db`, `AGENTHAND_EVIDENCE_DB`,
+  `./evidence/evidence.db`, then `evidence/evidence.db` beside the
+  binary or in a parent directory. Relative receipt paths resolve
+  against `--base-dir`, `AGENTHAND_EVIDENCE_BASE`, or the parent of the
+  database's directory (verify_db.py's rule). docs/EVIDENCE.md has the
+  verbs, output formats and exit codes; tests in
+  `tests/evidence_cli.rs` (one `#[ignore]` test for the real database).
+
 ## Unreleased: hole carving
 
 - **Open-frame interiors go back to the plate** (Daniel's ruling: the
