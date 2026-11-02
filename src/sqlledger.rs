@@ -32,7 +32,7 @@
 //! per-connection mutex preserves the one-writer-at-a-time semantics
 //! the fresh-connection design got from SQLite itself.
 
-use crate::ledger::{Receipt, PHASE_FINAL, PHASE_PENDING, PHASE_SETTLED};
+use crate::ledger::{Receipt, SettleOverage, PHASE_FINAL, PHASE_PENDING, PHASE_SETTLED};
 use rusqlite::{params, Connection, TransactionBehavior};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -143,6 +143,16 @@ fn insert_receipt(conn: &Connection, receipt: &Receipt) -> Result<(), String> {
 /// The total reduction, identical to `ledger::ledger_total_usd` but
 /// over SQLite rows in insertion order.
 fn total_from_conn(conn: &Connection, path: &Path) -> Result<f64, String> {
+    total_from_conn_excluding(conn, path, None)
+}
+
+/// `total_from_conn` with every row of `exclude_call` left out (the
+/// settle-time cap check, fix pass F5).
+fn total_from_conn_excluding(
+    conn: &Connection,
+    path: &Path,
+    exclude_call: Option<&str>,
+) -> Result<f64, String> {
     let mut stmt = conn
         .prepare("SELECT id, usd_estimate, call_id, phase FROM receipts ORDER BY id ASC")
         .map_err(|e| format!("cannot read sqlite ledger: {e}"))?;
@@ -170,6 +180,9 @@ fn total_from_conn(conn: &Connection, path: &Path) -> Result<f64, String> {
         let amount = validate_amount(amount, &where_)?;
         let call_id = call_id.as_deref().filter(|s| !s.is_empty());
         let phase = phase.as_deref().unwrap_or(PHASE_FINAL);
+        if exclude_call.is_some() && call_id == exclude_call {
+            continue;
+        }
         match call_id {
             Some(id) if phase == PHASE_SETTLED => {
                 calls.insert(id.to_string(), amount);
@@ -259,6 +272,35 @@ pub fn reserve(path: &Path, receipt: &Receipt, cap_usd: f64) -> Result<f64, Stri
     tx.commit()
         .map_err(|e| format!("cannot commit sqlite ledger reservation: {e}"))?;
     Ok(total)
+}
+
+/// Settle (fix pass F5): inside one IMMEDIATE transaction, recompute
+/// the ledger total without this call's rows (every other settled
+/// actual plus every other open reservation), apply the settle-time
+/// cap check (`ledger::apply_settle_cap`, which marks the receipt
+/// `over_cap` when others + actual exceeds the cap), and insert the
+/// receipt — truthfully, either way. Returns the breach, if any.
+pub fn settle(
+    path: &Path,
+    receipt: &mut Receipt,
+    cap_usd: f64,
+) -> Result<Option<SettleOverage>, String> {
+    validate_amount(
+        receipt.usd_estimate,
+        &format!("receipt for {}", receipt.tool),
+    )?;
+    let cap = validate_amount(cap_usd, "spend cap")?;
+    let conn = conn_for(path)?;
+    let mut conn = lock_conn(&conn)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| format!("cannot begin sqlite ledger transaction: {e}"))?;
+    let others = total_from_conn_excluding(&tx, path, receipt.call_id.as_deref())?;
+    let overage = crate::ledger::apply_settle_cap(receipt, others, cap);
+    insert_receipt(&tx, receipt)?;
+    tx.commit()
+        .map_err(|e| format!("cannot commit sqlite ledger settle: {e}"))?;
+    Ok(overage)
 }
 
 /// Import a JSONL ledger into a fresh SQLite ledger, line by line,

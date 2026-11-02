@@ -18,6 +18,49 @@ pub const PHASE_FINAL: &str = "final";
 pub const PHASE_PENDING: &str = "pending";
 /// Receipt phase: a reservation settled at the actual cost after the call.
 pub const PHASE_SETTLED: &str = "settled";
+/// Receipt status of a settle whose actual cost pushed the ledger over
+/// the spend cap (fix pass F5). The amount is recorded truthfully and
+/// counts like any other settle; the status (and the overage in the
+/// note) makes the breach visible in the ledger itself.
+pub const STATUS_OVER_CAP: &str = "over_cap";
+
+/// A settle-time cap breach: the ledger total after the settle, how
+/// far over the cap that is, and the cap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SettleOverage {
+    pub total_usd: f64,
+    pub overage_usd: f64,
+    pub cap_usd: f64,
+}
+
+/// The settle-time cap check (fix pass F5), shared by both stores:
+/// `others_usd` is the ledger total EXCLUDING this call's own rows
+/// (every other settled actual plus every other open reservation).
+/// When others + actual exceeds the cap, the receipt is marked
+/// `over_cap` with the overage in its note, and the breach returned;
+/// the caller still records the receipt (truthfully) and then fails.
+pub fn apply_settle_cap(receipt: &mut Receipt, others_usd: f64, cap_usd: f64) -> Option<SettleOverage> {
+    let total = ((others_usd + receipt.usd_estimate) * 1e6).round() / 1e6;
+    if total <= cap_usd {
+        return None;
+    }
+    let overage = ((total - cap_usd) * 1e6).round() / 1e6;
+    let flag = format!(
+        "over_cap: settled ${:.6} brought the ledger to ${total:.6}, ${overage:.6} over the ${cap_usd:.2} cap",
+        receipt.usd_estimate
+    );
+    receipt.status = STATUS_OVER_CAP.to_string();
+    receipt.note = if receipt.note.is_empty() {
+        flag
+    } else {
+        format!("{}; {flag}", receipt.note)
+    };
+    Some(SettleOverage {
+        total_usd: total,
+        overage_usd: overage,
+        cap_usd,
+    })
+}
 
 #[derive(Serialize, Clone)]
 pub struct Receipt {
@@ -124,6 +167,16 @@ pub fn append_receipt(ledger_path: &Path, receipt: &Receipt) -> Result<(), Strin
 /// The counted ledger total: settled actuals where present, pending
 /// projections otherwise, rounded to the micro-dollar.
 pub fn ledger_total_usd(ledger_path: &Path) -> Result<f64, String> {
+    ledger_total_reduced(ledger_path, None)
+}
+
+/// The counted ledger total with every row of `call_id` left out: the
+/// settle-time cap check's "everything else" (fix pass F5).
+pub fn ledger_total_excluding_call_usd(ledger_path: &Path, call_id: &str) -> Result<f64, String> {
+    ledger_total_reduced(ledger_path, Some(call_id))
+}
+
+fn ledger_total_reduced(ledger_path: &Path, exclude_call: Option<&str>) -> Result<f64, String> {
     if !ledger_path.exists() {
         return Ok(0.0);
     }
@@ -156,6 +209,9 @@ pub fn ledger_total_usd(ledger_path: &Path) -> Result<f64, String> {
             .get("phase")
             .and_then(|v| v.as_str())
             .unwrap_or(PHASE_FINAL);
+        if exclude_call.is_some() && call_id == exclude_call {
+            continue;
+        }
         match call_id {
             Some(id) if phase == PHASE_SETTLED => {
                 calls.insert(id.to_string(), amount);

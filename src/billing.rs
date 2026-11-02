@@ -11,6 +11,16 @@
 //! (the room runner's `<room>/ledger.jsonl`), each row is ALSO
 //! appended to that JSONL file, so a room's own spend stays readable
 //! from its directory without the room ever owning the cap.
+//!
+//! Settle is capped too (fix pass F5): a reservation is a projection,
+//! and a call can cost more than projected. At settle the store
+//! recomputes everything else in the ledger (settled actuals plus
+//! other open reservations, excluding this call's own reservation)
+//! plus this call's actual cost. Over the cap, the settle is STILL
+//! recorded truthfully, marked `over_cap` with the overage, and
+//! `billed_call` returns an error naming the breach; every later
+//! reservation is then refused because the ledger total exceeds the
+//! cap.
 
 use crate::config;
 use crate::ledger::{self, Receipt, PHASE_PENDING, PHASE_SETTLED};
@@ -148,8 +158,8 @@ where
         None => 0.0,
     };
 
-    // Settle with the actual cost and the usage counts.
-    {
+    // Settle with the actual cost and the usage counts, cap-checked.
+    let overage = {
         let mut receipt = Receipt::new(tool, model, actual_usd, PHASE_SETTLED);
         receipt.status = status.to_string();
         receipt.note = note.to_string();
@@ -161,21 +171,37 @@ where
         match &store {
             config::LedgerStore::Jsonl(ledger_path) => {
                 let _lock = lock_file()?;
+                let others = ledger::ledger_total_excluding_call_usd(ledger_path, &call_id)?;
+                let overage = ledger::apply_settle_cap(&mut receipt, others, cap_usd);
                 ledger::append_receipt(ledger_path, &receipt)?;
                 if let Some(mirror) = &mirror {
                     ledger::append_receipt(mirror, &receipt)?;
                 }
                 // Keep the lock file from looking stale to other tools.
                 let _ = std::io::stdout().flush();
+                overage
             }
             config::LedgerStore::Sqlite(ledger_path) => {
-                crate::sqlledger::append_receipt(ledger_path, &receipt)?;
+                let overage = crate::sqlledger::settle(ledger_path, &mut receipt, cap_usd)?;
                 if let Some(mirror) = &mirror {
                     let _lock = lock_file()?;
                     ledger::append_receipt(mirror, &receipt)?;
                 }
+                overage
             }
         }
+    };
+    if let Some(over) = overage {
+        return Err(format!(
+            "SPEND CAP EXCEEDED at settle: {tool} call {call_id} reserved ${projected_usd:.6} \
+             but actually cost ${actual_usd:.6}, bringing the ledger to ${:.6}, ${:.6} over \
+             the ${:.2} cap. The settle is recorded truthfully with status \"{}\"; every \
+             further billable call will be refused until the cap is raised.",
+            over.total_usd,
+            over.overage_usd,
+            over.cap_usd,
+            ledger::STATUS_OVER_CAP
+        ));
     }
 
     Ok(BillingSummary {
