@@ -15,7 +15,9 @@
 //!     spokes, the tyre and the hub stay;
 //! (f) `AGENTHAND_HOLE_COMPLETE=off`: the colour-proven carve only;
 //! (g) the enclosed-remainder gate: the colour-only carve of (e) leaves
-//!     most of the shaded interior and is refused with a retake.
+//!     most of the shaded interior and is refused with a retake;
+//! (h) the pale-part guard: a reflector plate with a brass bolt inside the
+//!     wheel of (e) stays product while the rest completes.
 //!
 //! Plus an opt-in run on a real cut_out (mask.png + source.png):
 //!
@@ -487,6 +489,60 @@ fn shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay() {
     let (again, record2) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
     assert_eq!(again.pixels, out.pixels);
     assert_eq!(record2, record);
+}
+
+/// A spoke reflector: a pale, compact plate (with prism texture and a
+/// brass bolt in its middle) between two spokes, half over the sunlit
+/// paving and half over the shade.
+fn in_reflector(x: u32, y: u32) -> bool {
+    // A 120 x 34 px plate centred at (400, 330), along the x axis.
+    let (dx, dy) = (x as f64 + 0.5 - 400.0, y as f64 + 0.5 - 330.0);
+    dx.abs() <= 60.0 && dy.abs() <= 17.0
+}
+
+fn in_bolt(x: u32, y: u32) -> bool {
+    let (dx, dy) = (x as f64 + 0.5 - 400.0, y as f64 + 0.5 - 330.0);
+    dx * dx + dy * dy <= 10.0 * 10.0
+}
+
+fn reflector_wheel_scene() -> (RgbaImage, GrayImage) {
+    let (source, mask) = shaded_wheel_scene();
+    let mut px = source.pixels.clone();
+    for y in 0..H {
+        for x in 0..W {
+            if !in_reflector(x, y) || part(x, y) == Part::Spoke {
+                continue;
+            }
+            let i = ((y * W + x) * 4) as usize;
+            let c = if in_bolt(x, y) {
+                [196u8, 172, 104]
+            } else {
+                // Prism texture: a 6 px grid of slightly darker dots.
+                let dot = (x % 6 < 2) && (y % 6 < 2);
+                let v = if dot { 196.0 } else { 222.0 } + noise(x, y, 21) * 4.0;
+                [v as u8, v as u8, (v + 6.0) as u8]
+            };
+            px[i..i + 3].copy_from_slice(&c);
+        }
+    }
+    (RgbaImage::new(W, H, px), mask)
+}
+
+#[test]
+fn reflector_and_bolt_stay_product_inside_a_completed_wheel() {
+    let (source, mask) = reflector_wheel_scene();
+    let (out, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(record["applied"], json!(true), "{record:#}");
+    assert_never_raised(&mask, &out);
+    let plate = count_where(&out, |x, y, _| in_reflector(x, y) && part(x, y) != Part::Spoke);
+    let lost = count_where(&out, |x, y, v| in_reflector(x, y) && part(x, y) != Part::Spoke && v < 255);
+    assert_eq!(lost, 0, "{lost} of {plate} reflector pixels released: {record:#}");
+    let bolt_lost = count_where(&out, |x, y, v| in_bolt(x, y) && v < 255);
+    assert_eq!(bolt_lost, 0, "{bolt_lost} bolt pixels released: {record:#}");
+    // The rest of the wheel still completes and the spokes stay.
+    assert!(removed_share(&out, true) >= 0.60, "{record:#}");
+    assert!(kept_share(&out, Part::Spoke) >= 0.98, "{record:#}");
+    assert!(record["gate"]["pass"] == json!(true), "{record:#}");
 }
 
 // ---------------------------------------------------------------------------
