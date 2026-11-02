@@ -2841,6 +2841,23 @@ fn object_extent(
     if contour_area(largest) < 0.0005 * (w * h) as f64 {
         return Err("Auto extent contour is implausibly small.".to_string());
     }
+    // A region that reaches the frame edge runs out of the photo (sky,
+    // floor, a wall): its extent is unknown and it is background, not
+    // an object lying in the card's plane. IMG_1403's "object" was the
+    // sky. Refuse rather than measure the part that happens to be in
+    // frame, and do not fall back to a smaller region.
+    let (last_x, last_y) = ((w - 1) as f64, (h - 1) as f64);
+    if largest
+        .iter()
+        .any(|p| p[0] <= 0.0 || p[1] <= 0.0 || p[0] >= last_x || p[1] >= last_y)
+    {
+        return Err(
+            "Auto extent reached the frame edge (the colour region runs \
+             out of the photo: sky, floor or wall, not a whole object) — \
+             supply a bbox or mask, or reshoot with the whole object in frame."
+                .to_string(),
+        );
+    }
     warnings.push(
         "Extent by colour segmentation (prototype fallback): the object \
          must be colour-distinct from the surface and the card."

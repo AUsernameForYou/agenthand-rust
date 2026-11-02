@@ -164,3 +164,40 @@ fn jacket_full_res_1491_refuses() {
 fn yard_preview_1405_refuses() {
     env_case("AGENTHAND_MEASURE_IMG_1405", "AH-BIG");
 }
+
+/// M3: the colour-segmentation fallback must not measure a region
+/// that runs out of the photo. IMG_1403's "object" was the sky (a
+/// region touching the top, left and right frame edges). Here a
+/// saturated sky-blue band across the top of a verified-card scene
+/// (bigger than the real object, so it wins the largest-contour pick)
+/// must refuse instead of being measured.
+#[test]
+fn auto_extent_touching_frame_edge_refuses() {
+    let path = root().join("tests/fixtures/measure/ahbig_2x.png");
+    let mut img = decode_image(&std::fs::read(&path).unwrap())
+        .unwrap()
+        .into_rgba();
+    let w = img.width as usize;
+    for y in 0..200 {
+        for x in 0..w {
+            let i = (y * w + x) * 4;
+            img.pixels[i..i + 3].copy_from_slice(&[90, 150, 220]);
+        }
+    }
+    let profile = root().join("tests/fixtures/layout-profile.json");
+    let card = load_card_profile(&profile, "AH-BIG").unwrap();
+    let frame = MeasureFrame::from_rgba(&img);
+    match estimate(&frame, &card, "AH-BIG", None, None) {
+        Ok(est) => panic!(
+            "sky band measured as the object: {} (ticks {})",
+            est.display, est.ticks_matched
+        ),
+        Err(err) => {
+            println!("sky band: {err}");
+            assert!(
+                err.starts_with("Auto extent reached the frame edge"),
+                "{err}"
+            );
+        }
+    }
+}
