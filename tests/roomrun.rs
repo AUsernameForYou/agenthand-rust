@@ -922,6 +922,87 @@ fn default_verifier_reproves_a_real_draw() {
     assert_eq!(verification["checks_failed"], json!([]));
 }
 
+/// The item record carries the draw result's per-stage records beside
+/// angle_lock: shadow, light_direction, thin_structure and
+/// scene_exclusions (additive; copied as drawn, only when present).
+#[test]
+fn item_record_carries_the_draw_stage_records() {
+    let _guard = env_lock();
+    let root = temp_root("drawrecords");
+    let photos = vec![photo(&root, "shelf.png", [120, 60, 20, 255])];
+    let real = Rc::new(RealDrawChain {
+        store: AssetStore::new(&root),
+    });
+    let a = real.clone();
+    let b = real.clone();
+    let c = real.clone();
+    let records = json!({
+        "angle_lock": {"bucket": "eye_level", "stated": false},
+        "shadow": {"mode": "contact_only", "reason": "generated plate"},
+        "light_direction": {"side": "left", "method": "luma_gradient"},
+        "thin_structure": {"triggered": true, "holes_softened": 3},
+        "scene_exclusions": ["no other bikes"],
+    });
+    let drawn = records.clone();
+    let opts = RoomRunOptions {
+        item_names: vec!["straw hat".to_string()],
+        budget_usd: 5.00,
+        store: Some(AssetStore::new(&root)),
+        chain: Some(RoomChain {
+            identify: Box::new(move |image_ref: &str| a.identify(image_ref)),
+            cut_out: Box::new(move |handle: &str, concept: &str| b.cut_out(handle, concept)),
+            draw: Box::new(move |handle: &str, scene: &str| {
+                let mut result = c.draw(handle, scene)?;
+                for (k, v) in drawn.as_object().unwrap() {
+                    result[k.as_str()] = v.clone();
+                }
+                Ok(result)
+            }),
+        }),
+        spend_probe: Some(Box::new(|| Ok(0.0))),
+        ..RoomRunOptions::default()
+    };
+    let manifest = run_room(&photos, &[], &root.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged", "{item}");
+    for key in [
+        "angle_lock",
+        "shadow",
+        "light_direction",
+        "thin_structure",
+        "scene_exclusions",
+    ] {
+        assert_eq!(item[key], records[key], "item record field {key}: {item}");
+    }
+
+    // A draw result without them adds none of them (a placeholder or
+    // older draw): the record shape is otherwise unchanged.
+    let root2 = temp_root("drawrecords-none");
+    let photos2 = vec![photo(&root2, "shelf.png", [120, 60, 20, 255])];
+    let plain = Rc::new(RealDrawChain {
+        store: AssetStore::new(&root2),
+    });
+    let (a, b, c) = (plain.clone(), plain.clone(), plain.clone());
+    let opts = RoomRunOptions {
+        item_names: vec!["straw hat".to_string()],
+        budget_usd: 5.00,
+        store: Some(AssetStore::new(&root2)),
+        chain: Some(RoomChain {
+            identify: Box::new(move |image_ref: &str| a.identify(image_ref)),
+            cut_out: Box::new(move |handle: &str, concept: &str| b.cut_out(handle, concept)),
+            draw: Box::new(move |handle: &str, scene: &str| c.draw(handle, scene)),
+        }),
+        spend_probe: Some(Box::new(|| Ok(0.0))),
+        ..RoomRunOptions::default()
+    };
+    let manifest = run_room(&photos2, &[], &root2.join("out"), opts).unwrap();
+    let item = &manifest["items"][0];
+    assert_eq!(item["status"], "staged", "{item}");
+    for key in ["shadow", "light_direction", "thin_structure", "scene_exclusions"] {
+        assert!(item.get(key).is_none(), "{key} appeared from nowhere: {item}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Room ledger: a room run's receipts are mirrored into its own ledger
 // (default <out>/ledger.jsonl) and the manifest total is the room

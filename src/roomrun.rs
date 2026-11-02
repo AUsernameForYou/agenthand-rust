@@ -3478,6 +3478,20 @@ fn stage_from_primary(
     if let Some(lock) = draw_result.get("angle_lock").filter(|v| !v.is_null()) {
         record["angle_lock"] = lock.clone();
     }
+    // The draw's other per-stage records, beside angle_lock and on the
+    // same terms (additive, copied as drawn, only when present): shadow
+    // carry-over, light direction, the thin-structure guard and the
+    // generated plate's scene exclusions.
+    for key in [
+        "shadow",
+        "light_direction",
+        "thin_structure",
+        "scene_exclusions",
+    ] {
+        if let Some(value) = draw_result.get(key).filter(|v| !v.is_null()) {
+            record[key] = value.clone();
+        }
+    }
     let output_handle = record["output_asset"].as_str().unwrap_or("").to_string();
     record["receipt_file"] = match ctx.store.receipt_path(&output_handle) {
         Ok(path) if path.exists() => json!(path.to_string_lossy()),
