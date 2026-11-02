@@ -1426,17 +1426,27 @@ pub fn set_public_copy_unavailable(block: &mut Value, reason: &str) {
 // never touched.
 // ---------------------------------------------------------------------------
 
-/// Strip all metadata from a PNG: every text chunk (the XMP and
-/// comment carriers), the EXIF chunk, and the timestamp chunk go;
-/// image and colour chunks move across byte for byte.
+/// The PNG chunks a public copy keeps: image data and the colour /
+/// display chunks needed to render it as the original renders. An
+/// ALLOWLIST: every other chunk (C2PA caBX, eXIf, the tEXt / zTXt
+/// / iTXt text and XMP carriers, tIME, and any ancillary or
+/// private chunk we do not recognise) is dropped.
+const PNG_PUBLIC_COPY_CHUNKS: [&[u8; 4]; 12] = [
+    b"IHDR", b"PLTE", b"tRNS", b"IDAT", b"IEND", b"gAMA", b"cHRM", b"sRGB", b"iCCP", b"sBIT",
+    b"bKGD", b"pHYs",
+];
+
+/// Strip all metadata from a PNG: only allowlisted chunks
+/// ([`PNG_PUBLIC_COPY_CHUNKS`]) move across, byte for byte (CRCs
+/// included) and in their original order; the walk ends at IEND,
+/// so trailing bytes are dropped.
 fn strip_png(data: &[u8]) -> Option<Vec<u8>> {
     let walk = png_walk(data)?;
     let mut out = Vec::with_capacity(data.len());
     out.extend_from_slice(&data[..8]);
     for chunk in &walk.chunks {
-        match &chunk.kind {
-            b"eXIf" | b"iTXt" | b"zTXt" | b"tEXt" | b"tIME" => continue,
-            _ => out.extend_from_slice(&data[chunk.span.clone()]),
+        if PNG_PUBLIC_COPY_CHUNKS.contains(&&chunk.kind) {
+            out.extend_from_slice(&data[chunk.span.clone()]);
         }
     }
     Some(out)

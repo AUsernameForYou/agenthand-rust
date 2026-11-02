@@ -7,6 +7,7 @@
 //! image/colour set (C2PA caBX, eXIf, the text chunks, tIME and any
 //! private chunk). Pixels must come through identical.
 
+use agenthand::image::{decode_image, encode_png_rgba, png_chunk, DecodedImage, RgbaImage};
 use agenthand::provenance::metadata_free_public_copy;
 use base64::Engine;
 
@@ -225,4 +226,64 @@ fn hand_built_two_scan_stream_drops_app1_between_scans() {
     assert!(!has_marker(&copy, 0xE1), "APP1 between scans survived");
     assert!(!has_marker(&copy, 0xFE), "COM between scans survived");
     assert_eq!(copy, build(false));
+}
+
+/// PNG chunk kinds in file order.
+fn png_chunk_kinds(data: &[u8]) -> Vec<[u8; 4]> {
+    let mut kinds = Vec::new();
+    let mut pos = 8usize;
+    while pos + 12 <= data.len() {
+        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+            as usize;
+        kinds.push([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
+        pos += 12 + len;
+    }
+    kinds
+}
+
+fn rgba(data: &[u8]) -> RgbaImage {
+    match decode_image(data).expect("decodes") {
+        DecodedImage::Rgba(img) => img,
+        DecodedImage::Gray(g) => g.to_rgba(),
+    }
+}
+
+#[test]
+fn png_public_copy_keeps_only_allowlisted_chunks() {
+    let mut img = RgbaImage::solid(6, 4, [10, 20, 30, 255]);
+    img.pixels[0..4].copy_from_slice(&[200, 100, 50, 128]);
+    let clean = encode_png_rgba(&img);
+    // Splice metadata chunks after IHDR (8-byte signature + 25-byte
+    // IHDR chunk), plus colour chunks that must survive.
+    let mut dirty = clean[..33].to_vec();
+    dirty.extend_from_slice(&png_chunk(b"gAMA", &45455u32.to_be_bytes()));
+    dirty.extend_from_slice(&png_chunk(b"pHYs", &[0, 0, 0x0B, 0x13, 0, 0, 0x0B, 0x13, 1]));
+    dirty.extend_from_slice(&png_chunk(b"caBX", b"\0\0\0\x20jumbc2pa.manifest"));
+    dirty.extend_from_slice(&png_chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0"));
+    dirty.extend_from_slice(&png_chunk(b"tEXt", b"Comment\0shot at 45.5N 122.75W"));
+    dirty.extend_from_slice(&png_chunk(b"prVt", b"private vendor payload"));
+    dirty.extend_from_slice(&clean[33..]);
+    dirty.extend_from_slice(b"TRAILING-BYTES");
+
+    let (copy, kind) = metadata_free_public_copy(&dirty).unwrap();
+    assert_eq!(kind, "png");
+    let kinds = png_chunk_kinds(&copy);
+    for banned in [b"caBX", b"eXIf", b"tEXt", b"prVt"] {
+        assert!(
+            !kinds.contains(banned),
+            "chunk {} survived into the public copy",
+            String::from_utf8_lossy(banned)
+        );
+    }
+    for needle in [&b"jumb"[..], b"45.5N", b"private vendor payload", b"TRAILING-BYTES"] {
+        assert!(!contains(&copy, needle));
+    }
+    // Allowlisted chunks survive, in order, with their CRCs.
+    assert_eq!(kinds.first(), Some(b"IHDR"));
+    assert_eq!(kinds.last(), Some(b"IEND"));
+    assert!(kinds.contains(b"gAMA") && kinds.contains(b"pHYs") && kinds.contains(b"IDAT"));
+    let gama = png_chunk(b"gAMA", &45455u32.to_be_bytes());
+    assert!(contains(&copy, &gama), "gAMA moves byte for byte, CRC included");
+    // Pixels identical.
+    assert_eq!(rgba(&copy).pixel_sha256(), rgba(&clean).pixel_sha256());
 }
