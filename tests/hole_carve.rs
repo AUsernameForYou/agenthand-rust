@@ -17,7 +17,9 @@
 //! (g) the enclosed-remainder gate: the colour-only carve of (e) leaves
 //!     most of the shaded interior and is refused with a retake;
 //! (h) the pale-part guard: a reflector plate with a brass bolt inside the
-//!     wheel of (e) stays product while the rest completes.
+//!     wheel of (e) stays product while the rest completes;
+//! (i) faint lines: spokes dimmed under the thin contrast floor in the
+//!     shade stay continuous while the shade completes.
 //!
 //! Plus an opt-in run on a real cut_out (mask.png + source.png):
 //!
@@ -587,6 +589,71 @@ fn dark_joint_band_releases_while_spokes_reflector_and_bolt_stay() {
     // With the completion off the band is left and counted as residue.
     let (_, off) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
     assert!(off["gate"]["strip_residue_pixels"].as_u64().unwrap() > 0, "{off:#}");
+}
+
+/// The longest run of non-product pixels along each spoke's centre line,
+/// from just outside the hub to just inside the rim, in the shade at least
+/// one line square (13 px) from the shadow edge.
+fn shaded_spoke_gaps(out: &GrayImage) -> Vec<usize> {
+    (0..SPOKES)
+        .map(|k| {
+            let a = (k as f64 + 0.25) * std::f64::consts::TAU / SPOKES as f64;
+            let (ux, uy) = (a.cos(), a.sin());
+            let (mut run, mut worst) = (0usize, 0usize);
+            let mut t = HUB + 4.0;
+            while t <= RIM_IN - 4.0 {
+                let (x, y) = ((CX + t * ux).floor() as u32, (CY + t * uy).floor() as u32);
+                // Inside the shade, away from its edge: a spoke grazing the
+                // shadow edge sits in line contrast from the edge itself and
+                // is not protected (docs/HOLE-CARVE.md Limits).
+                if shaded(x, y) && y >= SHADE_Y + 2 * 6 + 1 {
+                    let kept = (-1i32..=1).any(|o| {
+                        let (xx, yy) = ((x as i32 + o * uy.round() as i32) as u32, (y as i32 - o * ux.round() as i32) as u32);
+                        out.pixels[(yy * W + xx) as usize] == 255
+                    });
+                    run = if kept { 0 } else { run + 1 };
+                    worst = worst.max(run);
+                }
+                t += 1.0;
+            }
+            worst
+        })
+        .collect()
+}
+
+#[test]
+fn dim_spokes_in_the_shade_stay_continuous() {
+    // The shaded wheel with smooth shade (IMG_1443's shaded paving varies
+    // a few levels) and the spokes in the shade dimmed to about 20 levels
+    // above it (under the thin contrast floor).
+    let (source, mask) = shaded_wheel_scene();
+    let mut px = source.pixels.clone();
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            if shaded(x, y) && matches!(part(x, y), Part::Enclosed | Part::Background) {
+                let v = 40.0 + noise(x, y, 11) * 3.0;
+                px[i..i + 3].copy_from_slice(&[v as u8, (v - 2.0) as u8, (v - 1.0) as u8]);
+            }
+            if part(x, y) == Part::Spoke && shaded(x, y) {
+                let i = ((y * W + x) * 4) as usize;
+                let v = 60.0 + noise(x, y, 41) * 3.0;
+                px[i..i + 3].copy_from_slice(&[v as u8, v as u8, (v + 3.0) as u8]);
+            }
+        }
+    }
+    let source = RgbaImage::new(W, H, px);
+    let (out, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
+    assert_eq!(record["applied"], json!(true), "{record:#}");
+    assert_never_raised(&mask, &out);
+    // The shade still completes...
+    assert!(removed_share(&out, true) >= 0.60, "{record:#}");
+    // ...and every spoke is continuous through it.
+    let gaps = shaded_spoke_gaps(&out);
+    assert!(gaps.iter().all(|&g| g <= 2), "spoke gaps in the shade (px): {gaps:?}: {record:#}");
+    let shaded_spokes = count_where(&out, |x, y, _| part(x, y) == Part::Spoke && shaded(x, y));
+    let kept = count_where(&out, |x, y, v| part(x, y) == Part::Spoke && shaded(x, y) && v == 255);
+    assert!(kept as f64 >= 0.9 * shaded_spokes as f64, "{kept}/{shaded_spokes}: {record:#}");
 }
 
 // ---------------------------------------------------------------------------

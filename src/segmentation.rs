@@ -1136,6 +1136,16 @@ pub const CARVE_STRIP_RESIDUE_FRAC: f64 = 0.3;
 /// 3w px on both sides into kept pixels that continue along the line for
 /// at least this many px on both sides (a spoke crossing the strip).
 pub const CARVE_STRIP_BRIDGE_CONTINUE_PX: usize = 12;
+/// Faint lines (kept by the completion and the strip step): raw line work
+/// where at most this share of the box around it is line work, in
+/// components at least as long as a thin line.
+pub const CARVE_FAINT_MAX_DENSITY: f64 = 0.45;
+/// Faint lines in shade: line contrast at least this where the local
+/// background (the luma opening) is at most `CARVE_FAINT_MAX_BG_LUMA` (a
+/// spoke in shadow over shaded paving is under the thin contrast floor).
+/// Rough shade fails the density limit below and gets no faint lines.
+pub const CARVE_FAINT_CONTRAST: u8 = 14;
+pub const CARVE_FAINT_MAX_BG_LUMA: u8 = 90;
 /// cut_out's error code when the gate refuses.
 pub const HOLE_CARVE_GATE_CODE: &str = "HOLE_CARVE_INCOMPLETE";
 /// Pocket guard (step 4e): a cell that lies mostly (`_FRAC`) in a pocket
@@ -1935,6 +1945,7 @@ struct StripInputs<'a, 's> {
     h: usize,
     cand: &'a [bool],
     thin: &'a [bool],
+    faint: &'a [bool],
     /// Mask pixels at least as deep as the completion's depth floor, in a
     /// carved component (empty when the completion found no window).
     interior: &'a [bool],
@@ -1972,7 +1983,7 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
     };
     let q: Vec<u8> = (0..n)
         .map(|i| {
-            if p.interior[i] && p.cand[i] && !carved[i] && !p.thin[i] && !is_pale(i) {
+            if p.interior[i] && p.cand[i] && !carved[i] && !p.thin[i] && !p.faint[i] && !is_pale(i) {
                 255
             } else {
                 0
@@ -2112,6 +2123,8 @@ struct CompleteInputs<'a> {
     on: &'a [bool],
     cand: &'a [bool],
     thin: &'a [bool],
+    /// Faint lines (see `faint` in `carve_holes_opts`): never opened.
+    faint: &'a [bool],
     comp_labels: &'a [u32],
     comp_ok: &'a [bool],
     comp_area: &'a [u64],
@@ -2258,6 +2271,7 @@ fn complete_windows(
                 p.cand[i]
                     && !carved[i]
                     && !p.thin[i]
+                    && !p.faint[i]
                     && !structure[i]
                     && depth_sq[i] >= floor_sq
                     && p.comp_ok[p.comp_labels[i] as usize]
@@ -2573,6 +2587,12 @@ pub fn carve_holes_opts(
     let closing = square_extreme(&square_extreme(&luma, sw, sh, r, true), sw, sh, r, false);
     let opening = square_extreme(&square_extreme(&luma, sw, sh, r, false), sw, sh, r, true);
     let mut thin0 = vec![false; n];
+    // Line work at the contrast floor whatever its colour, and fainter
+    // line work in shade: a spoke in shadow over shaded paving is under the
+    // thin floor, a light spoke over sunlit paving fails the colour test,
+    // but both are lines (see `faint`).
+    let mut raw0 = vec![false; n];
+    let mut rough0 = vec![false; n];
     for k in 0..sw * sh {
         let i = (sy0 + k / sw) * w + sx0 + k % sw;
         if !cand[i] {
@@ -2581,7 +2601,13 @@ pub fn carve_holes_opts(
         let l = luma[k];
         let black = closing[k].saturating_sub(l);
         let white = l.saturating_sub(opening[k]);
-        thin0[i] = black.max(white) >= CARVE_THIN_CONTRAST && !(bgl[i] && bg_dense[i]);
+        let c = black.max(white);
+        let shade = opening[k] <= CARVE_FAINT_MAX_BG_LUMA;
+        // Bright faint lines only (a dark band in shade is a joint), but
+        // the density test counts both polarities, so rough shade fails it.
+        raw0[i] = c >= CARVE_THIN_CONTRAST || (shade && white >= CARVE_FAINT_CONTRAST);
+        rough0[i] = c >= CARVE_THIN_CONTRAST || (shade && c >= CARVE_FAINT_CONTRAST);
+        thin0[i] = c >= CARVE_THIN_CONTRAST && !(bgl[i] && bg_dense[i]);
     }
     drop((luma, closing, opening, bg_dense));
     let min_extent = CARVE_THIN_MIN_EXTENT_PX
@@ -2606,6 +2632,39 @@ pub fn carve_holes_opts(
         .map(|i| thin_labels[i] != 0 && keep_line[thin_labels[i] as usize])
         .collect();
     drop((thin0, thin_labels));
+    // Faint lines: sparse raw line work in components at least
+    // `min_extent` long (spokes in shade, spokes the colour test called
+    // texture), not already thin. The completion and the strip step keep
+    // them, so a spoke the colour test called texture is not torn where a
+    // completed window meets it. The colour-proven carve is unchanged.
+    let faint: Vec<bool> = {
+        // Sparse line work only: at most `CARVE_FAINT_MAX_DENSITY` of the
+        // (2R+1) box around a pixel is line work (a spoke, or spokes
+        // crossing), not texture or a solid part.
+        let rr = CARVE_RELEASE_RADIUS;
+        let cap = (CARVE_FAINT_MAX_DENSITY * ((2 * rr + 1) * (2 * rr + 1)) as f64) as u16;
+        let dens = box_count(&rough0, w, h, rr);
+        let set: Vec<bool> = (0..n).map(|i| (raw0[i] && dens[i] <= cap) || thin[i]).collect();
+        drop(dens);
+        let (fl, fc) = label8(&set, w, h);
+        let mut fext = vec![(usize::MAX, usize::MAX, 0usize, 0usize); fc + 1];
+        for i in 0..n {
+            let l = fl[i] as usize;
+            if l != 0 {
+                let e = &mut fext[l];
+                e.0 = e.0.min(i % w);
+                e.1 = e.1.min(i / w);
+                e.2 = e.2.max(i % w);
+                e.3 = e.3.max(i / w);
+            }
+        }
+        let keep: Vec<bool> = fext
+            .iter()
+            .map(|e| e.0 != usize::MAX && (e.2 - e.0 + 1).max(e.3 - e.1 + 1) >= min_extent)
+            .collect();
+        (0..n).map(|i| set[i] && !thin[i] && keep[fl[i] as usize]).collect()
+    };
+    drop((raw0, rough0));
 
     // 4. Carve candidates, cells, regions, per-component guards.
     let mut carve_x: Vec<bool> = (0..n).map(|i| bgl[i] && !thin[i]).collect();
@@ -2989,6 +3048,7 @@ pub fn carve_holes_opts(
             on: &on,
             cand: &cand,
             thin: &thin,
+            faint: &faint,
             comp_labels: &comp_labels,
             comp_ok: &comp_ok,
             comp_area: &comp_area,
@@ -3123,6 +3183,7 @@ pub fn carve_holes_opts(
             h,
             cand: &cand,
             thin: &thin,
+            faint: &faint,
             interior: &interior,
             src_at: &|i: usize| src_at(i),
             diag,
