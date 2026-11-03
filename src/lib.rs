@@ -50,6 +50,7 @@ pub mod comps;
 pub mod config;
 pub mod evidence;
 pub mod ground;
+pub mod ground_match;
 pub mod heic;
 pub mod image;
 pub mod ingest;

@@ -1988,6 +1988,7 @@ pub fn draw_product_with_plate_kind(
         plate_handle,
         plate_kind_override,
         None,
+        None,
     )
 }
 
@@ -2006,6 +2007,21 @@ pub fn draw_product_grounded(
     plate_handle: &str,
     light: &crate::ground::GroundLight,
 ) -> Result<(String, Value), String> {
+    draw_product_generated(store, foreground_handle, scene_prompt, plate_handle, light, None)
+}
+
+/// `draw_product_grounded` plus the ground match check
+/// (docs/GROUND-MATCH.md): with a plan, the receipt gains an additive
+/// `ground_match` record comparing the sampled source ground with the
+/// fitted plate's ground below the product (read before the shadow).
+pub fn draw_product_generated(
+    store: &AssetStore,
+    foreground_handle: &str,
+    scene_prompt: &str,
+    plate_handle: &str,
+    light: &crate::ground::GroundLight,
+    ground_match: Option<&crate::ground_match::GroundMatchPlan>,
+) -> Result<(String, Value), String> {
     draw_product_impl(
         store,
         foreground_handle,
@@ -2013,6 +2029,7 @@ pub fn draw_product_grounded(
         Some(plate_handle),
         None,
         Some(light),
+        ground_match,
     )
 }
 
@@ -2023,6 +2040,7 @@ fn draw_product_impl(
     plate_handle: Option<&str>,
     plate_kind_override: Option<(&str, Value)>,
     ground_light: Option<&crate::ground::GroundLight>,
+    ground_match: Option<&crate::ground_match::GroundMatchPlan>,
 ) -> Result<(String, Value), String> {
     let chain = validate_foreground(store, foreground_handle)?;
     let record = chain[0].clone();
@@ -2101,6 +2119,7 @@ fn draw_product_impl(
     let generated_plate = plate_kind_override.is_none() && plate_handle.is_some();
     let mut plate_fitted_pixel_sha256 = None;
     let mut ground_shadow = None;
+    let mut ground_match_record = None;
     let (composite, transformations, edge_fix, shadow) = if edge_fix_applies_to(plate_kind) {
         let source_image =
             store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
@@ -2134,6 +2153,11 @@ fn draw_product_impl(
         let (fitted, transformations) = fit_plate(&plate, foreground.width, foreground.height);
         if generated_plate {
             plate_fitted_pixel_sha256 = Some(fitted.pixel_sha256());
+            // Ground match check: the fitted plate's ground against the
+            // sampled source ground, before the shadow darkens it.
+            if let Some(plan) = ground_match {
+                ground_match_record = Some(plan.record(&fitted, &foreground));
+            }
         }
         // Ground shadow (docs/GROUND-SHADOW.md), generated plates only,
         // when the caller asked for it: plate pixels only, after the
@@ -2229,6 +2253,11 @@ fn draw_product_impl(
         // the generated plate, plate pixels only; the counts above are
         // measured on the delivered composite as always.
         receipt["ground_shadow"] = record;
+    }
+    if let Some(record) = ground_match_record {
+        // Additive record (never graded): the sampled source ground and
+        // the plate's ground below the product; reported, not a gate.
+        receipt["ground_match"] = record;
     }
     // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
     if let Some(sha) = plate_fitted_pixel_sha256 {

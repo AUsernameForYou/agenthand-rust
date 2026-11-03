@@ -429,6 +429,36 @@ fn ground_geometry(
     Some(geo)
 }
 
+/// The product's ground line, as the ground shadow reads it: the
+/// opaque bbox and L(x) = y0 + slope (x - x0), full-resolution pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroundLine {
+    pub bbox: (u32, u32, u32, u32),
+    pub x0: f64,
+    pub y0: f64,
+    pub slope: f64,
+}
+
+impl GroundLine {
+    pub fn at(&self, x: f64) -> f64 {
+        self.y0 + self.slope * (x - self.x0)
+    }
+}
+
+/// The ground line of a product layer (None without an opaque pixel).
+pub fn ground_line(foreground: &RgbaImage) -> Option<GroundLine> {
+    let bbox = crate::composite::opaque_bbox(foreground)?;
+    let (fw, fh) = (foreground.width as usize, foreground.height as usize);
+    let cell = fw.max(fh).div_ceil(GROUND_GRID_MAX).max(1);
+    let geo = ground_geometry(foreground, bbox, cell, fw.div_ceil(cell))?;
+    Some(GroundLine {
+        bbox,
+        x0: geo.x0,
+        y0: geo.y0,
+        slope: geo.slope,
+    })
+}
+
 /// Draw the contact and cast shadow onto the plate (same frame as the
 /// foreground), plate pixels only.
 pub fn ground_shadow(plate: &RgbaImage, foreground: &RgbaImage, light: &GroundLight) -> GroundOutput {

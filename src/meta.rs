@@ -1667,9 +1667,27 @@ pub fn generated_plate_scene_dressed(
     thin: bool,
     exclusions: &[String],
 ) -> String {
+    generated_plate_scene_matched(scene_prompt, estimate, light, None, thin, exclusions)
+}
+
+/// `generated_plate_scene_dressed` with the ground match clause
+/// (docs/GROUND-MATCH.md) after the light phrase: the caller's scene
+/// keeps the setting, the clause constrains the ground. None gives the
+/// dressed scene exactly.
+pub fn generated_plate_scene_matched(
+    scene_prompt: &str,
+    estimate: &crate::staging::AngleEstimate,
+    light: Option<&str>,
+    ground: Option<&str>,
+    thin: bool,
+    exclusions: &[String],
+) -> String {
     let mut text = generated_plate_scene(scene_prompt, estimate);
     if let Some(phrase) = light {
         text = append_plate_clause(&text, phrase);
+    }
+    if let Some(clause) = ground {
+        text = append_plate_clause(&text, clause);
     }
     if thin {
         text = append_plate_clause(&text, THIN_PLAIN_CLAUSE);
