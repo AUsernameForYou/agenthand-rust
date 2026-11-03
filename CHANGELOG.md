@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased: generated plates by default, with a ground shadow
+
+- **Default plate is `generated`** (decision 135): `draw` without a
+  `plate` argument stages the upgraded listing scene.
+  `plate: "source_edit"` or `AGENTHAND_DRAW_PLATE=source_edit` keeps the
+  photo-based plate. `backdrop::DRAW_PLATE_DEFAULT` names the default;
+  the draw tool description and the `plate` schema text follow it.
+  identify is untouched.
+- **Ground shadow on generated plates** (decision 141,
+  docs/GROUND-SHADOW.md). Generated draws floated: the plate's ground
+  ran under the tyres with no shadow break. `ground::ground_shadow`
+  finds the product's ground line and contact points from the layer's
+  alpha (lowest pixel per column, lower convex hull) and multiplies a
+  contact shadow and a short soft cast shadow onto plate pixels only.
+  The cast direction follows the source light estimate; when it is
+  inconclusive the shadow falls straight back (front-lit default).
+  Penumbra widens and opacity drops with height; thin parts stay faint.
+  Runs in the server's generated path only
+  (`composite::draw_product_grounded`); `draw_product`,
+  `draw_product_with_plate_kind`, `composite_images` and parity are
+  byte-identical.
+- **Record** `ground_shadow` (additive, never graded) in the draw result
+  and the receipt, including the grounded plate's pixel hash;
+  `plate_fitted_pixel_sha256` keeps hashing the fit before the shadow.
+- **Kill switch** `AGENTHAND_GROUND_SHADOW=off` (0/false/no): plain
+  composite, byte for byte.
+- IMG_1443 (stored v102 foreground and plate, offline): two contacts,
+  1,118,334 plate pixels shaded in 0.49 s, 5,072,763 product pixels,
+  0 changed.
+
 ## Unreleased: hole carve completion pass and enclosed-remainder gate
 
 - **Completion pass** (`segmentation::complete_windows`, step 4e in

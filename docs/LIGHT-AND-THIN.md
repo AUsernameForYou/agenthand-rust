@@ -41,7 +41,7 @@ Where the phrase goes:
   - sideways by 4% of the opaque bbox width (`CONTACT_SHADOW_OFFSET_X`);
   - in depth by half the ellipse's vertical radius (`CONTACT_SHADOW_OFFSET_Y`);
   - not at all for overhead light.
-  It is still zero under every alpha-255 pixel. A zero offset gives exactly `apply_contact_shadow`. Generated plates have no contact ellipse in this tree, so for them only the clause applies.
+  It is still zero under every alpha-255 pixel. A zero offset gives exactly `apply_contact_shadow`. Generated plates have no contact ellipse; they get the ground shadow instead (docs/GROUND-SHADOW.md), whose cast direction follows this same estimate.
 
 Record `light_direction` in the draw result, beside `angle_lock`:
 ```json
@@ -98,7 +98,7 @@ These come from the generated-mode investigation, ranked fixes 1 and 2.
 - **Scene exclusions.** When the concept is known, `meta::scene_exclusions` gives the concept phrase, its head noun's plural, and then "bicycles or other vehicles", "people" and "animals". The generated scene ends with: "Empty scene, no blue kids bmx bike, no bikes, no bicycles or other vehicles, no people, no animals; the product will be placed afterwards."
   - The draw result records `scene_exclusions: [...]`, which is empty when the concept is unknown; the prompt is then unchanged.
   - The concept is reduced to lowercase letters, digits, hyphens and apostrophes, at most 8 words.
-- **`plate_fitted_pixel_sha256`.** This is an additive receipt field for `model_generated` draws only. It holds the pixel SHA-256 of the cover-fitted plate that was actually composited, whereas `plate_pixel_sha256` hashes the stored plate before the fit. It is absent on source plates.
+- **`plate_fitted_pixel_sha256`.** This is an additive receipt field for `model_generated` draws only. It holds the pixel SHA-256 of the cover-fitted plate, whereas `plate_pixel_sha256` hashes the stored plate before the fit. It is absent on source plates. When the ground shadow ran (docs/GROUND-SHADOW.md), the composited plate is that fit with the shadow multiplied on; `ground_shadow.plate_pixel_sha256` pins it, and this field keeps hashing the fit alone.
   - Verify does not grade it yet. It lets a later check re-derive the background: every alpha-0 output pixel equals this plate.
 
 ## Calibration: IMG_1443 (source_edit run `run-1443-fixed`)

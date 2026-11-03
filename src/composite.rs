@@ -1981,6 +1981,49 @@ pub fn draw_product_with_plate_kind(
     plate_handle: Option<&str>,
     plate_kind_override: Option<(&str, Value)>,
 ) -> Result<(String, Value), String> {
+    draw_product_impl(
+        store,
+        foreground_handle,
+        scene_prompt,
+        plate_handle,
+        plate_kind_override,
+        None,
+    )
+}
+
+/// The generated-plate draw with the ground shadow
+/// (docs/GROUND-SHADOW.md): a stored `model_generated` plate, fitted,
+/// then a contact and cast shadow multiplied onto plate pixels at the
+/// product's ground line, following `light`. The receipt gains an
+/// additive `ground_shadow` record; every count and hash above it is
+/// computed as before (`plate_fitted_pixel_sha256` is the fit of the
+/// stored plate, before the shadow; the record pins the grounded
+/// plate). `AGENTHAND_GROUND_SHADOW=off` gives the plain composite.
+pub fn draw_product_grounded(
+    store: &AssetStore,
+    foreground_handle: &str,
+    scene_prompt: &str,
+    plate_handle: &str,
+    light: &crate::ground::GroundLight,
+) -> Result<(String, Value), String> {
+    draw_product_impl(
+        store,
+        foreground_handle,
+        scene_prompt,
+        Some(plate_handle),
+        None,
+        Some(light),
+    )
+}
+
+fn draw_product_impl(
+    store: &AssetStore,
+    foreground_handle: &str,
+    scene_prompt: &str,
+    plate_handle: Option<&str>,
+    plate_kind_override: Option<(&str, Value)>,
+    ground_light: Option<&crate::ground::GroundLight>,
+) -> Result<(String, Value), String> {
     let chain = validate_foreground(store, foreground_handle)?;
     let record = chain[0].clone();
     let source_record = chain[chain.len() - 1].clone();
@@ -2057,6 +2100,7 @@ pub fn draw_product_with_plate_kind(
     // about 1.3 s; review aaa44dc defect 7).
     let generated_plate = plate_kind_override.is_none() && plate_handle.is_some();
     let mut plate_fitted_pixel_sha256 = None;
+    let mut ground_shadow = None;
     let (composite, transformations, edge_fix, shadow) = if edge_fix_applies_to(plate_kind) {
         let source_image =
             store.read_image(&(HANDLE_PREFIX.to_string() + &source_record.asset_id))?;
@@ -2088,10 +2132,20 @@ pub fn draw_product_with_plate_kind(
         // `composite_images` fit inline; fit here once so the receipt
         // hash below reuses these pixels instead of fitting again.
         let (fitted, transformations) = fit_plate(&plate, foreground.width, foreground.height);
-        let composite = composite_over_fitted(&foreground, &fitted);
         if generated_plate {
             plate_fitted_pixel_sha256 = Some(fitted.pixel_sha256());
         }
+        // Ground shadow (docs/GROUND-SHADOW.md), generated plates only,
+        // when the caller asked for it: plate pixels only, after the
+        // fitted hash above, so that hash keeps its meaning.
+        let composite = match ground_light {
+            Some(light) if generated_plate => {
+                let grounded = crate::ground::ground_shadow_for_draw(&fitted, &foreground, light);
+                ground_shadow = Some(grounded.report.to_json());
+                composite_over_fitted(&foreground, &grounded.plate)
+            }
+            _ => composite_over_fitted(&foreground, &fitted),
+        };
         (composite, transformations, None, None)
     };
     let composite_handle = store.put_image(&composite, KIND_COMPOSITE, Some(&record.asset_id))?;
@@ -2169,6 +2223,12 @@ pub fn draw_product_with_plate_kind(
         // Additive record (never graded): the shadow carry-over, plate
         // pixels only; the counts above are unchanged by it.
         receipt["shadow"] = shadow;
+    }
+    if let Some(record) = ground_shadow {
+        // Additive record (never graded): the ground shadow drawn on
+        // the generated plate, plate pixels only; the counts above are
+        // measured on the delivered composite as always.
+        receipt["ground_shadow"] = record;
     }
     // --- insertion point: plate_fitted_pixel_sha256 (docs/LIGHT-AND-THIN.md) ---
     if let Some(sha) = plate_fitted_pixel_sha256 {
