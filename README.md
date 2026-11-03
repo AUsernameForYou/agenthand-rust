@@ -36,10 +36,8 @@ run you can re-check yourself.
 |---|---|---|
 | Impact (30%) | [Impact](#impact) | A real room run staged six real items: 352,597 product pixels checked, 0 changed |
 | Use of Meta AI tooling (25%) | [Use of Meta AI tooling](#use-of-meta-ai-tooling) | Every runtime model is a Meta model, and the open-weight one does real work |
-| Technical depth (20%) | [Technical depth](#technical-depth) | Two builds ran one frozen proof run and agreed exactly: 580,613 pixels checked, 0 changed |
-| Novelty and creativity (10%) | [Novelty and creativity](#novelty-and-creativity) | The product layer is never regenerated, and the receipt proves it pixel by pixel |
-| Video and communication (10%) | [Video and communication](#video-and-communication) | Every moment of the demo film traces to a claim in the Proof Graph |
-| Presentation and documentation (5%) | [Presentation and documentation](#presentation-and-documentation) | Setup, receipt format, and the full evidence trail are documented in this repo |
+| Demo (25%) | [Demo](#demo) | Every moment of the demo film traces to a claim in the Proof Graph |
+| Technical Depth and Execution (20%) | [Technical Depth and Execution](#technical-depth-and-execution) | Two builds ran one frozen proof run and agreed exactly: 580,613 pixels checked, 0 changed |
 
 To run it, go to [Install](#install). To check the claims with no
 API key at all, the frozen replay in `conformance/replay-package/`
@@ -209,7 +207,93 @@ NO_MATCH. The narration runs on Baseten partner credits, a pool
 separate from the Meta Model API spend cap; the three tools
 themselves run on the hosted Meta models in the table above.
 
-## Technical depth
+**The product is never regenerated, and the receipt is the
+product.** Generative staging tools rebuild the item and ask the
+seller to trust the result. agenthand generates only the room
+around the item, composites the original pixels over it in
+deterministic code, and ships a receipt that lets anyone recount
+those pixels from the stored files. The evidence is engineered as
+a graph (the Proof Graph, under Technical Depth and Execution):
+every claim a node, every receipt the proof at the end of a
+traceable path.
+
+![A staged image from the frozen proof run](conformance/replay-package/run/assets/45deaf1acea14ab5839c641eee1cd277.png)
+
+The staged output of the frozen proof run (2026-10-26). Its
+receipt appears in full under Technical Depth and Execution, and the offline
+replay in `conformance/replay-package/` re-proves it with no
+network and no key.
+
+### Two zones, stated honestly
+
+A cut is an estimate, so the proof holds a buffer. On the hero
+bike run, the proof core (the cut eroded by a small margin) is
+4,053,953 pixels, verbatim and receipted at 0 changed. The ring
+the erosion removed, plus declared fragile structures (the spokes
+first), is the repair margin: 381,802 pixels that may be rebuilt,
+and are counted wherever the receipt shows. Of that margin,
+278,417 pixels are real product pixels recovered from the photo
+itself (138,892 verbatim spokes and 139,525 unmixed pixels);
+1,055 pixels are drawn fill where the spokes were provably gone,
+and 102,330 were released bare. The receipt covers the bike's
+core, pixel for pixel. The margin and the spokes are rebuilt, and
+counted, never claimed as verbatim.
+
+### The counterpoint, measured
+
+The headline count has a measured counterpoint. Method: photographs
+of real physical products from the verified room run — a bright
+orange hardshell suitcase (223,600 product pixels) and a gray
+storage box (31,932) — handed to Muse Image 1.0's full-frame edit
+mode with a staging prompt that explicitly instructed the model to
+keep the product exactly as-is, three independent runs per item,
+counted with the receipt's own counting rule (October 28, 2026).
+Controls: the counter reproduces 0 on each item's Fidelity Lock
+composite at every tolerance, and a pure resize round-trip floor
+was measured separately.
+
+| Subject | Regeneration changed, zero tolerance | Regeneration changed, beyond ±16 per channel | Fidelity Lock composite |
+|---|---|---|---|
+| Orange suitcase (223,600 px) | 223,599–223,600 | 212,823–215,878 | 0 |
+| Gray storage box (31,932 px) | 31,858–31,932 | 16,369–29,577 | 0 |
+
+Ranges are min–max across the three runs, never a single run. The
+baseline is this model's edit mode, measured as a method, not a
+tested third-party tool.
+
+## Demo
+
+**Every claim in the demo film traces to a receipt.** The film
+(linked at the top of this README) shows live, unmocked Meta model
+calls from real input to real result, and each of its chapters is
+a node in the Proof Graph: pick any moment and walk it back to the
+claim and the receipt behind it.
+
+```sh
+agenthand evidence chapter 1:42
+```
+
+The count itself also runs in a browser: the project site at
+https://ausernameforyou.github.io/agenthand/#fidelity verifies a
+staged image's product pixels without installing anything.
+
+**Everything a judge needs is in this repo.**
+
+- [docs/receipt-format.md](docs/receipt-format.md) — every receipt
+  field, and exactly what the verifier recomputes.
+- [docs/EVIDENCE.md](docs/EVIDENCE.md) — the Proof Graph verbs,
+  exit codes, and the judge pack export (`agenthand evidence
+  export <dir>`: the database, every receipt file, and a manifest
+  in one folder).
+- [JUDGING.md](JUDGING.md) — the judging index: every headline
+  number in this README, pointed at its Proof Graph trace.
+- [SUBMISSION.md](SUBMISSION.md) — the submission statement.
+- [llms.txt](llms.txt) — the machine-readable summary of this
+  README.
+- Setup is [Install](#install) above; `.env.example` lists every
+  key, and the replay and evidence verbs need none.
+
+## Technical Depth and Execution
 
 **Two independent builds agree exactly on the proof.** The Python
 reference build and this Rust build ran the same frozen proof run
@@ -793,95 +877,6 @@ The refusals are designed, and they are part of the product:
 operator key covers all three models. The server starts and lists
 its tools with no key at all, and the verifier plus the frozen
 replay need no key.
-
-## Novelty and creativity
-
-**The product is never regenerated, and the receipt is the
-product.** Generative staging tools rebuild the item and ask the
-seller to trust the result. agenthand generates only the room
-around the item, composites the original pixels over it in
-deterministic code, and ships a receipt that lets anyone recount
-those pixels from the stored files. The evidence is engineered as
-a graph (the Proof Graph, under Technical depth): every claim a
-node, every receipt the proof at the end of a traceable path.
-
-![A staged image from the frozen proof run](conformance/replay-package/run/assets/45deaf1acea14ab5839c641eee1cd277.png)
-
-The staged output of the frozen proof run (2026-10-26). Its
-receipt appears in full under Technical depth, and the offline
-replay in `conformance/replay-package/` re-proves it with no
-network and no key.
-
-### Two zones, stated honestly
-
-A cut is an estimate, so the proof holds a buffer. On the hero
-bike run, the proof core (the cut eroded by a small margin) is
-4,053,953 pixels, verbatim and receipted at 0 changed. The ring
-the erosion removed, plus declared fragile structures (the spokes
-first), is the repair margin: 381,802 pixels that may be rebuilt,
-and are counted wherever the receipt shows. Of that margin,
-278,417 pixels are real product pixels recovered from the photo
-itself (138,892 verbatim spokes and 139,525 unmixed pixels);
-1,055 pixels are drawn fill where the spokes were provably gone,
-and 102,330 were released bare. The receipt covers the bike's
-core, pixel for pixel. The margin and the spokes are rebuilt, and
-counted, never claimed as verbatim.
-
-### The counterpoint, measured
-
-The headline count has a measured counterpoint. Method: photographs
-of real physical products from the verified room run — a bright
-orange hardshell suitcase (223,600 product pixels) and a gray
-storage box (31,932) — handed to Muse Image 1.0's full-frame edit
-mode with a staging prompt that explicitly instructed the model to
-keep the product exactly as-is, three independent runs per item,
-counted with the receipt's own counting rule (October 28, 2026).
-Controls: the counter reproduces 0 on each item's Fidelity Lock
-composite at every tolerance, and a pure resize round-trip floor
-was measured separately.
-
-| Subject | Regeneration changed, zero tolerance | Regeneration changed, beyond ±16 per channel | Fidelity Lock composite |
-|---|---|---|---|
-| Orange suitcase (223,600 px) | 223,599–223,600 | 212,823–215,878 | 0 |
-| Gray storage box (31,932 px) | 31,858–31,932 | 16,369–29,577 | 0 |
-
-Ranges are min–max across the three runs, never a single run. The
-baseline is this model's edit mode, measured as a method, not a
-tested third-party tool.
-
-## Video and communication
-
-**Every claim in the demo film traces to a receipt.** The film
-(linked at the top of this README) shows live, unmocked Meta model
-calls from real input to real result, and each of its chapters is
-a node in the Proof Graph: pick any moment and walk it back to the
-claim and the receipt behind it.
-
-```sh
-agenthand evidence chapter 1:42
-```
-
-The count itself also runs in a browser: the project site at
-https://ausernameforyou.github.io/agenthand/#fidelity verifies a
-staged image's product pixels without installing anything.
-
-## Presentation and documentation
-
-**Everything a judge needs is in this repo.**
-
-- [docs/receipt-format.md](docs/receipt-format.md) — every receipt
-  field, and exactly what the verifier recomputes.
-- [docs/EVIDENCE.md](docs/EVIDENCE.md) — the Proof Graph verbs,
-  exit codes, and the judge pack export (`agenthand evidence
-  export <dir>`: the database, every receipt file, and a manifest
-  in one folder).
-- [JUDGING.md](JUDGING.md) — the judging index: every headline
-  number in this README, pointed at its Proof Graph trace.
-- [SUBMISSION.md](SUBMISSION.md) — the submission statement.
-- [llms.txt](llms.txt) — the machine-readable summary of this
-  README.
-- Setup is [Install](#install) above; `.env.example` lists every
-  key, and the replay and evidence verbs need none.
 
 ## Provenance
 
