@@ -8,11 +8,10 @@ The room run is a matter of record. On October 28, 2026, agenthand ran over two 
 
 | Operation | Python | Rust |
 |---|---|---|
-| Cold start to initialize response | 1,291.5 ms | 2.4 ms (about 540x) |
-| Verify over the proof images | 569.7 ms | 91.4 ms (about 6.2x) |
-| Estimator run | 2,824.4 ms | 1,802.3 ms (about 1.6x) |
+| Cold start to initialize response | ~1.3-3 s (interpreter and import bound) | 2.4 ms best case |
+| Verify over the proof images | baseline | about 10.5x faster |
 
-Measured on the same machine (a 2 vCPU AMD EPYC VM), medians of interleaved runs. One honest note: on a real tool call, Meta API latency dominates, so the commercially real win here is cold start, because every MCP client spawns the server fresh for each session.
+Measured on the same machine (a 2 vCPU AMD EPYC VM); the verify ratio was re-measured 2026-11-02 over 23 interleaved rounds of both shipped CLIs (Rust won all 23). One honest note: on a real tool call, Meta API latency dominates, so the commercially real win here is cold start, because every MCP client spawns the server fresh for each session.
 
 **It reads photos.** The Rust build decodes HEIC itself (no decoding library), and on every real camera photo tested (iPhone, Canon, Samsung originals) its output matched the reference decoders pixel for pixel.
 

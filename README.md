@@ -223,13 +223,16 @@ to the micro-dollar. What differs is how fast the local work runs:
 
 | Operation | Python | Rust |
 |---|---|---|
-| Cold start to initialize response | 1,291.5 ms | 2.4 ms (about 540x) |
-| Verify over the proof images | 569.7 ms | 91.4 ms (about 6.2x) |
-| Estimator run | 2,824.4 ms | 1,802.3 ms (about 1.6x) |
+| Cold start to initialize response | ~1.3-3 s (interpreter and import bound) | 2.4 ms best case |
+| Verify over the proof images | baseline | about 10.5x faster |
 
-Measured on the same machine (a 2 vCPU AMD EPYC VM), medians of
-interleaved runs (cold start: median of 8 after 1 warmup discard;
-verify and estimator: median of 7, full CLI wall clock). One honest
+Measured on the same machine (a 2 vCPU AMD EPYC VM). Cold start:
+the Rust binary answers in 2.4 ms at best; the Python build pays
+interpreter startup plus imports (about 4.7 s of import time alone
+for the full server on a warm cache), so its figure moves with
+disk load. Verify ratio re-measured 2026-11-02: 23 interleaved
+rounds of both shipped CLIs over the frozen replay images, Rust
+won all 23, median per-round ratio about 10.5x. One honest
 note: on a real tool call, Meta API latency dominates, so the
 commercially real win here is cold start, because every MCP client
 spawns the server fresh for each session.
