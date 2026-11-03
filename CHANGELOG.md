@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased: ground match for generated plates
+
+- **The generated ground follows the photo's ground** (docs/GROUND-MATCH.md).
+  At draw time (generated plates only) `ground_match::ground_descriptor`
+  samples the source photo's ground around and below the product and the
+  remnants enclosed by open frames, and a fixed rule list names it
+  (surface, value, warm or cool). The generated plate prompt gets one
+  clause after the light phrase; the caller's scene text keeps the
+  setting. `source_edit` prompts are unchanged.
+- **Record**: `ground_descriptor` in the draw result beside
+  `angle_lock`; additive `ground_match` in the receipt (sample, fitted
+  plate's ground below the product, delta), reported, not a gate.
+- **Kill switch** `AGENTHAND_GROUND_MATCH=off` (0/false/no).
+- IMG_1443: "weathered dark grey paving, mid-dark value, neutral tone"
+  (value 0.309, warmth 0.000).
+
 ## Unreleased: generated plates by default, with a ground shadow
 
 - **Default plate is `generated`** (decision 135): `draw` without a
