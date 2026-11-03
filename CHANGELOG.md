@@ -98,6 +98,18 @@
   database's directory (verify_db.py's rule). docs/EVIDENCE.md has the
   verbs, output formats and exit codes; tests in
   `tests/evidence_cli.rs` (one `#[ignore]` test for the real database).
+- `export` counts file-backed receipts only (spec ruling M-51): a
+  receipt whose row names no file is listed on its own
+  `No file by design: receipts 5, 15, 17 (...)` line and no longer makes
+  the pack PARTIAL. Included files are re-hashed against
+  `receipts.file_sha256`. Verdict line:
+  `EXPORT: COMPLETE|PARTIAL|FAIL (I of N file-backed receipt files
+  included, M missing[, F not matching the database])`; exit 0 / 4 / 1.
+  manifest.json adds `file_backed_receipts`, `receipt_files_included`,
+  `no_file_receipt_ids`, `mismatched_receipt_ids` and a per-file
+  `matches_db`; `missing_receipt_ids` now lists file-backed receipts
+  only. On the real database 29 receipts are file-backed and 5, 15
+  and 17 name no file.
 
 ## Unreleased: hole carving
 
