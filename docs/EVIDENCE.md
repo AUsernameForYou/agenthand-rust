@@ -206,26 +206,38 @@ a write elsewhere.
 <dir>/
   evidence.db                 byte copy of the database
   receipts/<receipt_id>.json  each receipt whose source_file resolves (same rule as verify)
-  manifest.json               db sha256, receipts root, row counts, per-file sha256,
-                              missing receipt ids (no timestamps; deterministic)
-  PACK.md                     plain-language description, how to verify, and one line
-                              per receipt left out, with the reason
+  manifest.json               db sha256, receipts root, row counts, per-file sha256 and
+                              whether it matches the database, missing / no-file /
+                              mismatched receipt ids (no timestamps; deterministic)
+  PACK.md                     plain-language description, how to verify, the EXPORT line,
+                              one line per file-backed receipt left out (with the
+                              reason), and the receipts with no file by design
 ```
 
 The `receipts/` folder matches the shipped layout: put `evidence.db`
 and `receipts/` in a folder named `evidence` and run
 `agenthand evidence verify --all` from its parent.
 
-The last line states the counts, in the same shape for both verdicts:
+Only file-backed receipts count: a receipt whose row names a file
+(non-empty `source_file`). Each included file is re-hashed and compared
+with `receipts.file_sha256`. A receipt whose row names no file has
+nothing to re-hash; it gets its own named line and never makes the
+pack `PARTIAL`. On the shipped database that is receipts 5, 15 and 17,
+so with all 29 receipt files present the output ends:
 
 ```
-EXPORT: COMPLETE (2 of 2 receipt files included, 0 missing)
-EXPORT: PARTIAL (29 of 32 receipt files included, 3 missing)
+No file by design: receipts 5, 15, 17 (the database names no file to re-hash)
+EXPORT: COMPLETE (29 of 29 file-backed receipt files included, 0 missing)
 ```
 
-Every receipt row counts, hashed or not: a receipt whose row names no
-file is listed as missing. `PARTIAL` exits 4, the same code as
-`OVERALL: INCOMPLETE` (nothing failed, but not everything is covered).
+The `EXPORT` line is always last and has one shape:
+
+| Verdict | When | Exit |
+|---|---|---|
+| `EXPORT: COMPLETE (N of N file-backed receipt files included, 0 missing)` | every file-backed receipt file was found, copied, and matches its database sha256 | 0 |
+| `EXPORT: PARTIAL (I of N file-backed receipt files included, M missing)` | a file-backed receipt file was not found (listed on an `export: missing receipt file(s):` line) | 4, as `OVERALL: INCOMPLETE` |
+| `EXPORT: FAIL (I of N ..., M missing, F not matching the database)` | an included file does not match its database sha256; it is still copied and named, so `verify` on the pack fails too. Overrides `PARTIAL` | 1 |
+
 `--json` prints the manifest plus `status` and `dir`.
 
 ## `trace` output
@@ -257,10 +269,10 @@ second time is printed once more with `(shown above)` and not expanded.
 | Code | Meaning |
 |---|---|
 | 0 | Success; `verify`: `OVERALL: PASS`; `export`: `EXPORT: COMPLETE`; `root`: meta matches or is absent; `tamper`: the altered copy fails the check, or the file is not checked |
-| 1 | `verify`: `OVERALL: FAIL`; `root`: meta differs; `tamper`: the file on disk already differs from the database |
+| 1 | `verify`: `OVERALL: FAIL`; `export`: `EXPORT: FAIL` (a packed receipt file does not match its database sha256); `root`: meta differs; `tamper`: the file on disk already differs from the database |
 | 2 | Usage error, unknown id, database not found or not schema v2; `export`: target not empty or not writable |
 | 3 | Planned verb, not implemented |
-| 4 | Incomplete, nothing failed: `verify`: `OVERALL: INCOMPLETE` (receipt files skipped or none re-hashed); `export`: `EXPORT: PARTIAL` (receipt files left out of the pack) |
+| 4 | Incomplete, nothing failed: `verify`: `OVERALL: INCOMPLETE` (receipt files skipped or none re-hashed); `export`: `EXPORT: PARTIAL` (file-backed receipt files left out of the pack) |
 
 ## Parity with `verify_db.py`
 
@@ -300,10 +312,12 @@ default, from `./evidence/evidence.db`, with `--base-dir` and with
 and without a reason; the root for 1, 2 and 3 receipts against
 hand-computed values; a wrong stored root; the database left unchanged
 by every verb; trace, graph, tamper, planned verbs and database
-location; `export`: a partial pack (exit 4, source database untouched,
+location; `export`: a partial pack (2 of 3 file-backed, one receipt
+with no file by design; exit 4, source database untouched,
 pack database byte-identical, manifest hashes and root checked), a
-complete pack that verifies `PASS` from its own copy, and a refused
-non-empty target. One `#[ignore]` test runs against the real database and its
+complete pack (with a no-file receipt) that verifies `PASS` from its
+own copy, a changed receipt file (`EXPORT: FAIL`, exit 1), and a
+refused non-empty target. One `#[ignore]` test runs against the real database and its
 29 receipt files and expects
 `OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))`:
 

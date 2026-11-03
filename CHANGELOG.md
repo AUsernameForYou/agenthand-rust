@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased: generated plates by default, with a ground shadow
+
+- **Default plate is `generated`** (decision 135): `draw` without a
+  `plate` argument stages the upgraded listing scene.
+  `plate: "source_edit"` or `AGENTHAND_DRAW_PLATE=source_edit` keeps the
+  photo-based plate. `backdrop::DRAW_PLATE_DEFAULT` names the default;
+  the draw tool description and the `plate` schema text follow it.
+  identify is untouched.
+- **Ground shadow on generated plates** (decision 141,
+  docs/GROUND-SHADOW.md). Generated draws floated: the plate's ground
+  ran under the tyres with no shadow break. `ground::ground_shadow`
+  finds the product's ground line and contact points from the layer's
+  alpha (lowest pixel per column, lower convex hull) and multiplies a
+  contact shadow and a short soft cast shadow onto plate pixels only.
+  The cast direction follows the source light estimate; when it is
+  inconclusive the shadow falls straight back (front-lit default).
+  Penumbra widens and opacity drops with height; thin parts stay faint.
+  Runs in the server's generated path only
+  (`composite::draw_product_grounded`); `draw_product`,
+  `draw_product_with_plate_kind`, `composite_images` and parity are
+  byte-identical.
+- **Record** `ground_shadow` (additive, not graded) in the draw result
+  and the receipt, including the grounded plate's pixel hash;
+  `plate_fitted_pixel_sha256` keeps hashing the fit before the shadow.
+- **Kill switch** `AGENTHAND_GROUND_SHADOW=off` (0/false/no): plain
+  composite, byte for byte.
+- IMG_1443 (stored v102 foreground and plate, offline): two contacts,
+  1,118,334 plate pixels shaded in 0.49 s, 5,072,763 product pixels,
+  0 changed.
+
 ## Unreleased: hole carve completion pass and enclosed-remainder gate
 
 - **Completion pass** (`segmentation::complete_windows`, step 4e in
@@ -49,9 +79,18 @@
   upper joint and the rear shade patches remain (docs/HOLE-CARVE.md
   Limits). Record: completion.strip_pixels, strip_cells,
   spoke_bridge_pixels; gate.strip_pixels, strip_residue_pixels.
-- Tests: five new tests in `tests/hole_carve.rs` (shaded wheel
+- **Faint lines** (review round 4). Muse's acceptance draw showed spokes
+  torn where completed windows meet them: in shade a metal spoke is under
+  the thin contrast floor, so the completion released it with its cell.
+  Bright line work over a dark background (top-hat >= 14, opening <= 90)
+  and line work the colour test called texture, where the line density
+  stays under 45%, is now kept by the completion and the strip step.
+  IMG_1443: 2,881 px of spoke returned, nothing newly carved; gate 7.33% /
+  7.46%. Known limit: spokes grazing a shadow edge. The upper front joint
+  bar and the rear lower-right shade patches remain.
+- Tests: six new tests in `tests/hole_carve.rs` (shaded wheel
   completed, completion kill switch, gate refusal, reflector and bolt
-  kept, dark joint band released).
+  kept, dark joint band released, dim spokes continuous).
 - **Pocket guard and pale-part guard** (review round 2). The completion
   had released the rear cog between the chain and the dropout (17,640
   px) and the rear reflector's bolt; the colour-only carve already frayed
@@ -98,6 +137,18 @@
   database's directory (verify_db.py's rule). docs/EVIDENCE.md has the
   verbs, output formats and exit codes; tests in
   `tests/evidence_cli.rs` (one `#[ignore]` test for the real database).
+- `export` counts file-backed receipts only (spec ruling M-51): a
+  receipt whose row names no file is listed on its own
+  `No file by design: receipts 5, 15, 17 (...)` line and no longer makes
+  the pack PARTIAL. Included files are re-hashed against
+  `receipts.file_sha256`. Verdict line:
+  `EXPORT: COMPLETE|PARTIAL|FAIL (I of N file-backed receipt files
+  included, M missing[, F not matching the database])`; exit 0 / 4 / 1.
+  manifest.json adds `file_backed_receipts`, `receipt_files_included`,
+  `no_file_receipt_ids`, `mismatched_receipt_ids` and a per-file
+  `matches_db`; `missing_receipt_ids` now lists file-backed receipts
+  only. On the real database 29 receipts are file-backed and 5, 15
+  and 17 name no file.
 
 ## Unreleased: hole carving
 

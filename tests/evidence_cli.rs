@@ -806,8 +806,9 @@ fn export_target(name: &str) -> PathBuf {
 #[test]
 fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     // The standard fixture: receipts 1 and 2 on disk, receipt 3 hashed
-    // but its file absent, receipt 4 with no source_file at all, so
-    // the pack is PARTIAL with 2 of 4 receipt files.
+    // but its file absent, receipt 4 with no source_file at all. Only
+    // file-backed receipts count (M-51): PARTIAL with 2 of 3, and
+    // receipt 4 is named as having no file by design.
     let f = standard("export-partial", Some("reason"));
     let db_before = file_sha(&f.db);
     let target = export_target("partial");
@@ -816,12 +817,19 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     assert_eq!(o.code, 4, "{}{}", o.stdout, o.stderr);
     assert!(
         o.stdout
-            .contains("EXPORT: PARTIAL (2 of 4 receipt files included, 2 missing)"),
+            .contains("EXPORT: PARTIAL (2 of 3 file-backed receipt files included, 1 missing)"),
         "{}",
         o.stdout
     );
     assert!(
-        o.stdout.contains("export: missing receipt file(s): 3, 4"),
+        o.stdout.contains("export: missing receipt file(s): 3\n"),
+        "{}",
+        o.stdout
+    );
+    assert!(
+        o.stdout.contains(
+            "No file by design: receipt 4 (the database names no file to re-hash)\nEXPORT: "
+        ),
         "{}",
         o.stdout
     );
@@ -847,8 +855,12 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
         pack_md_reasons
     );
     assert!(
+        pack_md_reasons.contains("No file by design: receipt 4"),
+        "{}",
         pack_md_reasons
-            .contains("receipt 4: not included (the database names no receipt file for it)"),
+    );
+    assert!(
+        !pack_md_reasons.contains("receipt 4: not included"),
         "{}",
         pack_md_reasons
     );
@@ -874,7 +886,11 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     let pack_md = std::fs::read_to_string(target.join("PACK.md")).unwrap();
     assert!(pack_md.contains("counts"), "{}", pack_md);
     assert!(pack_md.contains("receipt 3: not included"), "{}", pack_md);
-    assert!(pack_md.contains("receipt 4: not included"), "{}", pack_md);
+    assert!(
+        pack_md.contains("EXPORT: PARTIAL (2 of 3 file-backed receipt files included, 1 missing)"),
+        "{}",
+        pack_md
+    );
     assert!(
         pack_md.contains("agenthand evidence verify --all"),
         "{}",
@@ -890,13 +906,18 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
     assert_eq!(manifest["counts"]["calls"], 4);
     assert_eq!(manifest["counts"]["receipts"], 4);
     assert_eq!(manifest["counts"]["claims"], 3);
-    assert_eq!(manifest["missing_receipt_ids"], serde_json::json!([3, 4]));
+    assert_eq!(manifest["counts"]["file_backed_receipts"], 3);
+    assert_eq!(manifest["counts"]["receipt_files_included"], 2);
+    assert_eq!(manifest["missing_receipt_ids"], serde_json::json!([3]));
+    assert_eq!(manifest["no_file_receipt_ids"], serde_json::json!([4]));
+    assert_eq!(manifest["mismatched_receipt_ids"], serde_json::json!([]));
     let files = manifest["files"].as_array().unwrap();
     assert_eq!(files.len(), 2);
     for (i, entry) in files.iter().enumerate() {
         let id = (i + 1) as i64;
         assert_eq!(entry["receipt_id"], id);
         assert_eq!(entry["file"], format!("receipts/{id}.json"));
+        assert_eq!(entry["matches_db"], true);
         let packed = target.join("receipts").join(format!("{id}.json"));
         assert_eq!(
             entry["sha256"],
@@ -914,19 +935,17 @@ fn export_writes_a_partial_pack_and_leaves_the_source_db_untouched() {
 
 #[test]
 fn export_complete_pack_verifies_from_its_own_copy() {
-    // Every receipt resolves, so the pack is COMPLETE; laying the
-    // pack out as an evidence folder (its own evidence.db, receipt
+    // Every file-backed receipt resolves, so the pack is COMPLETE even
+    // though receipt 4 names no file (no file by design, M-51); laying
+    // the pack out as an evidence folder (its own evidence.db, receipt
     // files at the paths the database names) verifies OVERALL PASS.
     let f = standard("export-complete", Some("reason"));
     {
         let con = Connection::open(&f.db).unwrap();
-        con.execute("DELETE FROM receipts WHERE receipt_id IN (3, 4)", [])
+        con.execute("DELETE FROM receipts WHERE receipt_id = 3", [])
             .unwrap();
-        con.execute(
-            "DELETE FROM edges WHERE to_node IN ('receipt:3', 'receipt:4')",
-            [],
-        )
-        .unwrap();
+        con.execute("DELETE FROM edges WHERE to_node = 'receipt:3'", [])
+            .unwrap();
         // Recompute the stored root over the remaining digests, as the
         // importer would, so the trimmed database still verifies.
         let mut digests: Vec<String> = con
@@ -953,13 +972,23 @@ fn export_complete_pack_verifies_from_its_own_copy() {
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     assert!(
         o.stdout
-            .contains("EXPORT: COMPLETE (2 of 2 receipt files included, 0 missing)"),
+            .contains("EXPORT: COMPLETE (2 of 2 file-backed receipt files included, 0 missing)"),
+        "{}",
+        o.stdout
+    );
+    assert!(
+        o.stdout.contains("No file by design: receipt 4"),
         "{}",
         o.stdout
     );
     let pack_md = std::fs::read_to_string(target.join("PACK.md")).unwrap();
     assert!(
-        pack_md.contains("Every receipt file named in the database was resolved"),
+        pack_md.contains("All 2 file-backed receipt files (receipts whose row names a file)"),
+        "{}",
+        pack_md
+    );
+    assert!(
+        pack_md.contains("No file by design: receipt 4"),
         "{}",
         pack_md
     );
@@ -967,6 +996,7 @@ fn export_complete_pack_verifies_from_its_own_copy() {
         serde_json::from_str(&std::fs::read_to_string(target.join("manifest.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["missing_receipt_ids"], serde_json::json!([]));
+    assert_eq!(manifest["no_file_receipt_ids"], serde_json::json!([4]));
 
     // Standalone layout: <root>/evidence-layer/evidence.db is the
     // pack's copy, <root>/pkg/r<N>.json are the pack's receipt files;
@@ -993,6 +1023,44 @@ fn export_complete_pack_verifies_from_its_own_copy() {
         v.stdout
     );
 
+    let _ = std::fs::remove_dir_all(&target);
+}
+
+#[test]
+fn export_of_a_receipt_file_that_does_not_match_its_hash_fails() {
+    // FAIL overrides PARTIAL: receipt 1's file is changed, receipt 3's
+    // is absent. The changed file is still copied (the pack is a
+    // faithful copy, so verify on it fails too) and named.
+    let f = standard("export-mismatch", Some("reason"));
+    let path = f.root.join("pkg").join("r1.json");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[3] ^= 0x01;
+    std::fs::write(&path, bytes).unwrap();
+    let target = export_target("mismatch");
+    let o = run_db(&f.db, &["export", target.to_str().unwrap()]);
+    assert_eq!(o.code, 1, "{}{}", o.stdout, o.stderr);
+    for want in [
+        "export: receipt 1: sha256 MISMATCH (db ",
+        "EXPORT: FAIL (2 of 3 file-backed receipt files included, 1 missing, \
+         1 not matching the database)",
+    ] {
+        assert!(
+            o.stdout.contains(want),
+            "missing {want:?} in:\n{}",
+            o.stdout
+        );
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(target.join("manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["mismatched_receipt_ids"], serde_json::json!([1]));
+    assert_eq!(manifest["files"][0]["matches_db"], false);
+    let pack_md = std::fs::read_to_string(target.join("PACK.md")).unwrap();
+    assert!(
+        pack_md.contains("- receipt 1: sha256 MISMATCH"),
+        "{}",
+        pack_md
+    );
     let _ = std::fs::remove_dir_all(&target);
 }
 

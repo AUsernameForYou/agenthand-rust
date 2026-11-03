@@ -523,3 +523,51 @@ fn folded_sleeve_is_not_measurable() {
         Value::Bool(false)
     );
 }
+
+/// The CLI as docs/MEASURE-GARMENT.md documents it: `--mask-edge-px`
+/// is accepted and its value is the edge accuracy the garment JSON
+/// reports (IMG_1491's 3.552 = 4284 / 1206). A non-positive value is a
+/// usage error.
+#[test]
+fn cli_takes_mask_edge_px_as_documented() {
+    let photo = root().join("tests/fixtures/measure/ah42_close.png");
+    let profile = root().join("tests/fixtures/measure/rendered-layout-profile.json");
+    let (w, h) = image::image_dimensions(&photo).unwrap();
+    // A T: torso plus a sleeve bar across its top.
+    let (cx, top) = (w / 2, h / 3);
+    let mask = image::GrayImage::from_fn(w, h, |x, y| {
+        let torso = x + w / 8 >= cx && x <= cx + w / 8 && y >= top && y + 10 <= h;
+        let sleeves = x + w / 3 >= cx && x <= cx + w / 3 && y >= top && y <= top + h / 8;
+        image::Luma([if torso || sleeves { 255 } else { 0 }])
+    });
+    let dir = std::env::temp_dir().join(format!("agenthand-edge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mask_path = dir.join("mask.png");
+    mask.save(&mask_path).unwrap();
+    let run = |edge: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_agenthand"))
+            .arg("measure")
+            .arg(&photo)
+            .arg("AH-42")
+            .arg("--profile")
+            .arg(&profile)
+            .arg("--mask")
+            .arg(&mask_path)
+            .args(["--garment", "--mask-edge-px", edge])
+            .output()
+            .unwrap()
+    };
+    let o = run("3.552");
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{stdout}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["garment"]["mask"]["edge_accuracy_px"], 3.552, "{stdout}");
+    let bad = run("0");
+    assert_eq!(bad.status.code(), Some(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}

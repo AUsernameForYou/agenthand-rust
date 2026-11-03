@@ -16,11 +16,13 @@
 //! importer's construction (see [`receipts_root`]).
 //!
 //! Exit codes: 0 = ok / OVERALL PASS, 1 = a FAIL (verify, root
-//! mismatch, tamper precondition), 2 = usage or database error,
+//! mismatch, tamper precondition, an exported receipt file that does
+//! not match its database sha256), 2 = usage or database error,
 //! 3 = a planned verb that is not implemented, 4 = incomplete: nothing
 //! failed, but not everything is covered (verify: OVERALL INCOMPLETE,
 //! receipt files skipped or none re-hashed; export: EXPORT PARTIAL,
-//! receipt files left out of the pack).
+//! file-backed receipt files left out of the pack; receipts whose row
+//! names no file are listed by name and do not count).
 //!
 //! `export` is the one writing verb: it copies the database and the
 //! resolvable receipt files into a fresh directory (a replay pack)
@@ -137,7 +139,7 @@ Options:
 
 Exit codes: 0 ok / OVERALL PASS; 1 FAIL; 2 usage or database error; 3 planned verb;
 4 incomplete: verify OVERALL INCOMPLETE (no FAIL, but receipt files skipped or none
-re-hashed); export EXPORT PARTIAL (receipt files left out of the pack).
+re-hashed); export EXPORT PARTIAL (file-backed receipt files left out of the pack).
 ";
 
 const PLANNED: [(&str, &str); 1] = [(
@@ -1354,21 +1356,26 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
     let n_claims = count_rows(&ctx.conn, "claims")?;
     let root = receipts_root(&rooted_digests(&ctx.conn)?);
 
-    // Receipt files, by the verify verb's resolution rule: a non-empty
-    // source_file resolved against the receipt base dir (absolute
-    // paths as-is); the receipt counts as resolvable when the resolved
-    // path is a readable file.
+    // Only file-backed receipts (a non-empty source_file) count toward
+    // the verdict (spec ruling M-51). A receipt whose row names no file
+    // is listed by name as "no file by design" and never makes the pack
+    // PARTIAL. Files resolve by the verify verb's rule (relative to the
+    // receipt base dir, absolute paths as-is), are copied, and are
+    // re-hashed against receipts.file_sha256 where the row carries one.
     let mut files: Vec<Value> = Vec::new();
     let mut missing: Vec<(i64, String)> = Vec::new();
+    let mut no_file: Vec<i64> = Vec::new();
+    let mut mismatched: Vec<(i64, String)> = Vec::new();
     {
-        let mut stmt = ctx
-            .conn
-            .prepare("SELECT receipt_id, source_file FROM receipts ORDER BY receipt_id")?;
+        let mut stmt = ctx.conn.prepare(
+            "SELECT receipt_id, source_file, file_sha256 FROM receipts ORDER BY receipt_id",
+        )?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let receipt_id = opt_i64(r.get_ref(0)?)
                 .ok_or_else(|| CliError::usage("export: receipt row without a receipt_id"))?;
             let sf = opt_text(r.get_ref(1)?).filter(|s| !s.is_empty());
+            let db_sha = opt_text(r.get_ref(2)?).filter(|s| !s.is_empty());
             let read = sf.as_deref().map(|s| {
                 let p = resolve_receipt_path(&ctx.base_dir, s);
                 if p.is_file() {
@@ -1385,21 +1392,71 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
                     let name = format!("{receipt_id}.json");
                     let dest = receipts_dir.join(&name);
                     std::fs::write(&dest, &b).map_err(|e| io_error("write", &dest, e))?;
+                    let sha = hex(&Sha256::digest(&b));
+                    // null: the row carries no hash to compare with.
+                    let matches = db_sha.as_ref().map(|d| *d == sha);
+                    if matches == Some(false) {
+                        let d = db_sha.as_deref().unwrap_or_default();
+                        mismatched.push((
+                            receipt_id,
+                            format!(
+                                "sha256 MISMATCH (db {}... disk {}...)",
+                                prefix_chars(d, 16),
+                                prefix_chars(&sha, 16)
+                            ),
+                        ));
+                    }
                     files.push(json!({
                         "receipt_id": receipt_id,
                         "file": format!("receipts/{name}"),
-                        "sha256": hex(&Sha256::digest(&b)),
+                        "sha256": sha,
+                        "matches_db": matches,
                     }));
                 }
                 Some(Err(reason)) => missing.push((receipt_id, reason)),
-                None => missing.push((
-                    receipt_id,
-                    "the database names no receipt file for it".to_string(),
-                )),
+                None => no_file.push(receipt_id),
             }
         }
     }
     let missing_ids: Vec<i64> = missing.iter().map(|(id, _)| *id).collect();
+    let mismatched_ids: Vec<i64> = mismatched.iter().map(|(id, _)| *id).collect();
+    let n_included = files.len();
+    let n_file_backed = n_included + missing.len();
+    let status = if !mismatched.is_empty() {
+        "FAIL"
+    } else if missing.is_empty() {
+        "COMPLETE"
+    } else {
+        "PARTIAL"
+    };
+    let ids_text = |ids: &[i64]| {
+        ids.iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let no_file_line = (!no_file.is_empty()).then(|| {
+        format!(
+            "No file by design: {} {} (the database names no file to re-hash)",
+            if no_file.len() == 1 {
+                "receipt"
+            } else {
+                "receipts"
+            },
+            ids_text(&no_file)
+        )
+    });
+    // Same shape for every verdict, like the OVERALL line; FAIL adds
+    // the count of included files that do not match the database.
+    let verdict = format!(
+        "EXPORT: {status} ({n_included} of {n_file_backed} file-backed receipt files included, {} missing{})",
+        missing.len(),
+        if mismatched.is_empty() {
+            String::new()
+        } else {
+            format!(", {} not matching the database", mismatched.len())
+        }
+    );
 
     let db_dest = dir.join("evidence.db");
     std::fs::copy(&ctx.db_path, &db_dest).map_err(|e| io_error("copy", &db_dest, e))?;
@@ -1413,26 +1470,50 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
             "calls": n_calls,
             "receipts": n_receipts,
             "claims": n_claims,
+            "file_backed_receipts": n_file_backed,
+            "receipt_files_included": n_included,
         },
         "files": files,
         "missing_receipt_ids": missing_ids,
+        "no_file_receipt_ids": no_file,
+        "mismatched_receipt_ids": mismatched_ids,
     });
     let manifest_path = dir.join("manifest.json");
     let manifest_text = serde_json::to_string_pretty(&manifest).unwrap_or_default();
     std::fs::write(&manifest_path, format!("{manifest_text}\n"))
         .map_err(|e| io_error("write", &manifest_path, e))?;
 
-    let missing_section = if missing.is_empty() {
-        "Every receipt file named in the database was resolved on the \
-         exporting machine and is included.\n"
-            .to_string()
+    let mut missing_section = if missing.is_empty() {
+        format!(
+            "All {n_file_backed} file-backed receipt files (receipts whose row names a \
+             file) were resolved on the exporting machine and are included.\n"
+        )
     } else {
-        let mut s = String::new();
+        let mut s = format!(
+            "{} of {n_file_backed} file-backed receipt files could not be included:\n\n",
+            missing.len()
+        );
         for (id, reason) in &missing {
             s.push_str(&format!("- receipt {id}: not included ({reason}).\n"));
         }
         s
     };
+    if !mismatched.is_empty() {
+        missing_section.push_str(
+            "\nIncluded, but not matching the sha256 the database records (verify \
+             reports these as FAIL):\n\n",
+        );
+        for (id, reason) in &mismatched {
+            missing_section.push_str(&format!("- receipt {id}: {reason}.\n"));
+        }
+    }
+    missing_section.push_str(&match &no_file_line {
+        None => "\nEvery receipt row names a file.\n".to_string(),
+        Some(line) => format!(
+            "\n{line}. These rows record a result with no file behind it; they are \
+             not counted as missing.\n"
+        ),
+    });
     let pack_md = format!(
         "# agenthand evidence pack\n\
          \n\
@@ -1447,14 +1528,16 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
          - `evidence.db`: the evidence database (SQLite, schema v2), copied\n\
          \x20 byte for byte from the export source. Its sha256 is in\n\
          \x20 `manifest.json`.\n\
-         - `receipts/<receipt_id>.json`: one file per receipt whose file\n\
-         \x20 could be resolved, named by receipt id.\n\
+         - `receipts/<receipt_id>.json`: one file per file-backed receipt\n\
+         \x20 (its row names a file) whose file could be resolved, named by\n\
+         \x20 receipt id.\n\
          - `manifest.json`: the machine-readable inventory: the database\n\
          \x20 sha256, the receipts root, the row counts, and the sha256 of\n\
          \x20 every included receipt file.\n\
          - `PACK.md`: this file.\n\
          \n\
          Counts: {n_runs} runs, {n_calls} calls, {n_receipts} receipts, {n_claims} claims.\n\
+         Receipt files: {n_included} of {n_file_backed} file-backed receipt files included.\n\
          \n\
          Receipts root: {root}\n\
          (sha256 of the sorted receipt sha256 hex digests, concatenated\n\
@@ -1482,16 +1565,15 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
          nothing fails but receipt files were not found; OVERALL: FAIL\n\
          (exit 1) when any check fails.\n\
          \n\
-         ## Receipt files not included\n\
+         ## Receipt files\n\
+         \n\
+         {verdict}\n\
          \n\
          {missing_section}",
     );
     let pack_path = dir.join("PACK.md");
     std::fs::write(&pack_path, pack_md).map_err(|e| io_error("write", &pack_path, e))?;
 
-    let n_included = files.len();
-    let complete = missing.is_empty();
-    let status = if complete { "COMPLETE" } else { "PARTIAL" };
     if o.json {
         let mut out = manifest.clone();
         out["status"] = json!(status);
@@ -1512,18 +1594,27 @@ fn cmd_export(ctx: &Ctx, o: &Opts) -> CliResult<u8> {
             receipts_dir.display()
         );
         if !missing.is_empty() {
-            let ids: Vec<String> = missing_ids.iter().map(i64::to_string).collect();
-            outln!("export: missing receipt file(s): {}", ids.join(", "));
+            outln!(
+                "export: missing receipt file(s): {}",
+                ids_text(&missing_ids)
+            );
         }
-        // Same shape for both verdicts, like the OVERALL line.
-        outln!(
-            "EXPORT: {status} ({n_included} of {n_receipts} receipt files included, {} missing)",
-            missing.len()
-        );
+        for (id, reason) in &mismatched {
+            outln!("export: receipt {id}: {reason}");
+        }
+        if let Some(line) = &no_file_line {
+            outln!("{line}");
+        }
+        outln!("{verdict}");
     }
-    // PARTIAL reuses exit 4: nothing failed, but not everything is
+    // FAIL (an included file does not match its database sha256) exits
+    // 1; PARTIAL reuses exit 4: nothing failed, but not everything is
     // covered, the same meaning as verify's INCOMPLETE.
-    Ok(if complete { 0 } else { EXIT_INCOMPLETE })
+    Ok(match status {
+        "FAIL" => EXIT_FAIL,
+        "PARTIAL" => EXIT_INCOMPLETE,
+        _ => 0,
+    })
 }
 
 // ---------------------------------------------------------------------------
