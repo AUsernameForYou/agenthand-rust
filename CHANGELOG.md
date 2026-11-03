@@ -21,7 +21,7 @@
   (`composite::draw_product_grounded`); `draw_product`,
   `draw_product_with_plate_kind`, `composite_images` and parity are
   byte-identical.
-- **Record** `ground_shadow` (additive, never graded) in the draw result
+- **Record** `ground_shadow` (additive, not graded) in the draw result
   and the receipt, including the grounded plate's pixel hash;
   `plate_fitted_pixel_sha256` keeps hashing the fit before the shadow.
 - **Kill switch** `AGENTHAND_GROUND_SHADOW=off` (0/false/no): plain
