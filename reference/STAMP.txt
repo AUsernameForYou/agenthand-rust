@@ -1,0 +1,3 @@
+Reference snapshot of the Python build (QC / parity oracle).
+Source: ~/workspace/agenthand (Python repo), main at 023b6f2, snapshotted 2026-11-02.
+The Rust build in this repo is the product; this Python tree is reference only.

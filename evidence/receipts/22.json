@@ -1,0 +1,238 @@
+{
+ "backdrop": {
+  "contact_shadow": true,
+  "edge_matte_px": 2,
+  "edit": {
+   "model": "muse-image-1.0",
+   "output_sha256": "8813d3124bca7e75603c4ca8a275fb65ae70158fe5c2cb054553caeb49798d88",
+   "path": "/images/edits",
+   "size": "1536x1024"
+  },
+  "kind": "source_edit",
+  "reference": {
+   "dilate_px": 8,
+   "fill_rgb": [
+    128,
+    128,
+    128
+   ],
+   "hole_pixels": 433828,
+   "product_region": "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
+   "sha256": "a2cf41a177beb338554b074b35e98a94b5f3cd52b05ff49abca65faa449ba713",
+   "size": "1536x1024"
+  },
+  "subject": {
+   "bbox": [
+    487,
+    362,
+    5161,
+    3701
+   ],
+   "coverage": 0.231164,
+   "fills_frame": false,
+   "opaque_pixels": 5656640,
+   "thin_fraction": 4e-06,
+   "thin_structure": false,
+   "touches_frame_edges": []
+  }
+ },
+ "changed_opaque_pixels": 0,
+ "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+ "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.",
+ "color_profile_foreground_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_output_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_preserved": true,
+ "color_profile_source_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_space": "embedded ICC profile (description unreadable)",
+ "count_sample": "decoded_delivered_file",
+ "edge_band_max_width_px": 0,
+ "edge_band_pixels": 0,
+ "edge_fix": {
+  "applied": true,
+  "contact_band": {
+   "alpha": [
+    30,
+    18,
+    8
+   ],
+   "pixels": 102196,
+   "rebuilt_from_ring_px": [
+    4,
+    6
+   ],
+   "rgb": [
+    58,
+    50,
+    40
+   ],
+   "rim_rebuild_share_256": [
+    256,
+    256,
+    160
+   ],
+   "rim_rebuilt_pixels": 102191,
+   "width_px": 3
+  },
+  "edge_band": {
+   "background_ring_px": [
+    2,
+    4
+   ],
+   "decontaminated": 0,
+   "method": "un-blend against the local original background: F = (observed - (1-a) B) / a, B = mean source colour 2-4 px outside the footprint, leaning on the local product colour as a -> 0",
+   "pixels": 0
+  },
+  "feather": {
+   "alpha": 128,
+   "colour": "local product colour (product pixels 3-5 px deep), never the original background",
+   "max_alpha": 128,
+   "pixels": 34102,
+   "rings": 1
+  },
+  "product_pixels_written": 0,
+  "source_edge": {
+   "min_contrast": 32,
+   "ramp_width_px": 2.015625,
+   "rule": "feather alpha = min(max_alpha, 1 - 1/ramp_width): never softer than the source edge",
+   "samples": 8970
+  },
+  "stage": "composite",
+  "thin_structure": false,
+  "version": 1
+ },
+ "foreground_asset": "asset://35f8719776d2446f957fa1debe85e34c",
+ "foreground_pixel_sha256": "a0b07d8abcaf12f5909b701f8cfd5598dd1609d30977dcba016a9e9b3f78a2fa",
+ "foreground_sha256": "c63401ca1ff0c97e539d3341ee0aaea4e986729a737de4289be40345941827bf",
+ "mask_asset": "asset://f9e94690cc0b4116aa1fcebeab5514e4",
+ "mask_pixel_sha256": "8524495b24632b0f6e4dd81f7db2e400eb6afcea54161e3d29b6e9129f08f463",
+ "mask_pixels_total": 5656640,
+ "mask_sam_height": 1206,
+ "mask_sam_width": 1608,
+ "mask_scale_method": "bilinear_threshold_128",
+ "mask_sha256": "0cea06b7eddbe2dd58e0ba3d2bd1c71ec0675c8b19e8553ee62d2316d6a2181d",
+ "mask_source": "asset",
+ "mask_source_height": 4284,
+ "mask_source_width": 5712,
+ "opaque_alpha_threshold": 255,
+ "opaque_fraction": 1.0,
+ "opaque_pixels": 5656640,
+ "output_asset": "asset://3523894302084dd8aeed9a7bd99645ae",
+ "output_format": "PNG",
+ "output_pixel_sha256": "5f6a8fe530d40a8684c36334f816c5869a748bd1ac1d7fd92242265a712d9676",
+ "output_sha256": "78e71b22d6f32fd4ae5b9406934df094288bcad67e8c88992d86604c7269246c",
+ "pixel_tolerance": 0,
+ "plate_asset": "asset://f757c8aa8dbe44ffb6f2080c60d85ae4",
+ "plate_kind": "source_edit",
+ "plate_pixel_sha256": "cd22f57d6f1f225af35b571c5d58052055f67bdbf927fb55b6185264b8f8007e",
+ "plate_sha256": "9bec7804d5987965076e36df30209461e4d25df6d410c1229aade602ae2cb1db",
+ "plate_source": "asset",
+ "product_layer_scaled": false,
+ "provenance": {
+  "census": {
+   "aux_item_types": [
+    "urn:com:apple:photo:2020:aux:hdrgainmap",
+    "urn:mpeg:hevc:2015:auxid:2"
+   ],
+   "container": "heic",
+   "depth_item_present": false,
+   "has_embedded_thumbnail": true,
+   "has_exif": true,
+   "has_xmp": true,
+   "hidden_items": 66,
+   "image_tiles": 45,
+   "items_by_type": {
+    "Exif": 1,
+    "grid": 2,
+    "hvc1": 62,
+    "mime": 3,
+    "tmap": 1
+   },
+   "items_total": 69,
+   "major_brand": "heic",
+   "primary_item_type": "grid",
+   "stated_dimensions": [
+    5712,
+    4284
+   ]
+  },
+  "format": "heic",
+  "location": {
+   "latitude": null,
+   "longitude": null,
+   "present": false,
+   "public_copy": null,
+   "warning": null
+  },
+  "location_warning": null,
+  "metadata_read": true,
+  "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+  "signals": [
+   {
+    "capture_software_version": "26.6.2",
+    "detail": "the file names its capture device as Apple iPhone 17 Pro",
+    "does_not_establish": "metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device",
+    "establishes": "the file's own statement of what captured it",
+    "finding": "stated",
+    "make": "Apple",
+    "model": "iPhone 17 Pro",
+    "signal": "capture_device"
+   },
+   {
+    "detail": "no editing software is named anywhere in the file's metadata",
+    "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+    "establishes": "nothing; this is the expected state of an untouched camera file",
+    "finding": "none_named",
+    "signal": "editor_software"
+   },
+   {
+    "detail": "no edit history is recorded in the file",
+    "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+    "establishes": "nothing; most camera files carry no history packet at all",
+    "finding": "none_recorded",
+    "signal": "edit_history"
+   },
+   {
+    "detail": "no XMP document identifiers are present",
+    "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+    "establishes": "nothing",
+    "finding": "absent",
+    "signal": "document_ids"
+   },
+   {
+    "detail": "the file's modification date and stated capture time agree (2026:10:31 16:43:27)",
+    "does_not_establish": "agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file",
+    "establishes": "the file's two dates tell one consistent story",
+    "finding": "agree",
+    "signal": "date_consistency"
+   },
+   {
+    "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+    "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+    "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+    "finding": "absent",
+    "signal": "content_credentials"
+   },
+   {
+    "detail": "the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)",
+    "does_not_establish": "agreement is the normal state of untouched and competently exported files alike",
+    "establishes": "the file's description of its size agrees with the image it contains",
+    "finding": "consistent",
+    "signal": "dimensions_consistency"
+   },
+   {
+    "detail": "no bytes follow the end of the image data",
+    "does_not_establish": "a clean ending says nothing about the image data itself",
+    "establishes": "the file ends where its structure says it ends",
+    "finding": "none",
+    "signal": "trailing_data"
+   }
+  ],
+  "version": 1
+ },
+ "receipt_schema": 2,
+ "source_asset": "asset://25f5ea3b772345bd9c639f254634e9e0",
+ "source_pixel_sha256": "1492a4daa4936e5595a9e25633cb6572ca7bba4c5dc755a8bb10664e6df20db7",
+ "source_sha256": "2e767fa0805ccda18beb5de8206607993ee07691ed1d71a890f7276e6c006280",
+ "transformations": [],
+ "transparent_pixels": 18813568
+}

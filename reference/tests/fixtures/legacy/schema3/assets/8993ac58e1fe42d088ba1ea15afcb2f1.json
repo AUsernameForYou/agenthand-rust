@@ -1,0 +1,13 @@
+{
+  "asset_id": "8993ac58e1fe42d088ba1ea15afcb2f1",
+  "byte_size": 311,
+  "color_profile_sha256": null,
+  "created_at": "2026-10-30T06:26:46.228499+00:00",
+  "filename": "8993ac58e1fe42d088ba1ea15afcb2f1.png",
+  "height": 90,
+  "kind": "reconstruction_region_map",
+  "pixel_sha256": "0121c6dc040e10cade4b089195f3351ee4e1b895991ff0174a0ae4b50411c474",
+  "sha256": "a8af03ea0f2f239315f34037d61907c3cc9c54b94a4a656399ebd7bbde8a3d01",
+  "source_asset_id": "5ce67d7f2e374404800101e74e78be2d",
+  "width": 120
+}

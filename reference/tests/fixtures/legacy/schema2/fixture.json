@@ -1,0 +1,7 @@
+{
+  "receipt_schema": 2,
+  "output_asset": "asset://0eeed1c69d2840759c91142996c09e45",
+  "receipt_file": "assets/0eeed1c69d2840759c91142996c09e45.receipt.json",
+  "receipt_sha256": "ae2f90587b97fb7decb34c16f8374d0414edaf24f72827dfd76b63a949ae5c45",
+  "provenance": "Byte-exact retained schema-2 output from the existing Rust 0.3.0 data store, created before FIX2; no receipt fields changed."
+}

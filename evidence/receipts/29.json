@@ -1,0 +1,445 @@
+{
+ "backdrop": {
+  "contact_shadow": true,
+  "edge_matte_px": 2,
+  "edit": {
+   "model": "muse-image-1.0",
+   "output_sha256": "1da8840cd50d0558508e29a9246bfe92a1530ec4539b525edad1e5ec4df82351",
+   "path": "/images/edits",
+   "size": "1536x1024"
+  },
+  "kind": "source_edit",
+  "reference": {
+   "dilate_px": 8,
+   "fill": "inpaint_diffusion",
+   "fill_iterations": 191,
+   "fill_rgb": null,
+   "fill_texture": {
+    "clamp": 10.0,
+    "gain": 1.0,
+    "kind": "row_mirror_residual",
+    "radius_px": 2
+   },
+   "hole_pixels": 431246,
+   "product_region": "every visible product pixel's footprint plus the dilation was filled from the photo pixels outside it before upload; no product pixel was sent",
+   "sha256": "0be6d3788c415b75e5cd2b24c5ae97d944500e31c01041f7e833da3b621728ea",
+   "size": "1536x1024"
+  },
+  "subject": {
+   "bbox": [
+    487,
+    362,
+    5161,
+    3701
+   ],
+   "coverage": 0.207651,
+   "fills_frame": false,
+   "opaque_pixels": 5081270,
+   "thin_fraction": 0.002081,
+   "thin_structure": false,
+   "touches_frame_edges": []
+  }
+ },
+ "changed_opaque_pixels": 0,
+ "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+ "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.",
+ "color_profile_foreground_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_output_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_preserved": true,
+ "color_profile_source_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_space": "embedded ICC profile (description unreadable)",
+ "count_sample": "decoded_delivered_file",
+ "edge_band_max_width_px": 4,
+ "edge_band_pixels": 22073,
+ "edge_fix": {
+  "applied": true,
+  "contact_band": {
+   "alpha": [
+    30,
+    18,
+    8
+   ],
+   "pixels": 205140,
+   "rebuilt_from_ring_px": [
+    4,
+    6
+   ],
+   "rgb": [
+    58,
+    50,
+    40
+   ],
+   "rim_rebuild_share_256": [
+    256,
+    256,
+    160
+   ],
+   "rim_rebuilt_pixels": 199037,
+   "width_px": 3
+  },
+  "edge_band": {
+   "background_ring_px": [
+    2,
+    4
+   ],
+   "decontaminated": 22015,
+   "method": "un-blend against the local original background: F = (observed - (1-a) B) / a, B = mean source colour 2-4 px outside the footprint, leaning on the local product colour as a -> 0",
+   "pixels": 22073
+  },
+  "feather": {
+   "alpha": 128,
+   "colour": "local product colour (product pixels 3-5 px deep), never the original background",
+   "max_alpha": 128,
+   "pixels": 50948,
+   "rings": 1
+  },
+  "product_pixels_written": 0,
+  "source_edge": {
+   "min_contrast": 32,
+   "ramp_width_px": 2.679688,
+   "rule": "feather alpha = min(max_alpha, 1 - 1/ramp_width): never softer than the source edge",
+   "samples": 27090
+  },
+  "stage": "composite",
+  "thin_structure": false,
+  "version": 1
+ },
+ "foreground_asset": "asset://081f582694534e19987125009815562e",
+ "foreground_pixel_sha256": "9e5057469177e8370ebc26eb75cb68524fe94b63becec6888ce15bab2ecb8e89",
+ "foreground_sha256": "5d5d9cbbbf548f55b14ace540a6f82e231515663653d9c3de3ad7dfb1634f648",
+ "mask_asset": "asset://c874ff5bb54143de88ea071792f40fe8",
+ "mask_pixel_sha256": "a1f89ed77279a8fabb693e530aa8b67ad95248a47646e894fe63c535c7f9d12f",
+ "mask_pixels_total": 5103343,
+ "mask_sam_height": 1206,
+ "mask_sam_width": 1608,
+ "mask_scale_method": "bilinear_threshold_128",
+ "mask_sha256": "152b6d6c1306b15cae207342e2c4a938c9737fea73fec0b89a44276985793779",
+ "mask_source": "asset",
+ "mask_source_height": 4284,
+ "mask_source_width": 5712,
+ "opaque_alpha_threshold": 255,
+ "opaque_fraction": 0.995675,
+ "opaque_pixels": 5081270,
+ "output_asset": "asset://cf224a0feaa54d748980bfeada4cb729",
+ "output_format": "PNG",
+ "output_pixel_sha256": "82376242126bcfbd77239e83ff8745cf7df745d084e9c37c43307f39204333ca",
+ "output_sha256": "18c7ee873435ef5ce23e8e9d313a343212ff8c8ac688493f744d729c47037fe3",
+ "pixel_tolerance": 0,
+ "plate_asset": "asset://c2b0ee95b1d44475bb24cb5e9d8ecc1b",
+ "plate_kind": "source_edit",
+ "plate_pixel_sha256": "56da34ee835f6a000b2fae2bda1e0dc6046cd61ffbf704fe4db0577b835e265f",
+ "plate_sha256": "66a6c95dcbfaf63c1cae816e80b9516236fec829deb3dcc9b2c26b7d90631b7e",
+ "plate_source": "asset",
+ "product_layer_scaled": false,
+ "provenance": {
+  "census": {
+   "aux_item_types": [
+    "urn:com:apple:photo:2020:aux:hdrgainmap",
+    "urn:mpeg:hevc:2015:auxid:2"
+   ],
+   "container": "heic",
+   "depth_item_present": false,
+   "has_embedded_thumbnail": true,
+   "has_exif": true,
+   "has_xmp": true,
+   "hidden_items": 66,
+   "image_tiles": 45,
+   "items_by_type": {
+    "Exif": 1,
+    "grid": 2,
+    "hvc1": 62,
+    "mime": 3,
+    "tmap": 1
+   },
+   "items_total": 69,
+   "major_brand": "heic",
+   "primary_item_type": "grid",
+   "stated_dimensions": [
+    5712,
+    4284
+   ]
+  },
+  "format": "heic",
+  "location": {
+   "latitude": null,
+   "longitude": null,
+   "present": false,
+   "public_copy": null,
+   "warning": null
+  },
+  "location_warning": null,
+  "metadata_read": true,
+  "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+  "signals": [
+   {
+    "capture_software_version": "26.6.2",
+    "detail": "the file names its capture device as Apple iPhone 17 Pro",
+    "does_not_establish": "metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device",
+    "establishes": "the file's own statement of what captured it",
+    "finding": "stated",
+    "make": "Apple",
+    "model": "iPhone 17 Pro",
+    "signal": "capture_device"
+   },
+   {
+    "detail": "no editing software is named anywhere in the file's metadata",
+    "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+    "establishes": "nothing; this is the expected state of an untouched camera file",
+    "finding": "none_named",
+    "signal": "editor_software"
+   },
+   {
+    "detail": "no edit history is recorded in the file",
+    "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+    "establishes": "nothing; most camera files carry no history packet at all",
+    "finding": "none_recorded",
+    "signal": "edit_history"
+   },
+   {
+    "detail": "no XMP document identifiers are present",
+    "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+    "establishes": "nothing",
+    "finding": "absent",
+    "signal": "document_ids"
+   },
+   {
+    "detail": "the file's modification date and stated capture time agree (2026:10:31 16:43:27)",
+    "does_not_establish": "agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file",
+    "establishes": "the file's two dates tell one consistent story",
+    "finding": "agree",
+    "signal": "date_consistency"
+   },
+   {
+    "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+    "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+    "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+    "finding": "absent",
+    "signal": "content_credentials"
+   },
+   {
+    "detail": "the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)",
+    "does_not_establish": "agreement is the normal state of untouched and competently exported files alike",
+    "establishes": "the file's description of its size agrees with the image it contains",
+    "finding": "consistent",
+    "signal": "dimensions_consistency"
+   },
+   {
+    "detail": "no bytes follow the end of the image data",
+    "does_not_establish": "a clean ending says nothing about the image data itself",
+    "establishes": "the file ends where its structure says it ends",
+    "finding": "none",
+    "signal": "trailing_data"
+   }
+  ],
+  "version": 1
+ },
+ "receipt_schema": 2,
+ "shadow": {
+  "coherence": 0.84706,
+  "feather_px": 3,
+  "mean_ratio": 0.555613,
+  "mode": "carried",
+  "reason": null,
+  "regions": [
+   {
+    "coherence": 0.826616,
+    "floor": 0.25,
+    "mean_ratio": 0.723008,
+    "pixels": 824016,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.927299,
+    "floor": 0.25,
+    "mean_ratio": 0.798266,
+    "pixels": 33232,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.922971,
+    "floor": 0.25,
+    "mean_ratio": 0.753591,
+    "pixels": 242256,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.878307,
+    "floor": 0.25,
+    "mean_ratio": 0.682287,
+    "pixels": 36464,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.93405,
+    "floor": 0.25,
+    "mean_ratio": 0.745625,
+    "pixels": 22320,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.796734,
+    "floor": 0.25,
+    "mean_ratio": 0.46316,
+    "pixels": 203008,
+    "side": "left"
+   },
+   {
+    "coherence": 0.99626,
+    "floor": 0.25,
+    "mean_ratio": 0.298418,
+    "pixels": 127536,
+    "side": "left"
+   },
+   {
+    "coherence": 0.974329,
+    "floor": 0.25,
+    "mean_ratio": 0.341413,
+    "pixels": 141440,
+    "side": "behind"
+   },
+   {
+    "coherence": 1.0,
+    "floor": 0.25,
+    "mean_ratio": 0.309661,
+    "pixels": 7952,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.936376,
+    "floor": 0.25,
+    "mean_ratio": 0.411547,
+    "pixels": 62784,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.869122,
+    "floor": 0.25,
+    "mean_ratio": 0.460757,
+    "pixels": 145920,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.968217,
+    "floor": 0.25,
+    "mean_ratio": 0.385645,
+    "pixels": 112048,
+    "side": "left"
+   },
+   {
+    "coherence": 0.814575,
+    "floor": 0.25,
+    "mean_ratio": 0.53524,
+    "pixels": 117376,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.863082,
+    "floor": 0.25,
+    "mean_ratio": 0.500758,
+    "pixels": 693408,
+    "side": "below"
+   },
+   {
+    "coherence": 0.772714,
+    "floor": 0.25,
+    "mean_ratio": 0.467172,
+    "pixels": 635056,
+    "side": "below"
+   },
+   {
+    "coherence": 0.795349,
+    "floor": 0.35,
+    "mean_ratio": 0.606318,
+    "pixels": 409264,
+    "side": "below"
+   },
+   {
+    "coherence": 0.876228,
+    "floor": 0.35,
+    "mean_ratio": 0.544957,
+    "pixels": 115136,
+    "side": "below"
+   }
+  ],
+  "rejected": [
+   {
+    "coherence": 0.727691,
+    "floor": 0.25,
+    "mean_ratio": 0.685775,
+    "pixels": 344080,
+    "reason": "incoherent shadow ratio: 72.8% of the region within 0.15 of the median 0.714 (minimum 75%)",
+    "side": "behind"
+   },
+   {
+    "coherence": 0.67114,
+    "floor": 0.25,
+    "mean_ratio": 0.648464,
+    "pixels": 118032,
+    "reason": "incoherent shadow ratio: 67.1% of the region within 0.15 of the median 0.719 (minimum 75%)",
+    "side": "behind"
+   },
+   {
+    "coherence": 0.591409,
+    "floor": 0.25,
+    "mean_ratio": 0.586674,
+    "pixels": 231312,
+    "reason": "incoherent shadow ratio: 59.1% of the region within 0.15 of the median 0.578 (minimum 75%)",
+    "side": "behind"
+   },
+   {
+    "coherence": 0.602753,
+    "floor": 0.25,
+    "mean_ratio": 0.61533,
+    "pixels": 51152,
+    "reason": "incoherent shadow ratio: 60.3% of the region within 0.15 of the median 0.639 (minimum 75%)",
+    "side": "behind"
+   },
+   {
+    "coherence": 0.240739,
+    "floor": 0.25,
+    "mean_ratio": 0.599824,
+    "pixels": 383552,
+    "reason": "incoherent shadow ratio: 24.1% of the region within 0.15 of the median 0.589 (minimum 75%)",
+    "side": "right"
+   },
+   {
+    "coherence": 0.740969,
+    "floor": 0.25,
+    "mean_ratio": 0.683594,
+    "pixels": 451776,
+    "reason": "incoherent shadow ratio: 74.1% of the region within 0.15 of the median 0.701 (minimum 75%)",
+    "side": "below"
+   },
+   {
+    "coherence": 0.65717,
+    "floor": 0.35,
+    "mean_ratio": 0.662879,
+    "pixels": 33136,
+    "reason": "incoherent shadow ratio: 65.7% of the region within 0.15 of the median 0.669 (minimum 75%)",
+    "side": "below"
+   },
+   {
+    "coherence": 0.654355,
+    "floor": 0.35,
+    "mean_ratio": 0.621003,
+    "pixels": 146416,
+    "reason": "incoherent shadow ratio: 65.4% of the region within 0.15 of the median 0.617 (minimum 75%)",
+    "side": "below"
+   },
+   {
+    "coherence": 0.69359,
+    "floor": 0.35,
+    "mean_ratio": 0.657582,
+    "pixels": 61408,
+    "reason": "incoherent shadow ratio: 69.4% of the region within 0.15 of the median 0.662 (minimum 75%)",
+    "side": "below"
+   }
+  ],
+  "shadow_pixels": 4613590
+ },
+ "source_asset": "asset://94732bf75b094ff89c157fdec95186cf",
+ "source_pixel_sha256": "1492a4daa4936e5595a9e25633cb6572ca7bba4c5dc755a8bb10664e6df20db7",
+ "source_sha256": "2e767fa0805ccda18beb5de8206607993ee07691ed1d71a890f7276e6c006280",
+ "transformations": [],
+ "transparent_pixels": 19366865
+}

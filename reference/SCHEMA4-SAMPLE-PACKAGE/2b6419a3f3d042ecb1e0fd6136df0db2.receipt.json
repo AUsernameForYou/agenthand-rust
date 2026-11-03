@@ -1,0 +1,235 @@
+{
+ "backdrop": {
+  "kind": "wallpaper",
+  "motif_diameter_px": 72,
+  "opacity": 0.4,
+  "shadow": false
+ },
+ "changed_opaque_pixels": 0,
+ "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+ "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match. The reconstruction block accounts for every generated paper pixel in the frame: paper is placed only where the product layer is fully transparent, is counted separately, and is not product evidence.",
+ "color_profile_foreground_sha256": null,
+ "color_profile_output_sha256": null,
+ "color_profile_preserved": true,
+ "color_profile_source_sha256": null,
+ "color_space": "sRGB (no embedded ICC profile)",
+ "count_sample": "decoded_delivered_file",
+ "cut_quality": {
+  "after": {
+   "codes": [],
+   "grade": "PASS",
+   "instructions": [],
+   "metrics": {
+    "ambiguous_support_pixels": 0,
+    "bbox": [
+     20,
+     10,
+     100,
+     105
+    ],
+    "bbox_fill": 0.682368,
+    "body_bbox": [
+     20,
+     10,
+     100,
+     105
+    ],
+    "captured_support_components": 2,
+    "components": 1,
+    "coverage": 0.332436,
+    "dominant_fraction": 1.0,
+    "enclosed_hole_pixels": 0,
+    "foreign_top_concavity_pixels": 0,
+    "foreign_top_hole_pixels": 0,
+    "mask_pixels": 5186,
+    "observed_support_pixels": 0,
+    "open_geometry_pixels": 0,
+    "proven_top_footprint_pixels": 0,
+    "source_supported_top_concavity_pixels": 0,
+    "source_supported_top_hole_pixels": 0,
+    "top_concavity_pixels": 0,
+    "top_island_pixels": 0,
+    "uncaptured_support_pixels": 0
+   },
+   "source_evidence": true,
+   "version": "agenthand.cut-quality/5"
+  },
+  "before": {
+   "codes": [
+    "TOP_PERFORATED",
+    "SUPPORT_NOT_CAPTURED"
+   ],
+   "grade": "REPAIRABLE",
+   "instructions": [
+    "Clear the top and photograph from an angle that shows the entire top surface and its edges without gaps or overlapping clutter.",
+    "Move bins and clutter away from under the product. Photograph from a lower angle with every leg and foot visible against unobstructed, contrasting floor."
+   ],
+   "metrics": {
+    "ambiguous_support_pixels": 0,
+    "bbox": [
+     20,
+     10,
+     100,
+     70
+    ],
+    "bbox_fill": 0.946667,
+    "body_bbox": [
+     20,
+     10,
+     100,
+     70
+    ],
+    "captured_support_components": 0,
+    "components": 1,
+    "coverage": 0.291282,
+    "dominant_fraction": 1.0,
+    "enclosed_hole_pixels": 256,
+    "foreign_top_concavity_pixels": 0,
+    "foreign_top_hole_pixels": 0,
+    "mask_pixels": 4544,
+    "observed_support_pixels": 238,
+    "open_geometry_pixels": 0,
+    "proven_top_footprint_pixels": 0,
+    "source_supported_top_concavity_pixels": 0,
+    "source_supported_top_hole_pixels": 208,
+    "top_concavity_pixels": 0,
+    "top_island_pixels": 0,
+    "uncaptured_support_pixels": 238
+   },
+   "source_evidence": true,
+   "version": "agenthand.cut-quality/5"
+  },
+  "version": "agenthand.cut-quality/5"
+ },
+ "edge_band_max_width_px": 0,
+ "edge_band_pixels": 0,
+ "foreground_asset": "asset://28ecca568ca34b44a400f159a417ade8",
+ "foreground_pixel_sha256": "d4283ad39e710d198dc9339fd94ddd45a16e6b7d859b982514b4065787cb24bb",
+ "foreground_sha256": "4df54f09109278ea13d76ff4520fb8f38f2bd86b552a32a8a3ff78afad807d74",
+ "mask_asset": "asset://bbd01e13dc7747ec89d239a4d99ae706",
+ "mask_pixel_sha256": "2da6f9751d0126fb9f36f618793bc97afde368ce363abbdead99b5fa77a26a65",
+ "mask_pixels_total": 4544,
+ "mask_sha256": "41292cb05e58fe3b78d353ef5f827c844a57184ab07b720efcaecfca9ea2d5cf",
+ "mask_source": "asset",
+ "opaque_alpha_threshold": 255,
+ "opaque_fraction": 1.0,
+ "opaque_pixels": 4544,
+ "output_asset": "asset://2b6419a3f3d042ecb1e0fd6136df0db2",
+ "output_format": "PNG",
+ "output_pixel_sha256": "a907f74d0a6111aad60c68381eb869a25b684c32bfbe687404f3ea93d1b34658",
+ "output_sha256": "2a1fade758ed270192dc957a72018341a932c9f9fb58002f2f1e44ba350aaf1f",
+ "pixel_tolerance": 0,
+ "plate_asset": "asset://72a8160bbf9345f1a9acd987a6f2cddf",
+ "plate_kind": "code_rendered",
+ "plate_pixel_sha256": "e69aa860720a219efafced199509684f1d6c64d43312d4478204ce8663248499",
+ "plate_quality": {
+  "assessment": {
+   "codes": [],
+   "grade": "PASS",
+   "metrics": {
+    "deterministic_backdrop": "wallpaper",
+    "placement_zone": [
+     0.113333,
+     0.446154,
+     0.886667,
+     0.723077
+    ],
+    "renderer_matches": true
+   },
+   "version": "agenthand.plate-quality/2"
+  },
+  "attempts": [],
+  "fallback": false,
+  "fallback_reason": null,
+  "stage_spec": null,
+  "version": "agenthand.plate-quality/2"
+ },
+ "plate_sha256": "6406dd62c46bf6ae13d1e17c0f4833968ce0cd3c9173bad7867e2a93bc1aded1",
+ "plate_source": "asset",
+ "product_layer_scaled": false,
+ "receipt_schema": 4,
+ "reconstruction": {
+  "attempted": true,
+  "evidence": {
+   "occluder_mask_handles": [],
+   "support_mask_handles": []
+  },
+  "guard_ring_px": 1,
+  "layer_asset": "asset://6fedbf4929624a91975c28f751374106",
+  "layer_pixel_sha256": "b0df6b0b62c815ffc681114e9a7f95068a0ccef9348d6c2c33c769ceb7b4d647",
+  "layer_sha256": "54c627f8830e9feed8edd210baf94edc019ffaa76305cda7707dee9ad4947476",
+  "max_fraction": 0.4,
+  "motif": {
+   "color": "#00AFE1",
+   "diameter_px": 72,
+   "opacity": 1.0
+  },
+  "policy_version": "agenthand.paperfill/2",
+  "reconstruction_fraction": 0.085714,
+  "reconstruction_overlap_product_pixels": 0,
+  "reconstruction_pixels": 426,
+  "refusals": [],
+  "region_map_asset": "asset://c061a600cb3a4bb68a983df9d69728a3",
+  "region_map_pixel_sha256": "f22faf26698e0888169721e8816bbf49848bff194786603af649ebdd89ed7698",
+  "region_map_sha256": "4165575e2866e843cef235665a63f74d08bfe125fce1389addb189cca168a03a",
+  "regions": [
+   {
+    "bbox": [
+     45,
+     18,
+     61,
+     34
+    ],
+    "class": "hole",
+    "id": 1,
+    "pixels": 196,
+    "provenance": {
+     "basis": "source_product_appearance"
+    }
+   },
+   {
+    "bbox": [
+     30,
+     70,
+     34,
+     104
+    ],
+    "class": "support",
+    "id": 2,
+    "pixels": 115,
+    "provenance": {
+     "aspect": 9.71,
+     "axis_deg": -1.27,
+     "basis": "source_silhouette",
+     "mean_width_px": 3.5
+    }
+   },
+   {
+    "bbox": [
+     84,
+     70,
+     88,
+     104
+    ],
+    "class": "support",
+    "id": 3,
+    "pixels": 115,
+    "provenance": {
+     "aspect": 9.71,
+     "axis_deg": -1.27,
+     "basis": "source_silhouette",
+     "mean_width_px": 3.5
+    }
+   }
+  ],
+  "renderer": "agenthand.paperfill/2",
+  "status": "applied",
+  "unfilled_gap_pixels": 68
+ },
+ "scene_prompt": "code-rendered wallpaper backdrop",
+ "source_asset": "asset://8fba80749ef24df6aea1d2785de7ae99",
+ "source_pixel_sha256": "99573f97d03aa4c732674a606f4816528f18adcf1ce3594fee56580f76a58fec",
+ "source_sha256": "f0ec1cf8364830b82287871e1c1e1635f89c9d6abb15a1244319d7f7d28e5be2",
+ "transformations": [],
+ "transparent_pixels": 11056
+}

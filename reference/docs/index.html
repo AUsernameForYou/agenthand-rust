@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agenthand — any photo becomes a working asset</title>
+<meta name="description" content="agenthand is an MCP server for AI agents that help people sell. It turns any photo into a working asset: the item is understood, lifted out untouched, and staged into any scene — listings, ads, social posts, catalogs — with a hash receipt anyone can check. The seller never opens agenthand; their agent calls it.">
+<link rel="icon" type="image/png" href="favicon-v1.png">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="agenthand">
+<meta property="og:title" content="agenthand — a hand for your agent">
+<meta property="og:description" content="Any photo becomes a working asset: understood, lifted out untouched, and staged into any scene. The product is never regenerated: Fidelity Lock composites it untouched and proves it with a hash receipt anyone can check.">
+<meta property="og:url" content="https://ausernameforyou.github.io/agenthand/">
+<meta property="og:image" content="https://ausernameforyou.github.io/agenthand/og-image-v2.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The agenthand mark: a robot hand under three cyan arcs, framed by crop corners. Beside it: any photo becomes a working asset; 580,613 pixels checked, 0 changed.">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="agenthand — a hand for your agent">
+<meta name="twitter:description" content="An MCP server that turns any photo into a working asset: understood, lifted out untouched, staged into any scene. The product is never regenerated. On the verified run receipted on this page, Fidelity Lock counted 0 changed pixels — and the check itself runs in your browser.">
+<meta name="twitter:image" content="https://ausernameforyou.github.io/agenthand/og-image-v2.png">
+<meta name="twitter:image:alt" content="The agenthand mark: a robot hand under three cyan arcs, framed by crop corners. Beside it: any photo becomes a working asset; 580,613 pixels checked, 0 changed.">
+
+<style>
+  :root{
+    --ink:#111111;
+    --cyan:#00AFE1;
+    --grey:#5a5a5a;
+    --rule:#111111;
+    --panel:#fafafa;
+  }
+  *{box-sizing:border-box}
+  html{margin:0;padding:0}
+  body{
+    margin:0;
+    background:#ffffff;
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px}
+  a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--ink);text-decoration-thickness:2px;text-underline-offset:3px}
+  a:hover{text-decoration-color:var(--grey)}
+
+  header.site{
+    border-bottom:2px solid var(--rule);
+  }
+  header.site .wrap{
+    display:flex;align-items:center;gap:14px;
+    padding-top:16px;padding-bottom:16px;
+  }
+  header.site img{width:40px;height:40px;object-fit:contain}
+  header.site .name{font-weight:800;font-size:20px;letter-spacing:-0.01em}
+  header.site nav{margin-left:auto;font-size:15px}
+  header.site nav a{margin-left:20px}
+
+  .hero{text-align:center;padding:40px 0 8px}
+  .hero-media{width:min(264px,58vw);margin:0 auto}
+  .hero-media video,.hero-media img{width:100%;height:auto;display:block}
+  .hero-media img.hero-static{display:none}
+  @media (prefers-reduced-motion: reduce){
+    .hero-media .hero-anim{display:none}
+    .hero-media img.hero-static{display:block}
+  }
+  .hero h1{
+    font-size:clamp(44px,8vw,76px);
+    font-weight:800;letter-spacing:-0.03em;
+    margin:14px 0 6px;line-height:1.02;
+  }
+  .hero .one-liner{
+    font-size:clamp(20px,3.4vw,27px);
+    font-weight:600;line-height:1.35;
+    max-width:640px;margin:0 auto;
+  }
+  .hero .identity{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13.5px;letter-spacing:0.06em;color:var(--grey);
+    margin:14px auto 0;
+  }
+  .proofline{
+    border-top:2px solid var(--ink);border-bottom:2px solid var(--ink);
+    max-width:640px;margin:22px auto 0;padding:14px 10px 16px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  .proofline .pl-label{font-size:12.5px;letter-spacing:0.1em;color:var(--grey);margin:0}
+  .proofline .pl-count{font-size:clamp(21px,4.6vw,30px);font-weight:800;margin:6px 0 4px;line-height:1.2}
+  .proofline .pl-count .zero{background:var(--cyan);color:var(--ink);padding:0 10px}
+  .proofline .pl-method{font-size:13.5px;color:var(--grey);line-height:1.5;margin:6px auto 12px;max-width:560px}
+  .proofline a.pl-verify{
+    display:inline-block;border:2px solid var(--ink);background:var(--ink);color:#fff;
+    padding:8px 18px;text-decoration:none;font-weight:700;font-size:14.5px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  .proofline a.pl-verify:hover{border-color:var(--grey)}
+  .hero .sub{
+    color:var(--grey);font-size:17px;
+    max-width:560px;margin:18px auto 0;
+  }
+  .hero .cta{margin-top:26px;font-size:16px}
+  .hero .cta a{
+    display:inline-block;border:2px solid var(--ink);
+    padding:10px 20px;text-decoration:none;font-weight:700;margin:0 6px;
+  }
+  .hero .cta a.primary{background:var(--ink);color:#fff}
+  .hero .cta a:hover{border-color:var(--grey)}
+
+  section{padding:44px 0 8px}
+  .chapter{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14px;font-weight:700;letter-spacing:0.16em;
+    text-transform:uppercase;color:var(--ink);
+    border-top:6px solid var(--ink);
+    padding-top:14px;margin:0 0 14px;
+    display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+  }
+  .chapter .ch-no{font-size:20px;letter-spacing:0.04em}
+  section h2{
+    font-size:clamp(26px,4.4vw,36px);font-weight:800;
+    letter-spacing:-0.02em;margin:0 0 12px;line-height:1.15;
+  }
+  section p.lede{font-size:18px;max-width:680px;margin:0 0 8px}
+
+  .tools{display:grid;grid-template-columns:1fr;gap:0;margin-top:12px}
+  @media (min-width:720px){.tools{grid-template-columns:1fr 1fr 1fr;gap:24px}}
+  .tool{border-top:6px solid var(--ink);padding-top:14px}
+  .tool .step{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;color:var(--grey);letter-spacing:0.08em}
+  .tool h3{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:21px;margin:4px 0 8px}
+  .tool p{margin:0;font-size:16px}
+
+  .receipt{
+    background:var(--panel);
+    border:2px solid var(--ink);
+    padding:22px 24px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14.5px;line-height:1.75;
+    overflow-wrap:anywhere;
+    margin:20px 0 12px;
+  }
+  .receipt .k{color:var(--grey)}
+  .receipt .zero{
+    font-weight:800;background:var(--cyan);color:var(--ink);
+    padding:1px 9px;
+  }
+  .receipt .tick{color:var(--ink);font-weight:700}
+  .bench{
+    border-collapse:collapse;margin:14px 0 10px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14.5px;line-height:1.6;
+  }
+  .bench th,.bench td{border:2px solid var(--ink);padding:6px 14px;text-align:left;white-space:nowrap}
+  .bench th{background:var(--panel)}
+  .bench-note{font-size:15.5px;color:var(--grey);max-width:680px;margin:0 0 8px}
+  .copy-btn{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13.5px;font-weight:700;
+    background:#fff;color:var(--ink);
+    border:2px solid var(--ink);padding:7px 14px;cursor:pointer;
+    margin:0 0 20px;
+  }
+  .copy-btn:hover{background:var(--panel)}
+  .steps{margin:14px 0 0;padding-left:22px;font-size:16.5px}
+  .steps li{margin-bottom:8px}
+
+  .run-block{
+    border:2px solid var(--ink);
+    padding:4px 24px 22px;
+    margin:30px 0 0;
+  }
+  .proof{margin:22px 0 0}
+  .proof-title{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14px;font-weight:700;letter-spacing:0.14em;margin:0 0 10px;
+  }
+  .stage{
+    position:relative;max-width:330px;aspect-ratio:1206/1925;
+    border:2px solid var(--ink);overflow:hidden;background:#ffffff;
+    margin:16px 0 10px;
+  }
+  .stage img{
+    position:absolute;inset:0;width:100%;height:100%;
+  }
+  .stage img.plate{object-fit:cover}
+  .stage img.fit{object-fit:fill}
+  .stage[data-scene="ink"]{background:#111111}
+  .stage[data-scene="checker"]{
+    background:repeating-conic-gradient(#e4e4e4 0% 25%, #ffffff 0% 50%) 0 0/24px 24px;
+  }
+  .scene-btns{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 8px}
+  .scene-btns button{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;font-weight:700;background:#fff;color:var(--ink);
+    border:2px solid var(--ink);padding:6px 12px;cursor:pointer;
+  }
+  .scene-btns button.active{background:var(--ink);color:#fff}
+  .proof-cap{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;color:var(--grey);max-width:560px;margin:6px 0 0;
+  }
+  .stamp{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;color:var(--grey);max-width:640px;margin:18px 0 0;line-height:1.7;
+    overflow-wrap:anywhere;
+  }
+  .verify{
+    background:var(--panel);
+    padding:20px 24px;margin:26px 0 6px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:14.5px;line-height:1.7;overflow-wrap:anywhere;
+  }
+  .verify p{margin:0 0 10px}
+  #verify-progress{color:var(--grey);min-height:1.7em}
+  .vcounts{display:flex;gap:36px;flex-wrap:wrap;margin:14px 0 6px}
+  .vcounts .vlab{font-size:12.5px;color:var(--grey);letter-spacing:0.08em}
+  .vcount{font-size:32px;font-weight:800;line-height:1.15;display:block}
+  .vcount.zero{background:var(--cyan);color:var(--ink);padding:0 10px}
+  .vcount.bad{background:var(--ink);color:#fff;padding:0 10px}
+  .verify-lines{margin:10px 0}
+  .verify-lines .k{color:var(--grey)}
+  .verify-lines .tick{color:var(--ink);font-weight:700}
+  .verify-lines .fail{color:var(--ink);font-weight:800;text-decoration:underline}
+  .tamper{display:block;margin:12px 0;font-size:14px;cursor:pointer}
+  .tamper input{margin-right:8px}
+  .judge-path{border-top:2px solid var(--ink);margin-top:18px;padding-top:16px}
+  .sample-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0}
+  .sample-card{border:1px solid #d8d8d8;background:#fff;margin:0;padding:8px;overflow-wrap:anywhere}
+  .sample-card img{
+    width:100%;height:168px;object-fit:contain;display:block;
+    background:repeating-conic-gradient(#e8e8e8 0% 25%, #ffffff 0% 50%) 0 0/18px 18px;
+  }
+  .sample-card figcaption{font-size:12px;line-height:1.45;margin-top:8px}
+  .sample-card .sample-kind{display:block;font-size:12px;font-weight:800;letter-spacing:0.08em}
+  .judge-actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 8px}
+  .judge-actions .copy-btn{margin:0}
+  .judge-actions #verify-btn{background:var(--ink);color:#fff}
+  .judge-actions a{
+    font-size:13.5px;font-weight:700;border:2px solid var(--ink);
+    padding:7px 14px;text-decoration:none;
+  }
+  .baseline-slot{
+    border:2px solid var(--ink);background:#fff;
+    padding:18px 20px;margin:24px 0 6px;
+  }
+  .baseline-slot p{margin:0 0 8px}
+  .baseline-slot p:last-child{margin-bottom:0}
+  .baseline-value{font-weight:800;letter-spacing:0.08em}
+  @media (max-width:700px){.sample-grid{grid-template-columns:1fr 1fr}}
+  .opencode{margin:24px 0 0}
+  .opencode .proof-cap{max-width:640px}
+
+  .card-figure{margin:22px 0 10px;max-width:360px}
+  .card-figure img{width:100%;height:auto;display:block;border:2px solid var(--ink)}
+  .card-figure figcaption{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;color:var(--grey);margin-top:8px;
+  }
+  .rm-tag{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13.5px;font-weight:700;letter-spacing:0.08em;
+  }
+
+  pre.code{
+    background:#111111;color:#f2f2f2;
+    padding:20px 22px;font-size:14px;line-height:1.65;
+    overflow-x:auto;border-radius:4px;margin:14px 0;
+  }
+  pre.code .c{color:#a8a8a8}
+  p.note{color:var(--grey);font-size:15.5px}
+
+  .closing{
+    border-top:6px solid var(--ink);
+    margin-top:44px;padding-top:22px;text-align:center;
+  }
+  .closing p{font-size:17px;margin:0 0 16px}
+  .closing a{
+    display:inline-block;border:2px solid var(--ink);
+    padding:10px 20px;text-decoration:none;font-weight:700;margin:0 6px 8px;font-size:16px;
+  }
+  .closing a.primary{background:var(--ink);color:#fff}
+  .closing a:hover{border-color:var(--grey)}
+
+  footer{
+    border-top:2px solid var(--rule);
+    margin-top:52px;padding:28px 0 44px;
+    font-size:15px;color:var(--grey);
+  }
+  footer .wrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  footer img{width:56px;height:56px;object-fit:contain}
+  footer p{margin:0 0 6px;max-width:640px}
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <img src="logo-symbol-256-v1.png" width="256" height="173" alt="agenthand mark">
+    <span class="name">agenthand</span>
+    <nav>
+      <a href="#proof">See the run</a>
+      <a href="#verify">Verify</a>
+      <a href="replay-v1.html">Replay</a>
+      <a href="#use">Use it</a>
+      <a href="https://github.com/AUsernameForYou/agenthand">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <div class="hero-media">
+      <video class="hero-anim" autoplay muted loop playsinline width="880" height="646" poster="hero-lockup-880-v1.png" aria-label="The agenthand mark, its three cyan arcs rotating slowly">
+        <source src="logo-rotating-v3.mp4" type="video/mp4">
+        <img src="logo-rotating-v3.gif" width="880" height="646" alt="The agenthand mark, its three cyan arcs rotating slowly">
+      </video>
+      <img class="hero-static" src="hero-lockup-880-v1.png" width="880" height="645" alt="The agenthand mark: a robot hand under three cyan arcs, framed by crop corners">
+    </div>
+    <h1>agenthand</h1>
+    <p class="one-liner">agenthand turns any photo into a working asset, for AI agents that help people sell.</p>
+    <p class="identity">MCP SERVER &middot; META GLOBAL AI DEVELOPER HACKATHON &middot; OCT 26 &ndash; NOV 4, 2026</p>
+    <div class="proofline">
+      <p class="pl-label">FROM THE VERIFIED RUN &middot; 2026-10-26 &middot; RECEIPT IN CHAPTER 02</p>
+      <p class="pl-count"><span id="hero-checked">580,613</span> pixels checked &middot; <span class="zero">0</span> changed</p>
+      <p class="pl-method">How it is counted: every fully opaque pixel of the stored product layer, compared byte for byte against the final image. The numbers are that run's own, and the same check runs in your browser.</p>
+      <a class="pl-verify" href="#verify">Verify it yourself</a>
+    </div>
+    <p class="sub">The seller never opens agenthand. Their agent calls it, the way a hand is called: quietly, in the middle of other work.</p>
+    <p class="cta">
+      <a class="primary" href="#fidelity">The Fidelity Lock</a>
+      <a href="https://github.com/AUsernameForYou/agenthand">Get it on GitHub</a>
+    </p>
+  </div>
+
+  <section aria-labelledby="tools-h">
+    <p class="chapter"><span class="ch-no">01</span><span>What it does</span></p>
+    <h2 id="tools-h">Three tools, one asset</h2>
+    <p class="lede">A seller hands their agent a photo from the kitchen table: bad light, busy background, the item half in shadow. Three calls later it is a listing.</p>
+    <div class="tools">
+      <div class="tool">
+        <p class="step">STEP 1</p>
+        <h3>identify</h3>
+        <p>Reads the photo and plans the job. What the item is, what a buyer would call it, the words for the listing, and exactly which pixels are the product.</p>
+      </div>
+      <div class="tool">
+        <p class="step">STEP 2</p>
+        <h3>cut_out</h3>
+        <p>Lifts the product out of its photo, pixel for pixel, and hands back a clean cut-out on transparency. Nothing is redrawn; the real product is the layer.</p>
+      </div>
+      <div class="tool">
+        <p class="step">STEP 3</p>
+        <h3>draw</h3>
+        <p>Stages the scene around it: a regal reading room, a clean studio sweep, a table set for the season. The setting is generated. The product is not.</p>
+      </div>
+    </div>
+    <pre class="code" id="transcript"><span class="c"># THE CHAIN, AS RECORDED — the verified run, 2026-10-26</span>
+&rarr; cut_out   the photo, stored as asset://e3f0428f&hellip;   <span class="c">no concept given; the planning step runs inside</span>
+  &#8627; identify   muse-spark-1.3 &middot; 3,159 in / 1,638 out tokens   $0.007544
+  &larr; asset://b8663615&hellip;   <span class="c">the product layer, untouched</span>   $0.0025
+     <span class="c">mask asset://7dc19362&hellip; &middot; sam-3.1 &middot; 1 image</span>
+&rarr; draw      asset://b8663615&hellip; + a scene prompt   <span class="c">muse-image-1.0</span>
+  &larr; asset://45deaf1a&hellip;   <span class="c">the staged composite + fidelity receipt</span>   $0.01
+     <span class="c">plate asset://4f1740f4&hellip; &middot; the product never sent to the image model</span>
+<span class="c"># receipt: 580,613 opaque pixels checked &middot; changed 0 &middot; total $0.020044
+# photo to receipt in 36.5 s, by the asset records' timestamps</span></pre>
+    <p class="note">Assembled from the run's own records: the spend ledger's settled lines and the asset sidecars. The full hashes are in the receipt below — and the verifier further down grades against the run's actual receipt file, <a href="proof-receipt-v1.json">published beside the images</a>, not against numbers typed into this page.</p>
+    <p class="note"><a href="replay-v1.html">Open the cached replay</a> for the same run's three recorded calls, assets, ledger, and receipt. It is a replay of a real run, not a live call.</p>
+  </section>
+
+  <section id="fidelity" aria-labelledby="fidelity-h">
+    <p class="chapter"><span class="ch-no">02</span><span>Fidelity Lock</span></p>
+    <h2 id="fidelity-h">The product is never regenerated</h2>
+    <p class="lede">Generated staging has a trust problem: buyers cannot tell whether the item in the pretty picture is the item that ships. Fidelity Lock answers it with proof instead of promises.</p>
+    <p class="lede">The image model paints only the empty scene. The real product layer is placed into it by plain, deterministic code, untouched. Then agenthand counts: across the whole product, the number of changed pixels is zero, and it prints the receipt to show it.</p>
+
+    <div class="receipt" id="receipt">
+      <div><span class="k">FIDELITY RECEIPT — verified live run, 2026-10-26</span></div>
+      <div><span class="k">source photo (file sha256)&nbsp;&nbsp;</span> f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b</div>
+      <div><span class="k">product layer (pixel sha256)</span> 99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100</div>
+      <div><span class="k">mask (pixel sha256)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span> e4f189b470f82430e15cd5060d100e555495c349aad7cfe5e824794955c18748</div>
+      <div><span class="k">product scaled&nbsp;</span> no</div>
+      <div><span class="k">product sent to image model&nbsp;</span> no</div>
+      <div><span class="k">changed opaque pixels&nbsp;</span> <span class="zero">0</span> <span class="tick">&#10003;</span></div>
+      <div><span class="k">cost of the calls&nbsp;</span> <span id="receipt-costs">identify $0.007544 &middot; cut_out $0.0025 &middot; draw $0.01 &middot; total $0.020044</span></div>
+    </div>
+    <button class="copy-btn" type="button" data-copy="receipt">Copy receipt</button>
+
+    <aside class="baseline-slot" data-baseline-status="not-measured" aria-label="Plain regeneration baseline status">
+      <p class="proof-title">BASELINE — PLAIN REGENERATION</p>
+      <p><span class="baseline-value">NOT MEASURED</span> · No same-photo plain-regeneration run is present in the frozen package, so no baseline count is published beside the zero above.</p>
+      <p class="proof-cap">This slot is reserved for a separately recorded baseline with its own files and provenance. Until then, the honest value is blank, not estimated.</p>
+      <!-- TODO(baseline-regeneration): fill this slot only from a separately recorded same-photo plain-regeneration run. Do not infer a number from the Fidelity Lock run. -->
+    </aside>
+
+    <ol class="steps">
+      <li>The product is cut out of the seller's photo and stored untouched, with hashes of the source, the layer, and the mask.</li>
+      <li>The image model generates the background scene only. It never receives the product's pixels.</li>
+      <li>Deterministic code composites the stored layer onto the scene. Before anything moves, the stored hashes are verified.</li>
+      <li>Every result ships with its receipt: the hashes, what was transformed, the changed-pixel count, and the cost of the calls that made it.</li>
+    </ol>
+    <p class="note">The claim is precise on purpose: the stored product layer reached the final image unchanged. Edge pixels that blend with the scene are counted separately in the receipt, never hidden inside the zero.</p>
+
+    <div class="run-block">
+    <div class="proof" id="proof">
+      <p class="proof-title">THE PROOF — THE RUN'S OWN FILES</p>
+      <p class="lede">These are the byte-exact files from the verified run receipted above, not recreations. One honesty note: the "product" in this first end-to-end fixture is a chat-screen cut-out (the staged scene is a reading room). The files, hashes, and counts are the real run's; when the product-photo run lands, this fixture swaps as a data change.</p>
+      <button class="copy-btn" id="proof-load" type="button">Load the run's images (5.6 MB)</button>
+      <div class="stage" id="proof-stage" data-scene="plate" hidden>
+        <img class="plate" id="proof-plate" width="1280" height="1920" alt="The background scene generated for the verified run: a regal reading room">
+        <img class="fit" id="proof-source" width="1206" height="1925" alt="The source photo of the verified run: a phone chat screenshot" style="display:none">
+        <img class="fit" id="proof-output" width="1206" height="1925" alt="The final composite of the verified run: the chat cut-out staged in the reading room" style="display:none">
+        <img class="fit" id="proof-layer" width="1206" height="1925" alt="The product layer of the verified run: the chat cut-out on transparency">
+      </div>
+      <div class="scene-btns" role="group" aria-label="Scene behind the product layer">
+        <button type="button" data-scene="plate" aria-pressed="true">The run's scene</button>
+        <button type="button" data-scene="white" aria-pressed="false">Studio white</button>
+        <button type="button" data-scene="ink" aria-pressed="false">Studio ink</button>
+        <button type="button" data-scene="checker" aria-pressed="false">Transparency</button>
+        <button type="button" data-scene="source" aria-pressed="false">Original photo</button>
+        <button type="button" data-scene="output" aria-pressed="false">Final output</button>
+      </div>
+      <p class="proof-cap">[ byte-exact run files, shown unedited · the product layer never moves; only the scene behind it changes · the generated plate is shown centre-cropped to the frame, as the run itself cropped it · white / ink / checker are display backdrops, not run assets ]</p>
+    </div>
+
+    <div class="verify" id="verify">
+      <p class="proof-title">VERIFY IT YOURSELF</p>
+      <p>Do not take the receipt's word for it. This runs entirely in your browser. The frozen sample is displayed in the judge path below; when you click one of its check buttons, the checker fetches the run's <a href="proof-receipt-v1.json">receipt file</a> and the byte-exact source photo, product layer, and final output, hashes the files with SHA-256, checks the hashes against the receipt it just fetched, then decodes both images and counts every fully opaque product pixel against the output. The one number the checker will not take from the receipt is the changed count a pass requires: zero, enforced in the code. The checker decodes the PNG data itself rather than using the browser's colour-managed image decoder, so an embedded Display P3 profile does not change the pixel values being counted — the same convention the Python receipt uses. The profile is not stripped, and every file hash still has to match.</p>
+
+      <div class="judge-path" aria-label="One-click judge path">
+        <p class="proof-title">ONE-CLICK JUDGE PATH — FROZEN SAMPLE PRELOADED</p>
+        <p>No upload and no file picker. The frozen sample below is already selected; each button fetches only these recorded files and the published receipt.</p>
+        <div class="sample-grid">
+          <figure class="sample-card">
+            <img src="proof-source-v1.png" width="1206" height="1925" loading="lazy" alt="Frozen sample source photo">
+            <figcaption><span class="sample-kind">ORIGINAL</span>asset://e3f0428f…</figcaption>
+          </figure>
+          <figure class="sample-card">
+            <img src="proof-mask-v1.png" width="1206" height="1925" loading="lazy" alt="Frozen sample mask recorded by cut_out">
+            <figcaption><span class="sample-kind">MASK</span>asset://7dc19362…</figcaption>
+          </figure>
+          <figure class="sample-card">
+            <img src="proof-layer-v1.png" width="1206" height="1925" loading="lazy" alt="Frozen sample stored product layer">
+            <figcaption><span class="sample-kind">PRODUCT LAYER</span>asset://b8663615…</figcaption>
+          </figure>
+          <figure class="sample-card">
+            <img src="proof-output-v1.png" width="1206" height="1925" loading="lazy" alt="Frozen sample final composite">
+            <figcaption><span class="sample-kind">FINAL OUTPUT</span>asset://45deaf1a…</figcaption>
+          </figure>
+        </div>
+        <div class="judge-actions">
+          <button class="copy-btn" id="verify-btn" type="button">Verify frozen sample</button>
+          <button class="copy-btn" id="verify-tamper-btn" type="button">Run one-pixel tamper check</button>
+          <a href="replay-v1.html">Open cached replay</a>
+        </div>
+        <p class="proof-cap">The tamper button is separate and pixel-only: the encoded files stay byte-identical, so their file hashes must still match; exactly one decoded, fully opaque product pixel is flipped, and detection requires the scan to report exactly 1 changed. Deep link: <a href="?tamper=1#verify">?tamper=1</a> runs that check on load.</p>
+      </div>
+
+      <div class="vcounts">
+        <div><span class="vlab">PIXELS CHECKED</span><span class="vcount" id="verify-checked">&mdash;</span></div>
+        <div><span class="vlab">CHANGED</span><span class="vcount" id="verify-changed">&mdash;</span></div>
+      </div>
+      <div class="verify-lines" id="verify-lines"></div>
+      <p id="verify-progress"></p>
+      <p id="verify-status" role="status" aria-live="polite">Frozen sample selected. Not run yet.</p>
+    </div>
+
+    <div class="opencode">
+      <p class="proof-title">THE CHECK, IN THE OPEN</p>
+      <p class="proof-cap">This is the counting code itself — the same function the buttons above run, copied verbatim from <a href="verifier-v6.js">verifier-v6.js</a>.</p>
+      <pre class="code"><span class="c">/* Replicates composite.py's _measure for the claim that matters:
+ * a foreground pixel with alpha 255 must appear in the composite
+ * byte-identical. fgData / outData are RGBA byte arrays (ImageData.data).
+ * Chunked so the caller can animate the "checked" counter; resolves to
+ * {checked, changed}. */</span>
+function countChanged(fgData, outData, width, height, opts) {
+  opts = opts || {};
+  var chunkRows = opts.chunkRows || 64;
+  var onProgress = opts.onProgress || function () {};
+  var schedule = opts.schedule || function (fn) { setTimeout(fn, 0); };
+  var checked = 0;
+  var changed = 0;
+  var row = 0;
+  return new Promise(function (resolve) {
+    function step() {
+      var endRow = Math.min(row + chunkRows, height);
+      for (var y = row; y &lt; endRow; y++) {
+        var rowStart = y * width * 4;
+        for (var x = 0; x &lt; width; x++) {
+          var j = rowStart + x * 4;
+          if (fgData[j + 3] === 255) {
+            checked++;
+            if (
+              fgData[j] !== outData[j] ||
+              fgData[j + 1] !== outData[j + 1] ||
+              fgData[j + 2] !== outData[j + 2] ||
+              fgData[j + 3] !== outData[j + 3]
+            ) {
+              changed++;
+            }
+          }
+        }
+      }
+      row = endRow;
+      onProgress(checked, changed);
+      if (row &lt; height) {
+        schedule(step);
+      } else {
+        resolve({ checked: checked, changed: changed });
+      }
+    }
+    step();
+  });
+}</pre>
+    </div>
+
+    <p class="stamp">[ provenance — run: 2026-10-26, produced by agenthand <a href="https://github.com/AUsernameForYou/agenthand/tree/401f1136af5a36ca814207ae8ce8b5435bd1722e">commit 401f113</a> · fixture: the run's own files, a chat-screen cut-out (see the note above) · the checker on this page is <a href="verifier-v6.js">verifier-v6.js</a>, 38.1 KB — read it ]</p>
+    </div>
+  </section>
+
+  <section id="use" aria-labelledby="use-h">
+    <p class="chapter"><span class="ch-no">03</span><span>Use it</span></p>
+    <h2 id="use-h">An MCP server, over stdio today</h2>
+    <p class="lede">agenthand speaks the Model Context Protocol. Run it locally and point any MCP client at it; a hosted endpoint comes later.</p>
+    <pre class="code" id="install-code">{
+  "mcpServers": {
+    "agenthand": {
+      "command": "uvx",
+      "args": ["agenthand"],
+      "env": { "META_API_KEY": "&hellip;" }
+    }
+  }
+}</pre>
+    <button class="copy-btn" type="button" data-copy="install-code">Copy config</button>
+    <p>That is the whole install: <a href="https://docs.astral.sh/uv/">uv</a> fetches the published package and runs it. The server starts and lists its tools without a key; the key is only needed when a tool makes a model call. Prefer pip? Install the package and register the installed command instead:</p>
+    <pre class="code" id="config-code">pip install agenthand
+
+{
+  "mcpServers": {
+    "agenthand": {
+      "command": "agenthand",
+      "env": { "META_API_KEY": "&hellip;" }
+    }
+  }
+}</pre>
+    <button class="copy-btn" type="button" data-copy="config-code">Copy pip route</button>
+    <p>From source (dev): <span style="font-family:ui-monospace,Menlo,Consolas,monospace">git clone https://github.com/AUsernameForYou/agenthand</span>, then <span style="font-family:ui-monospace,Menlo,Consolas,monospace">.venv/bin/pip install -e ".[dev]"</span> and run <span style="font-family:ui-monospace,Menlo,Consolas,monospace">.venv/bin/agenthand</span>.</p>
+    <p class="note">Images travel as <span style="font-family:ui-monospace,Menlo,Consolas,monospace">asset://</span> handles, not bytes, so tools chain: identify plans, cut_out returns a handle, draw consumes it. Every billable call passes one spend cap with reserve-then-settle receipts, and the server refuses to spend when the ledger cannot be trusted.</p>
+  </section>
+
+  <section id="scale-card" aria-labelledby="scale-h">
+    <p class="chapter"><span class="ch-no">04</span><span>The scale card</span><span class="rm-tag">[ roadmap ]</span></p>
+    <h2 id="scale-h">A known size, laid in the photo</h2>
+    <p class="lede">The agenthand scale card is a printed, laminated card that goes in the photo, next to the thing being sold. Its face is the agenthand mark itself: the robot hand, the three arcs, and the black corner brackets that frame them. The only added furniture is a set of white ticks cut into those bracket arms at exact, known positions. Nothing else is printed on it: no numbers, no rulers, no labels. The geometry the pipeline needs lives in a layout profile on the machine side, where every bracket corner and tick sits at known coordinates. It comes as a family, sized by working distance: a 3&times;2&nbsp;in mini for close-ups, a 6&times;4&nbsp;in postcard for across a room, and a big 10&times;7.5&nbsp;in card for across a yard. The 5&times;7&nbsp;in card is the product card, the one that sits beside the thing being sold.</p>
+    <figure class="card-figure">
+      <img src="scale-card-v3.png" width="720" height="528" loading="lazy" decoding="async" alt="The agenthand scale card: the agenthand mark on a white card, its black corner brackets carrying small white ticks cut into the bracket arms">
+      <figcaption>The AH-57 card, 5&times;7&nbsp;in. [ design locked &middot; print files ready ]</figcaption>
+    </figure>
+    <p class="lede">A known shape in the frame is a foothold. A prototype estimator already reads the bracket corners and ticks against their known geometry, fits the photo's perspective, and sizes a flat object lying in the card's plane. Estimates come back as approximations, tilde and range included, never dressed up as exact figures. One rule decides whether an estimate is worth anything: pixels. The card needs roughly 150 px across in the photo. Below about 130 px across, the estimator refuses rather than guessing, and says to move closer or reach for a bigger card. The measuring is tested so far on rendered scenes built from the card's real geometry; validation against real photographs is in progress. Distance, area, and volume stay on the roadmap, where more cards placed at more depths would tighten the numbers.</p>
+  </section>
+
+  <section aria-labelledby="status-h">
+    <p class="chapter"><span class="ch-no">05</span><span>Status</span></p>
+    <h2 id="status-h">Built in the open, during the hackathon</h2>
+    <p class="lede">agenthand was designed and built during the Meta Global AI Developer Hackathon, October 26 to November 4, 2026. The full chain runs end to end today: identify, cut_out, and draw, live on the Meta Model API, with Fidelity Lock receipts on every staged image. A demo video is on its way.</p>
+    <p class="proof-title">Built twice, measured side by side</p>
+    <p class="lede">agenthand exists twice: the reference server in Python, and a second implementation in Rust, written as a single binary. Both were run against the same frozen proof run and measured side by side. The two builds agree exactly: the same output pixel hash (sha256 8b8defea&hellip;e802), the same count (580,613 opaque pixels checked, 0 changed), and the same total billed cost, $0.020044 to the micro-dollar. Python stays the reference. What differs is how fast the local work runs:</p>
+    <table class="bench">
+      <tr><th>Operation</th><th>Python</th><th>Rust</th></tr>
+      <tr><td>Cold start to initialize response</td><td>1,291.5 ms</td><td>2.4 ms (about 540x)</td></tr>
+      <tr><td>Verify over the proof images</td><td>569.7 ms</td><td>91.4 ms (about 6.2x)</td></tr>
+      <tr><td>Estimator run</td><td>2,824.4 ms</td><td>1,802.3 ms (about 1.6x)</td></tr>
+    </table>
+    <p class="bench-note">Measured on the same machine (a 2 vCPU AMD EPYC VM), medians of interleaved runs. One honest note: on a real tool call, Meta API latency dominates, so the commercially real win here is cold start, because every MCP client spawns the server fresh for each session.</p>
+    <p class="proof-title">A whole room, item by item</p>
+    <p class="lede">The three tools also run across a room. On October 28, 2026, a run over two photos and a walkthrough video of one real room staged all six items named in advance: a straw hat, a black hat, an Escher book, a gray storage box, an orange suitcase, and a WINIX air purifier. Each item came back with its own Fidelity Lock receipt, and an independent verifier recounted every item from the stored files: 352,597 product pixels checked across the six distinct items, 0 changed. The run cost $0.154487. One item needed a same-day correction, recorded in the run's own files: the first-pass hat cutout duplicated the straw hat, and the black fedora was re-cut from the still photo and re-verified before these numbers were quoted.</p>
+    <p class="lede">The run can be driven by voice, too. The seller narrates the walkthrough, and the items named for sale in that narration drive the run. A merely mentioned item is staged only when the photos confirm it; a mention the photos cannot support fails honestly with NO_MATCH rather than becoming a listing.</p>
+    <p class="proof-title">The counterpoint, measured</p>
+    <p class="lede">The obvious comparison was run on photographs of real physical products from the same room: an orange suitcase and a gray storage box, three runs each, measured October 28, 2026. Handed the source photos with instructions to keep the product exactly as-is, Muse Image 1.0's own full-frame edit mode changed 223,599&ndash;223,600 of the suitcase's 223,600 product pixels and 31,858&ndash;31,932 of the box's 31,932 at the receipt's zero-tolerance standard, and 212,823&ndash;215,878 (suitcase) and 16,369&ndash;29,577 (box) beyond a &plusmn;16 per-channel tolerance. Each item's Fidelity Lock composite changed 0.</p>
+    <p class="lede">
+      <a href="https://github.com/AUsernameForYou/agenthand">The code and the build log</a> &middot;
+      <a href="https://cerebralvalley.ai/e/meta-ai-developer-hackathon/details">The hackathon</a>
+    </p>
+  </section>
+
+  <div class="closing">
+    <p>Do not take this page's word for any of it.</p>
+    <a class="primary" href="#verify">Verify the run</a>
+    <a href="#proof">See the run</a>
+    <a href="https://github.com/AUsernameForYou/agenthand">Get the code</a>
+  </div>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <img src="logo-symbol-256-v1.png" width="256" height="173" loading="lazy" alt="The agenthand symbol: a robot hand under three cyan arcs">
+    <div>
+      <p><strong style="color:var(--ink)">agenthand</strong> — a hand for your agent. An MCP server by Daniel Wagner, built for the Meta Global AI Developer Hackathon.</p>
+      <p>The rotating arcs are the three tools, turning as one. The hand underneath is the promise: the real product, handled carefully, never redrawn.</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  // Truthful copy buttons: "Copied" appears only when the text actually
+  // reached the clipboard. Rejection, a missing clipboard API, and a
+  // failed fallback all say so instead.
+  function restore(btn,label){ setTimeout(function(){ btn.textContent=label; },2000); }
+  function mark(btn,ok,label){
+    btn.textContent = ok ? 'Copied' : 'Copy failed — select the text and copy it manually';
+    restore(btn,label);
+  }
+  function fallbackCopy(text,btn,label){
+    try{
+      var ta=document.createElement('textarea');
+      ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select();
+      var ok=document.execCommand('copy');
+      document.body.removeChild(ta);
+      mark(btn,!!ok,label);
+    }catch(e){ mark(btn,false,label); }
+  }
+  var btns=document.querySelectorAll('[data-copy]');
+  for(var i=0;i<btns.length;i++){
+    (function(btn){
+      btn.addEventListener('click',function(){
+        var target=document.getElementById(btn.getAttribute('data-copy'));
+        if(!target){ mark(btn,false,btn.textContent); return; }
+        var label=btn.textContent;
+        var text=target.innerText;
+        if(navigator.clipboard&&navigator.clipboard.writeText){
+          navigator.clipboard.writeText(text).then(
+            function(){ mark(btn,true,label); },
+            function(){ fallbackCopy(text,btn,label); }
+          );
+        }else{
+          fallbackCopy(text,btn,label);
+        }
+      });
+    })(btns[i]);
+  }
+})();
+</script>
+<script>
+(function(){
+  // The displayed run figures come from proof-run.json, the one
+  // manifest every surface reads — the verifier fetches the run's
+  // receipt the same way. The values already in the HTML are the
+  // fallback if the manifest cannot be fetched (and no-JS readers
+  // see them standing); the suite pins them to the manifest.
+  var el=document.getElementById('hero-checked');
+  var costsEl=document.getElementById('receipt-costs');
+  function fmt(n){ return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+  function animateTo(target){
+    if(!el) return;
+    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+      el.textContent=fmt(target);
+      return;
+    }
+    var t0=null, dur=1500;
+    function step(ts){
+      if(!t0) t0=ts;
+      var p=Math.min((ts-t0)/dur,1);
+      var eased=1-Math.pow(1-p,3);
+      el.textContent=fmt(Math.round(target*eased));
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  function apply(manifest){
+    var c=manifest.costs_usd;
+    if(costsEl&&c){
+      costsEl.textContent='identify $'+c.identify+' · cut_out $'+c.cut_out+' · draw $'+c.draw+' · total $'+c.total;
+    }
+    if(manifest.pixels) animateTo(manifest.pixels.opaque_checked);
+  }
+  fetch('proof-run.json').then(function(res){
+    if(!res.ok) throw new Error('manifest fetch failed');
+    return res.json();
+  }).then(apply).catch(function(){
+    // Fallback: animate to the figure already standing in the HTML.
+    if(!el) return;
+    var n=parseInt((el.textContent||'').replace(/[^0-9]/g,''),10);
+    if(!isNaN(n)) animateTo(n);
+  });
+})();
+</script>
+<script src="verifier-v6.js" defer></script>
+
+</body>
+</html>

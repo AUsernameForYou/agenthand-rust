@@ -1,0 +1,12 @@
+{
+  "asset_id": "7dc19362be4c47abadac2edd7e69129e",
+  "byte_size": 6917,
+  "created_at": "2026-10-26T23:14:07.969806+00:00",
+  "filename": "7dc19362be4c47abadac2edd7e69129e.png",
+  "height": 1925,
+  "kind": "mask_png",
+  "pixel_sha256": "e4f189b470f82430e15cd5060d100e555495c349aad7cfe5e824794955c18748",
+  "sha256": "121a3f85f51067e848dfe776d57df83baece3c2369325ebf751354517a3e950b",
+  "source_asset_id": "e3f0428fbc5e43c7826959a9eecbda50",
+  "width": 1206
+}

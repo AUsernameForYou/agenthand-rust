@@ -1,0 +1,42 @@
+{
+  "changed_opaque_pixels": 0,
+  "color_profile_output_sha256": null,
+  "color_profile_preserved": true,
+  "color_profile_source_sha256": null,
+  "edge_band_max_width_px": 0,
+  "edge_band_pixels": 0,
+  "foreground_asset": "asset://b8663615419e40389f4e48dbd0e38698",
+  "foreground_pixel_sha256": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100",
+  "foreground_sha256": "fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf",
+  "mask_asset": "asset://7dc19362be4c47abadac2edd7e69129e",
+  "mask_pixels_total": 580613,
+  "opaque_fraction": 1.0,
+  "opaque_pixels": 580613,
+  "output_asset": "asset://45deaf1acea14ab5839c641eee1cd277",
+  "output_pixel_sha256": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802",
+  "output_sha256": "13b58a327820aa97e9aa306e861b9dd85c199d6a9ef5d53ea7755c3365a35451",
+  "plate_asset": "asset://4f1740f4ec3e493cbc380f97e49c7e8f",
+  "provenance": {
+    "call_ids": {
+      "cut_out": "bbdb8433ad30497b8e05d7baae490fcb",
+      "draw": "85cb0449d4eb47e2a272525ae04f5302",
+      "identify": "0b2f6e0953374858b4a554438944c1f1"
+    },
+    "freeze_note": "The original run predates the expanded receipt schema (J2 fixes, commit 6571b8b). Count/profile fields below were re-derived from the frozen files with the current code at freeze time and reproduce the originally recorded headline numbers exactly (580,613 checked, 0 changed). The run's own ledger lines are frozen verbatim in run/ledger-lines.jsonl.",
+    "originally_recorded": {
+      "changed_opaque_pixels": 0,
+      "opaque_pixels_checked": 580613
+    },
+    "run": "verified live end-to-end run, 2026-10-26 23:13:47-23:14:23 UTC",
+    "settled_costs_usd": {
+      "cut_out": 0.0025,
+      "draw": 0.01,
+      "identify": 0.007544,
+      "total": 0.020044
+    }
+  },
+  "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+  "source_pixel_sha256": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4",
+  "source_sha256": "f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b",
+  "transparent_pixels": 1740937
+}

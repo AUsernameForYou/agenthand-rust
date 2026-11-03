@@ -1,0 +1,51 @@
+# agenthand — reviewer brief
+
+agenthand is an MCP server for AI agents that work with real rooms,
+objects, and property. Three tools: identify (what is this, what
+condition, what is it worth), cut_out (pixel-exact extraction), and
+draw (a new background composited under the untouched product —
+Fidelity Lock: the product pixels never change, and a hash receipt
+proves it).
+
+## Verify everything: the Proof Graph
+
+Every verified run, receipt, model call, and demo-film chapter is in
+one rusqlite evidence graph, queried through the product itself. It
+is knowledge graph engineering applied to build evidence: the nodes
+and edges are derived from the data's own foreign keys at import,
+never drawn by hand.
+
+- `agenthand evidence verify --all` — re-checks every receipt in the
+  Proof Graph against the shipped files; one verdict line per claim.
+- `agenthand evidence chapter <m:ss>` — deep link from any moment in
+  the demo film to the chapter at that timestamp and its claim.
+- `agenthand evidence export <dir>` — writes a judge pack: the
+  evidence database, every resolvable receipt file, and a manifest
+  with the receipts root, in one folder.
+- `agenthand evidence trace <claim|chapter|receipt>` — walks the
+  graph from a film timestamp or a claim to the run, the receipt,
+  and its sha256.
+- `agenthand evidence graph --format mermaid` — the whole graph,
+  rendered.
+- No keys needed: `conformance/` holds a frozen offline replay of a
+  real run (580,613 pixels checked, 0 changed) that verifies locally.
+- Receipts root: `54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`
+  — one hash pins the whole evidence set; recompute it with
+  `agenthand evidence root` and compare.
+
+## Layout
+
+- `README.md` — setup (including adding your own Meta Model API and
+  Baseten keys), the model-calls table, the Proof Graph section.
+- `JUDGING.md` — rubric-mapped index: each criterion points at the
+  exact files, commands, and numbers that speak to it.
+- `evidence/` — the Proof Graph database (SQLite via rusqlite).
+- `reference/` — the Python reference implementation (the QC build;
+  the Rust build is the product; the two cross-verify).
+- `conformance/` — the parity harness and the frozen replay package.
+
+## Runtime models (all Meta)
+
+- identify: Muse Spark 1.3 · cut_out: SAM 3.1 · draw (plate only):
+  Muse Image 1.0 · narration: Muse Spark Open (via Baseten).
+  No non-Meta AI model is called at runtime.

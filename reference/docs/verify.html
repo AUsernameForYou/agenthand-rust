@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify a staged photo · agenthand</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; color: #111;
+         max-width: 44rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         font-size: 0.85em; word-break: break-all; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; margin: 1rem 0; }
+  .ok { border-color: #2e7d32; }
+  .warn { border-color: #b26a00; }
+  dt { font-weight: 600; margin-top: 0.5rem; }
+  dd { margin: 0.15rem 0 0 0; }
+  textarea { width: 100%; min-height: 7rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; }
+  button { font: inherit; padding: 0.4rem 1rem; margin-top: 0.5rem; cursor: pointer; }
+  h1 { font-size: 1.4rem; }
+</style>
+</head>
+<body>
+<h1>Verify a staged photo</h1>
+<p>Every photo agenthand stages carries a disclosure label and a QR code
+pointing at this page. The code encodes this page's address plus the
+SHA-256 hash of the photo's fidelity receipt, carried in the URL
+fragment (the part after <code>#</code>). The fragment never leaves your
+browser: this page is static, and the lookup below runs entirely on your
+device.</p>
+
+<div id="result" class="card">Reading the receipt hash from the address…</div>
+
+<h2>Check a receipt yourself</h2>
+<p>Paste a receipt JSON below. The page removes the two annotation
+fields (<code>verify_url</code> and <code>qr_sha256</code>), canonicalizes
+what remains (keys sorted, compact separators, UTF-8 unescaped), hashes
+it, and compares the result against the hash in this page's address.
+A match means the receipt you pasted is exactly the receipt the QR
+code was minted from.</p>
+<textarea id="pastebox" placeholder='{"changed_opaque_pixels": 0, …}'></textarea>
+<button id="checkbtn" type="button">Check against this page's hash</button>
+<p id="checkresult" class="mono"></p>
+
+<h2>Published demo receipts</h2>
+<p>Receipts from agenthand's public demos are registered on this page.
+Any other receipt still verifies: re-running the draw locally and
+comparing receipts, or the paste check above, needs no registry.</p>
+
+<script>
+"use strict";
+// Registry of published demo receipts, keyed by the SHA-256 of the
+// receipt's canonical JSON (the same hash a QR code for it carries).
+var REGISTRY = {
+  "97584e47afc71131bcccced6b66d090bcc6c54f45617c31539fb31825f5eb739": {
+    "title": "Frozen proof run (offline replay package)",
+    "opaque_pixels": 580613,
+    "changed_opaque_pixels": 0,
+    "color_profile_preserved": true,
+    "source_pixel_sha256": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4",
+    "foreground_pixel_sha256": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100",
+    "output_pixel_sha256": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802"
+  }
+};
+
+// Canonicalize raw JSON text directly. Number tokens are carried
+// through verbatim: the receipt producers (the Python and Rust
+// builds) already emit floats in canonical shortest form (1.0,
+// 0.154487), while a parse-then-stringify round trip would rewrite
+// 1.0 to 1 and silently change the hash. Object keys are sorted;
+// the two annotation fields are dropped at the top level only.
+function canonicalizeRaw(text) {
+  var pos = 0;
+  function fail(msg) { throw new Error(msg + " at offset " + pos); }
+  function skipWs() {
+    while (pos < text.length && " \t\n\r".indexOf(text[pos]) >= 0) pos++;
+  }
+  function parseValue(topLevel) {
+    skipWs();
+    var ch = text[pos];
+    if (ch === "{") return parseObject(topLevel);
+    if (ch === "[") return parseArray();
+    if (ch === '"') return JSON.stringify(parseString());
+    if (ch === "t") { expect("true"); return "true"; }
+    if (ch === "f") { expect("false"); return "false"; }
+    if (ch === "n") { expect("null"); return "null"; }
+    return parseNumber();
+  }
+  function expect(lit) {
+    if (text.substr(pos, lit.length) !== lit) fail("expected " + lit);
+    pos += lit.length;
+  }
+  function parseString() {
+    var start = pos;
+    pos++;
+    while (pos < text.length && text[pos] !== '"') {
+      if (text[pos] === "\\") pos++;
+      pos++;
+    }
+    if (pos >= text.length) fail("unterminated string");
+    pos++;
+    return JSON.parse(text.slice(start, pos));
+  }
+  function parseNumber() {
+    var start = pos;
+    if (text[pos] === "-") pos++;
+    while (pos < text.length && "0123456789.eE+-".indexOf(text[pos]) >= 0) pos++;
+    if (pos === start) fail("expected a value");
+    return text.slice(start, pos);
+  }
+  function parseArray() {
+    pos++;
+    var parts = [];
+    skipWs();
+    if (text[pos] === "]") { pos++; return "[]"; }
+    for (;;) {
+      parts.push(parseValue(false));
+      skipWs();
+      if (text[pos] === ",") { pos++; continue; }
+      if (text[pos] === "]") { pos++; break; }
+      fail("expected , or ] in array");
+    }
+    return "[" + parts.join(",") + "]";
+  }
+  function parseObject(topLevel) {
+    pos++;
+    var entries = [];
+    skipWs();
+    if (text[pos] === "}") { pos++; return "{}"; }
+    for (;;) {
+      skipWs();
+      if (text[pos] !== '"') fail("expected object key");
+      var key = parseString();
+      skipWs();
+      if (text[pos] !== ":") fail("expected : in object");
+      pos++;
+      var val = parseValue(false);
+      if (!(topLevel && (key === "verify_url" || key === "qr_sha256"))) {
+        entries.push([key, val]);
+      }
+      skipWs();
+      if (text[pos] === ",") { pos++; continue; }
+      if (text[pos] === "}") { pos++; break; }
+      fail("expected , or } in object");
+    }
+    entries.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+    return "{" + entries.map(function (e) {
+      return JSON.stringify(e[0]) + ":" + e[1];
+    }).join(",") + "}";
+  }
+  var out = parseValue(true);
+  skipWs();
+  if (pos !== text.length) fail("trailing characters");
+  return out;
+}
+
+function sha256hex(text) {
+  var bytes = new TextEncoder().encode(text);
+  return crypto.subtle.digest("SHA-256", bytes).then(function (buf) {
+    return Array.prototype.map.call(new Uint8Array(buf), function (b) {
+      return b.toString(16).padStart(2, "0");
+    }).join("");
+  });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+  });
+}
+
+var fragment = location.hash.replace(/^#/, "").trim().toLowerCase();
+var resultBox = document.getElementById("result");
+
+function showResult() {
+  if (!/^[0-9a-f]{64}$/.test(fragment)) {
+    resultBox.className = "card warn";
+    resultBox.innerHTML = "<strong>No receipt hash in this address.</strong>" +
+      "<p>A verify link looks like <span class='mono'>verify#&lt;64 hex characters&gt;</span>. " +
+      "If you scanned a QR code and landed here without one, the code was not an agenthand " +
+      "verify code.</p>";
+    return;
+  }
+  var entry = REGISTRY[fragment];
+  if (!entry) {
+    resultBox.className = "card warn";
+    resultBox.innerHTML = "<strong>This receipt is not in the published registry.</strong>" +
+      "<p class='mono'>" + esc(fragment) + "</p>" +
+      "<p>That is expected for receipts from your own runs: the registry only holds the " +
+      "public demo receipts. The receipt still verifies — paste it below and this page " +
+      "will check it against the hash, or verify locally with the project tools.</p>";
+    return;
+  }
+  resultBox.className = "card ok";
+  resultBox.innerHTML = "<strong>Published receipt found: " + esc(entry.title) + "</strong>" +
+    "<dl>" +
+    "<dt>Opaque product pixels checked</dt><dd>" + esc(entry.opaque_pixels) + "</dd>" +
+    "<dt>Changed opaque pixels</dt><dd>" + esc(entry.changed_opaque_pixels) +
+    " — the cut-out product layer is pixel-for-pixel the original photo's pixels.</dd>" +
+    "<dt>Colour profile preserved</dt><dd>" + esc(entry.color_profile_preserved) + "</dd>" +
+    "<dt>Source photo pixel hash</dt><dd class='mono'>" + esc(entry.source_pixel_sha256) + "</dd>" +
+    "<dt>Product layer pixel hash</dt><dd class='mono'>" + esc(entry.foreground_pixel_sha256) + "</dd>" +
+    "<dt>Staged photo pixel hash</dt><dd class='mono'>" + esc(entry.output_pixel_sha256) + "</dd>" +
+    "</dl>";
+}
+showResult();
+
+document.getElementById("checkbtn").addEventListener("click", function () {
+  var out = document.getElementById("checkresult");
+  var raw = document.getElementById("pastebox").value.trim();
+  var canonical;
+  try {
+    canonical = canonicalizeRaw(raw);
+  } catch (e) {
+    out.textContent = "That is not valid JSON: " + e.message;
+    return;
+  }
+  sha256hex(canonical).then(function (digest) {
+    if (!/^[0-9a-f]{64}$/.test(fragment)) {
+      out.textContent = "Canonical hash of the pasted receipt: " + digest +
+        " (this page's address carries no hash to compare against).";
+    } else if (digest === fragment) {
+      out.textContent = "MATCH: the pasted receipt hashes to this page's hash. " +
+        "It is the exact receipt the QR code was minted from.";
+    } else {
+      out.textContent = "NO MATCH. Pasted receipt hashes to " + digest +
+        " but this page's address carries " + fragment + ".";
+    }
+  });
+});
+</script>
+</body>
+</html>

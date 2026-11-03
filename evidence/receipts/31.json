@@ -1,0 +1,357 @@
+{
+  "content": [
+    {
+      "text": "{\"asset\":\"asset://666995315e90482e9692922a065115ae\",\"call_id\":\"da34c89f55914036bf272b6036c34a1e\",\"cost_usd\":0.01,\"fidelity_receipt\":{\"backdrop\":{\"contact_shadow\":true,\"edge_matte_px\":2,\"edit\":{\"model\":\"muse-image-1.0\",\"output_sha256\":\"128282b6c83badc156fccbc909d7f45342cb6416122c87a0adea1cfc49ca44b6\",\"path\":\"/images/edits\",\"size\":\"1024x1536\"},\"kind\":\"source_edit\",\"reference\":{\"dilate_px\":8,\"fill_rgb\":[128,128,128],\"hole_pixels\":404775,\"product_region\":\"every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent\",\"sha256\":\"b8286462fe5692fcab96d54ae8ff11734f20fafe58f768f497a9795af43a625d\",\"size\":\"1024x1536\"},\"subject\":{\"bbox\":[2003,110,4089,5531],\"coverage\":0.232748,\"fills_frame\":false,\"opaque_pixels\":5695383,\"thin_fraction\":1e-6,\"thin_structure\":false,\"touches_frame_edges\":[]}},\"changed_opaque_pixels\":0,\"changed_predicate\":\"a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px\",\"claim\":\"The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.\",\"color_profile_foreground_sha256\":\"0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0\",\"color_profile_output_sha256\":\"0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0\",\"color_profile_preserved\":true,\"color_profile_source_sha256\":\"0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0\",\"color_space\":\"embedded ICC profile (description unreadable)\",\"count_sample\":\"decoded_delivered_file\",\"edge_band_max_width_px\":0,\"edge_band_pixels\":0,\"foreground_asset\":\"asset://666995315e90482e9692922a065115ae\",\"foreground_pixel_sha256\":\"41facc61876d384949186baf5604d1860aad60beafa5b93ba21e92c21816b450\",\"foreground_sha256\":\"9dd449d789b20741df3f316091dc0f36525e0cc3432243ce0c6ada198dc8f54d\",\"mask_asset\":\"asset://11273089799f4b22bd48a99ab84d7f55\",\"mask_pixel_sha256\":\"c1fd34f13260589c4e24f148184169eae994386b00bd12fe78962fc39c3d166b\",\"mask_pixels_total\":5695383,\"mask_sam_height\":1608,\"mask_sam_width\":1206,\"mask_scale_method\":\"bilinear_threshold_128\",\"mask_sha256\":\"74b6639c4ecc5019413d5e100daa46d9b47d65d33895bbb83dbcebc81defe93b\",\"mask_source\":\"asset\",\"mask_source_height\":5712,\"mask_source_width\":4284,\"opaque_alpha_threshold\":255,\"opaque_fraction\":1.0,\"opaque_pixels\":5695383,\"output_asset\":\"asset://1476bb8dcc264b4e9d4f2142392e39b5\",\"output_format\":\"PNG\",\"output_pixel_sha256\":\"a2ce7fc5affe7864d86c3985592d1be20c3090b737198dd2429f2f26410b02e6\",\"output_sha256\":\"e8505412b58d62be0d4eb43e65c12e95cc4de92218b7e0acf9ce345dda8212e7\",\"pixel_tolerance\":0,\"plate_asset\":\"asset://aadf253d66414ff8a129997fa7c38290\",\"plate_kind\":\"source_edit\",\"plate_pixel_sha256\":\"5609c65b647c5ef215ebf96ca2ed22dfc90e7c46ae07a714494f68ee8c384b18\",\"plate_sha256\":\"c7574f7eabf1baeeed09263df3b7fd11eb0b05dc6a92c3f7ba3e76bcb0e23947\",\"plate_source\":\"asset\",\"product_layer_scaled\":false,\"provenance\":{\"census\":{\"aux_item_types\":[\"urn:com:apple:photo:2020:aux:hdrgainmap\",\"urn:com:apple:photo:2020:aux:semanticskymatte\",\"tag:apple.com,2023:photo:aux:linearthumbnail\",\"tag:apple.com,2023:photo:aux:styledeltamap\"],\"container\":\"heic\",\"depth_item_present\":false,\"has_embedded_thumbnail\":true,\"has_exif\":true,\"has_xmp\":true,\"hidden_items\":116,\"image_tiles\":45,\"items_by_type\":{\"Exif\":1,\"grid\":3,\"hvc1\":111,\"mime\":2,\"tmap\":1,\"uri \":1},\"items_total\":119,\"major_brand\":\"heic\",\"primary_item_type\":\"grid\",\"stated_dimensions\":[5712,4284]},\"format\":\"heic\",\"location\":{\"latitude\":45.606822,\"longitude\":-122.397653,\"present\":true,\"public_copy\":{\"asset\":\"asset://d913b4a81271466391fc3c4fabad5342\",\"format\":\"png\",\"label\":\"Derived public copy: all embedded metadata (including any location coordinates) was removed; the image pixels are identical to the original file, which is unchanged and still bound by its receipt.\",\"pixel_sha256\":\"6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc\",\"sha256\":\"ba73aaa4339a56e513347c1621634e3bee0a22d40c266edcaa8fc8230847959e\"},\"warning\":\"This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.\"},\"location_warning\":\"This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.\",\"metadata_read\":true,\"scope\":\"Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.\",\"signals\":[{\"capture_software_version\":\"26.6.2\",\"detail\":\"the file names its capture device as Apple iPhone 17 Pro\",\"does_not_establish\":\"metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device\",\"establishes\":\"the file's own statement of what captured it\",\"finding\":\"stated\",\"make\":\"Apple\",\"model\":\"iPhone 17 Pro\",\"signal\":\"capture_device\"},{\"detail\":\"no editing software is named anywhere in the file's metadata\",\"does_not_establish\":\"silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file\",\"establishes\":\"nothing; this is the expected state of an untouched camera file\",\"finding\":\"none_named\",\"signal\":\"editor_software\"},{\"detail\":\"no edit history is recorded in the file\",\"does_not_establish\":\"an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip\",\"establishes\":\"nothing; most camera files carry no history packet at all\",\"finding\":\"none_recorded\",\"signal\":\"edit_history\"},{\"detail\":\"no XMP document identifiers are present\",\"does_not_establish\":\"identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files\",\"establishes\":\"nothing\",\"finding\":\"absent\",\"signal\":\"document_ids\"},{\"detail\":\"the file's modification date and stated capture time agree (2026:11:01 17:26:10)\",\"does_not_establish\":\"agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file\",\"establishes\":\"the file's two dates tell one consistent story\",\"finding\":\"agree\",\"signal\":\"date_consistency\"},{\"detail\":\"no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing\",\"does_not_establish\":\"absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential\",\"establishes\":\"nothing; absence of credentials is the normal state of most honest photos\",\"finding\":\"absent\",\"signal\":\"content_credentials\"},{\"detail\":\"the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)\",\"does_not_establish\":\"agreement is the normal state of untouched and competently exported files alike\",\"establishes\":\"the file's description of its size agrees with the image it contains\",\"finding\":\"consistent\",\"signal\":\"dimensions_consistency\"},{\"detail\":\"no bytes follow the end of the image data\",\"does_not_establish\":\"a clean ending says nothing about the image data itself\",\"establishes\":\"the file ends where its structure says it ends\",\"finding\":\"none\",\"signal\":\"trailing_data\"}],\"version\":1},\"receipt_schema\":2,\"source_asset\":\"asset://94af0493e2974078a670442cedf08f9f\",\"source_pixel_sha256\":\"6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc\",\"source_sha256\":\"a9881655931d0ef62553b522474d47762496adb0d75575b6ab2effb3306d69d9\",\"transformations\":[],\"transparent_pixels\":18774825},\"label\":\"Digitally altered. Original photo and proof: https://ausernameforyou.github.io/agenthand/verify#955b17b7ca08062642ca9aa7e1e49b0cbb6dc004576d100c14c87dbf0b8e46f3\",\"location_warning\":\"This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.\",\"model\":\"muse-image-1.0\",\"note\":\"Background plate built from the original photo: the product region was greyed out before upload (its pixels never reached the image model), muse-image-1.0 filled and tidied the surroundings in the photo's own perspective and light, and the stored product layer was composited back untouched at its original position and scale.\",\"output_asset\":\"asset://1476bb8dcc264b4e9d4f2142392e39b5\",\"plate_asset\":\"asset://aadf253d66414ff8a129997fa7c38290\",\"plate_kind\":\"source_edit\",\"plate_mode\":\"source_edit\",\"provenance\":{\"census\":{\"aux_item_types\":[\"urn:com:apple:photo:2020:aux:hdrgainmap\",\"urn:com:apple:photo:2020:aux:semanticskymatte\",\"tag:apple.com,2023:photo:aux:linearthumbnail\",\"tag:apple.com,2023:photo:aux:styledeltamap\"],\"container\":\"heic\",\"depth_item_present\":false,\"has_embedded_thumbnail\":true,\"has_exif\":true,\"has_xmp\":true,\"hidden_items\":116,\"image_tiles\":45,\"items_by_type\":{\"Exif\":1,\"grid\":3,\"hvc1\":111,\"mime\":2,\"tmap\":1,\"uri \":1},\"items_total\":119,\"major_brand\":\"heic\",\"primary_item_type\":\"grid\",\"stated_dimensions\":[5712,4284]},\"format\":\"heic\",\"location\":{\"latitude\":45.606822,\"longitude\":-122.397653,\"present\":true,\"public_copy\":{\"asset\":\"asset://d913b4a81271466391fc3c4fabad5342\",\"format\":\"png\",\"label\":\"Derived public copy: all embedded metadata (including any location coordinates) was removed; the image pixels are identical to the original file, which is unchanged and still bound by its receipt.\",\"pixel_sha256\":\"6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc\",\"sha256\":\"ba73aaa4339a56e513347c1621634e3bee0a22d40c266edcaa8fc8230847959e\"},\"warning\":\"This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.\"},\"location_warning\":\"This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.\",\"metadata_read\":true,\"scope\":\"Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.\",\"signals\":[{\"capture_software_version\":\"26.6.2\",\"detail\":\"the file names its capture device as Apple iPhone 17 Pro\",\"does_not_establish\":\"metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device\",\"establishes\":\"the file's own statement of what captured it\",\"finding\":\"stated\",\"make\":\"Apple\",\"model\":\"iPhone 17 Pro\",\"signal\":\"capture_device\"},{\"detail\":\"no editing software is named anywhere in the file's metadata\",\"does_not_establish\":\"silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file\",\"establishes\":\"nothing; this is the expected state of an untouched camera file\",\"finding\":\"none_named\",\"signal\":\"editor_software\"},{\"detail\":\"no edit history is recorded in the file\",\"does_not_establish\":\"an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip\",\"establishes\":\"nothing; most camera files carry no history packet at all\",\"finding\":\"none_recorded\",\"signal\":\"edit_history\"},{\"detail\":\"no XMP document identifiers are present\",\"does_not_establish\":\"identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files\",\"establishes\":\"nothing\",\"finding\":\"absent\",\"signal\":\"document_ids\"},{\"detail\":\"the file's modification date and stated capture time agree (2026:11:01 17:26:10)\",\"does_not_establish\":\"agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file\",\"establishes\":\"the file's two dates tell one consistent story\",\"finding\":\"agree\",\"signal\":\"date_consistency\"},{\"detail\":\"no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing\",\"does_not_establish\":\"absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential\",\"establishes\":\"nothing; absence of credentials is the normal state of most honest photos\",\"finding\":\"absent\",\"signal\":\"content_credentials\"},{\"detail\":\"the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)\",\"does_not_establish\":\"agreement is the normal state of untouched and competently exported files alike\",\"establishes\":\"the file's description of its size agrees with the image it contains\",\"finding\":\"consistent\",\"signal\":\"dimensions_consistency\"},{\"detail\":\"no bytes follow the end of the image data\",\"does_not_establish\":\"a clean ending says nothing about the image data itself\",\"establishes\":\"the file ends where its structure says it ends\",\"finding\":\"none\",\"signal\":\"trailing_data\"}],\"version\":1},\"qr_asset\":\"asset://8553b7a686734f548422f1187d1b4eaf\",\"scene_prompt\":\"a clean, bright, studio-style flat lay background in soft warm grey, even gentle light, keep the exact same camera angle and perspective as the original photo: shot from directly above looking straight down, same framing\",\"status\":\"ok\",\"subject\":{\"bbox\":[2003,110,4089,5531],\"coverage\":0.232748,\"fills_frame\":false,\"opaque_pixels\":5695383,\"thin_fraction\":1e-6,\"thin_structure\":false,\"touches_frame_edges\":[]},\"tool\":\"draw\",\"usage\":{\"cached_input_tokens\":0,\"images\":1,\"input_tokens\":12262,\"output_tokens\":698},\"verify_url\":\"https://ausernameforyou.github.io/agenthand/verify#955b17b7ca08062642ca9aa7e1e49b0cbb6dc004576d100c14c87dbf0b8e46f3\"}",
+      "type": "text"
+    },
+    {
+      "data": "<stripped 44450220 chars>",
+      "mimeType": "image/png",
+      "type": "image"
+    }
+  ],
+  "isError": false,
+  "structuredContent": {
+    "asset": "asset://666995315e90482e9692922a065115ae",
+    "call_id": "da34c89f55914036bf272b6036c34a1e",
+    "cost_usd": 0.01,
+    "fidelity_receipt": {
+      "backdrop": {
+        "contact_shadow": true,
+        "edge_matte_px": 2,
+        "edit": {
+          "model": "muse-image-1.0",
+          "output_sha256": "128282b6c83badc156fccbc909d7f45342cb6416122c87a0adea1cfc49ca44b6",
+          "path": "/images/edits",
+          "size": "1024x1536"
+        },
+        "kind": "source_edit",
+        "reference": {
+          "dilate_px": 8,
+          "fill_rgb": [
+            128,
+            128,
+            128
+          ],
+          "hole_pixels": 404775,
+          "product_region": "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
+          "sha256": "b8286462fe5692fcab96d54ae8ff11734f20fafe58f768f497a9795af43a625d",
+          "size": "1024x1536"
+        },
+        "subject": {
+          "bbox": [
+            2003,
+            110,
+            4089,
+            5531
+          ],
+          "coverage": 0.232748,
+          "fills_frame": false,
+          "opaque_pixels": 5695383,
+          "thin_fraction": 1e-06,
+          "thin_structure": false,
+          "touches_frame_edges": []
+        }
+      },
+      "changed_opaque_pixels": 0,
+      "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+      "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.",
+      "color_profile_foreground_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+      "color_profile_output_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+      "color_profile_preserved": true,
+      "color_profile_source_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+      "color_space": "embedded ICC profile (description unreadable)",
+      "count_sample": "decoded_delivered_file",
+      "edge_band_max_width_px": 0,
+      "edge_band_pixels": 0,
+      "foreground_asset": "asset://666995315e90482e9692922a065115ae",
+      "foreground_pixel_sha256": "41facc61876d384949186baf5604d1860aad60beafa5b93ba21e92c21816b450",
+      "foreground_sha256": "9dd449d789b20741df3f316091dc0f36525e0cc3432243ce0c6ada198dc8f54d",
+      "mask_asset": "asset://11273089799f4b22bd48a99ab84d7f55",
+      "mask_pixel_sha256": "c1fd34f13260589c4e24f148184169eae994386b00bd12fe78962fc39c3d166b",
+      "mask_pixels_total": 5695383,
+      "mask_sam_height": 1608,
+      "mask_sam_width": 1206,
+      "mask_scale_method": "bilinear_threshold_128",
+      "mask_sha256": "74b6639c4ecc5019413d5e100daa46d9b47d65d33895bbb83dbcebc81defe93b",
+      "mask_source": "asset",
+      "mask_source_height": 5712,
+      "mask_source_width": 4284,
+      "opaque_alpha_threshold": 255,
+      "opaque_fraction": 1.0,
+      "opaque_pixels": 5695383,
+      "output_asset": "asset://1476bb8dcc264b4e9d4f2142392e39b5",
+      "output_format": "PNG",
+      "output_pixel_sha256": "a2ce7fc5affe7864d86c3985592d1be20c3090b737198dd2429f2f26410b02e6",
+      "output_sha256": "e8505412b58d62be0d4eb43e65c12e95cc4de92218b7e0acf9ce345dda8212e7",
+      "pixel_tolerance": 0,
+      "plate_asset": "asset://aadf253d66414ff8a129997fa7c38290",
+      "plate_kind": "source_edit",
+      "plate_pixel_sha256": "5609c65b647c5ef215ebf96ca2ed22dfc90e7c46ae07a714494f68ee8c384b18",
+      "plate_sha256": "c7574f7eabf1baeeed09263df3b7fd11eb0b05dc6a92c3f7ba3e76bcb0e23947",
+      "plate_source": "asset",
+      "product_layer_scaled": false,
+      "provenance": {
+        "census": {
+          "aux_item_types": [
+            "urn:com:apple:photo:2020:aux:hdrgainmap",
+            "urn:com:apple:photo:2020:aux:semanticskymatte",
+            "tag:apple.com,2023:photo:aux:linearthumbnail",
+            "tag:apple.com,2023:photo:aux:styledeltamap"
+          ],
+          "container": "heic",
+          "depth_item_present": false,
+          "has_embedded_thumbnail": true,
+          "has_exif": true,
+          "has_xmp": true,
+          "hidden_items": 116,
+          "image_tiles": 45,
+          "items_by_type": {
+            "Exif": 1,
+            "grid": 3,
+            "hvc1": 111,
+            "mime": 2,
+            "tmap": 1,
+            "uri ": 1
+          },
+          "items_total": 119,
+          "major_brand": "heic",
+          "primary_item_type": "grid",
+          "stated_dimensions": [
+            5712,
+            4284
+          ]
+        },
+        "format": "heic",
+        "location": {
+          "latitude": 45.606822,
+          "longitude": -122.397653,
+          "present": true,
+          "public_copy": {
+            "asset": "asset://d913b4a81271466391fc3c4fabad5342",
+            "format": "png",
+            "label": "Derived public copy: all embedded metadata (including any location coordinates) was removed; the image pixels are identical to the original file, which is unchanged and still bound by its receipt.",
+            "pixel_sha256": "6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc",
+            "sha256": "ba73aaa4339a56e513347c1621634e3bee0a22d40c266edcaa8fc8230847959e"
+          },
+          "warning": "This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged."
+        },
+        "location_warning": "This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.",
+        "metadata_read": true,
+        "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+        "signals": [
+          {
+            "capture_software_version": "26.6.2",
+            "detail": "the file names its capture device as Apple iPhone 17 Pro",
+            "does_not_establish": "metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device",
+            "establishes": "the file's own statement of what captured it",
+            "finding": "stated",
+            "make": "Apple",
+            "model": "iPhone 17 Pro",
+            "signal": "capture_device"
+          },
+          {
+            "detail": "no editing software is named anywhere in the file's metadata",
+            "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+            "establishes": "nothing; this is the expected state of an untouched camera file",
+            "finding": "none_named",
+            "signal": "editor_software"
+          },
+          {
+            "detail": "no edit history is recorded in the file",
+            "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+            "establishes": "nothing; most camera files carry no history packet at all",
+            "finding": "none_recorded",
+            "signal": "edit_history"
+          },
+          {
+            "detail": "no XMP document identifiers are present",
+            "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+            "establishes": "nothing",
+            "finding": "absent",
+            "signal": "document_ids"
+          },
+          {
+            "detail": "the file's modification date and stated capture time agree (2026:11:01 17:26:10)",
+            "does_not_establish": "agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file",
+            "establishes": "the file's two dates tell one consistent story",
+            "finding": "agree",
+            "signal": "date_consistency"
+          },
+          {
+            "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+            "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+            "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+            "finding": "absent",
+            "signal": "content_credentials"
+          },
+          {
+            "detail": "the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)",
+            "does_not_establish": "agreement is the normal state of untouched and competently exported files alike",
+            "establishes": "the file's description of its size agrees with the image it contains",
+            "finding": "consistent",
+            "signal": "dimensions_consistency"
+          },
+          {
+            "detail": "no bytes follow the end of the image data",
+            "does_not_establish": "a clean ending says nothing about the image data itself",
+            "establishes": "the file ends where its structure says it ends",
+            "finding": "none",
+            "signal": "trailing_data"
+          }
+        ],
+        "version": 1
+      },
+      "receipt_schema": 2,
+      "source_asset": "asset://94af0493e2974078a670442cedf08f9f",
+      "source_pixel_sha256": "6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc",
+      "source_sha256": "a9881655931d0ef62553b522474d47762496adb0d75575b6ab2effb3306d69d9",
+      "transformations": [],
+      "transparent_pixels": 18774825
+    },
+    "label": "Digitally altered. Original photo and proof: https://ausernameforyou.github.io/agenthand/verify#955b17b7ca08062642ca9aa7e1e49b0cbb6dc004576d100c14c87dbf0b8e46f3",
+    "location_warning": "This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.",
+    "model": "muse-image-1.0",
+    "note": "Background plate built from the original photo: the product region was greyed out before upload (its pixels never reached the image model), muse-image-1.0 filled and tidied the surroundings in the photo's own perspective and light, and the stored product layer was composited back untouched at its original position and scale.",
+    "output_asset": "asset://1476bb8dcc264b4e9d4f2142392e39b5",
+    "plate_asset": "asset://aadf253d66414ff8a129997fa7c38290",
+    "plate_kind": "source_edit",
+    "plate_mode": "source_edit",
+    "provenance": {
+      "census": {
+        "aux_item_types": [
+          "urn:com:apple:photo:2020:aux:hdrgainmap",
+          "urn:com:apple:photo:2020:aux:semanticskymatte",
+          "tag:apple.com,2023:photo:aux:linearthumbnail",
+          "tag:apple.com,2023:photo:aux:styledeltamap"
+        ],
+        "container": "heic",
+        "depth_item_present": false,
+        "has_embedded_thumbnail": true,
+        "has_exif": true,
+        "has_xmp": true,
+        "hidden_items": 116,
+        "image_tiles": 45,
+        "items_by_type": {
+          "Exif": 1,
+          "grid": 3,
+          "hvc1": 111,
+          "mime": 2,
+          "tmap": 1,
+          "uri ": 1
+        },
+        "items_total": 119,
+        "major_brand": "heic",
+        "primary_item_type": "grid",
+        "stated_dimensions": [
+          5712,
+          4284
+        ]
+      },
+      "format": "heic",
+      "location": {
+        "latitude": 45.606822,
+        "longitude": -122.397653,
+        "present": true,
+        "public_copy": {
+          "asset": "asset://d913b4a81271466391fc3c4fabad5342",
+          "format": "png",
+          "label": "Derived public copy: all embedded metadata (including any location coordinates) was removed; the image pixels are identical to the original file, which is unchanged and still bound by its receipt.",
+          "pixel_sha256": "6ba7fd6c12c74a33dd7df79aa1813aac8c3a692b3ac76b791dcb1e2927c3cdfc",
+          "sha256": "ba73aaa4339a56e513347c1621634e3bee0a22d40c266edcaa8fc8230847959e"
+        },
+        "warning": "This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged."
+      },
+      "location_warning": "This photo's file carries GPS location coordinates (latitude 45.606822, longitude -122.397653), readable by anyone who receives the original file. Before the original is published anywhere public, for example on the original-photo page an AB 723 listing links to, publish the metadata-free public copy instead: it keeps every pixel and removes the location and the rest of the embedded metadata. The original file and its receipt are unchanged.",
+      "metadata_read": true,
+      "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+      "signals": [
+        {
+          "capture_software_version": "26.6.2",
+          "detail": "the file names its capture device as Apple iPhone 17 Pro",
+          "does_not_establish": "metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device",
+          "establishes": "the file's own statement of what captured it",
+          "finding": "stated",
+          "make": "Apple",
+          "model": "iPhone 17 Pro",
+          "signal": "capture_device"
+        },
+        {
+          "detail": "no editing software is named anywhere in the file's metadata",
+          "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+          "establishes": "nothing; this is the expected state of an untouched camera file",
+          "finding": "none_named",
+          "signal": "editor_software"
+        },
+        {
+          "detail": "no edit history is recorded in the file",
+          "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+          "establishes": "nothing; most camera files carry no history packet at all",
+          "finding": "none_recorded",
+          "signal": "edit_history"
+        },
+        {
+          "detail": "no XMP document identifiers are present",
+          "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+          "establishes": "nothing",
+          "finding": "absent",
+          "signal": "document_ids"
+        },
+        {
+          "detail": "the file's modification date and stated capture time agree (2026:11:01 17:26:10)",
+          "does_not_establish": "agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file",
+          "establishes": "the file's two dates tell one consistent story",
+          "finding": "agree",
+          "signal": "date_consistency"
+        },
+        {
+          "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+          "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+          "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+          "finding": "absent",
+          "signal": "content_credentials"
+        },
+        {
+          "detail": "the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)",
+          "does_not_establish": "agreement is the normal state of untouched and competently exported files alike",
+          "establishes": "the file's description of its size agrees with the image it contains",
+          "finding": "consistent",
+          "signal": "dimensions_consistency"
+        },
+        {
+          "detail": "no bytes follow the end of the image data",
+          "does_not_establish": "a clean ending says nothing about the image data itself",
+          "establishes": "the file ends where its structure says it ends",
+          "finding": "none",
+          "signal": "trailing_data"
+        }
+      ],
+      "version": 1
+    },
+    "qr_asset": "asset://8553b7a686734f548422f1187d1b4eaf",
+    "scene_prompt": "a clean, bright, studio-style flat lay background in soft warm grey, even gentle light, keep the exact same camera angle and perspective as the original photo: shot from directly above looking straight down, same framing",
+    "status": "ok",
+    "subject": {
+      "bbox": [
+        2003,
+        110,
+        4089,
+        5531
+      ],
+      "coverage": 0.232748,
+      "fills_frame": false,
+      "opaque_pixels": 5695383,
+      "thin_fraction": 1e-06,
+      "thin_structure": false,
+      "touches_frame_edges": []
+    },
+    "tool": "draw",
+    "usage": {
+      "cached_input_tokens": 0,
+      "images": 1,
+      "input_tokens": 12262,
+      "output_tokens": 698
+    },
+    "verify_url": "https://ausernameforyou.github.io/agenthand/verify#955b17b7ca08062642ca9aa7e1e49b0cbb6dc004576d100c14c87dbf0b8e46f3"
+  }
+}

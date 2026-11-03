@@ -1,0 +1,185 @@
+{
+  "backdrop": {
+    "contact_shadow": true,
+    "edge_matte_px": 2,
+    "edit": {
+      "model": "muse-image-1.0",
+      "output_sha256": "c6737da363bef80c7c5c3a95aeb989738c0b781c8f64127e6ddcdae278d79e05",
+      "path": "/images/edits",
+      "size": "1792x1024"
+    },
+    "kind": "source_edit",
+    "reference": {
+      "dilate_px": 8,
+      "fill_rgb": [
+        128,
+        128,
+        128
+      ],
+      "hole_pixels": 123496,
+      "product_region": "every visible product pixel's footprint plus the dilation was filled grey before upload; no product pixel was sent",
+      "sha256": "c6e93212dcb64d4187d7289dd01d8923875f20c828946bd8fe9d357f429df357",
+      "size": "1792x1024"
+    },
+    "subject": {
+      "bbox": [
+        470,
+        70,
+        1062,
+        602
+      ],
+      "coverage": 0.051484,
+      "fills_frame": false,
+      "opaque_pixels": 106758,
+      "thin_fraction": 0.00045,
+      "thin_structure": false,
+      "touches_frame_edges": []
+    }
+  },
+  "call_id": "a3c295f72c4041d9a2213f2cc940a4b9",
+  "changed_opaque_pixels": 0,
+  "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+  "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.",
+  "color_profile_foreground_sha256": null,
+  "color_profile_output_sha256": null,
+  "color_profile_preserved": true,
+  "color_profile_source_sha256": null,
+  "color_space": "sRGB (no embedded ICC profile)",
+  "cost_usd": 0.01,
+  "count_sample": "decoded_delivered_file",
+  "edge_band_max_width_px": 0,
+  "edge_band_pixels": 0,
+  "foreground_asset": "asset://6254245ed87745b58066c78680d56e81",
+  "foreground_pixel_sha256": "66ee009c6963d06ffa4ac2a47a43c9e01ed99142e8766dc15cc4c4faef251413",
+  "foreground_sha256": "1a2b5baab52f347b538bc1bbd678f08d3bcccf455a5c68ab70cd533484cda114",
+  "mask_asset": "asset://1780bdf87549439d90b4347f61a94453",
+  "mask_pixel_sha256": "66b0bb5195e52fac76af46c63845265ea9414ac185dcab680064bed27c9e9839",
+  "mask_pixels_total": 106758,
+  "mask_sam_height": 1044,
+  "mask_sam_width": 1856,
+  "mask_scale_method": "bilinear_threshold_128",
+  "mask_sha256": "59d5805b4855679bf772ae59fb3bd59a070edf1de723b9f5381e293a5e11ac22",
+  "mask_source": "asset",
+  "mask_source_height": 1080,
+  "mask_source_width": 1920,
+  "model": "muse-image-1.0",
+  "opaque_alpha_threshold": 255,
+  "opaque_fraction": 1.0,
+  "opaque_pixels": 106758,
+  "output_asset": "asset://fdfedbde7cae4670908e28b7eeb138fe",
+  "output_format": "PNG",
+  "output_pixel_sha256": "947af3b25ebee926cb6da64861f418edfe5298355679e889c78b64113833e3de",
+  "output_sha256": "969f37ad03fb2d396a576ce90ff4e3270c66c9f7a076875eb5a57c737be3f514",
+  "pixel_tolerance": 0,
+  "plate_asset": "asset://304340fef78542cb9e90006f7d888507",
+  "plate_kind": "source_edit",
+  "plate_pixel_sha256": "21e4f04e2549032d777f06efa4f9e197c8728547f7cfd97b4ec4a3e85e6f94a0",
+  "plate_sha256": "1d3607a3dd9910ffa1c83e745fa13b05f421af8981d43ed1e5e60961614b9fdf",
+  "plate_source": "asset",
+  "product_layer_scaled": false,
+  "provenance": {
+    "census": {
+      "container": "jpeg",
+      "has_embedded_thumbnail": false,
+      "has_exif": false,
+      "has_xmp": false,
+      "segments": {
+        "COM": 1,
+        "DHT": 1,
+        "DQT": 1,
+        "SOF0": 1,
+        "SOS": 1
+      },
+      "stated_dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "format": "jpeg",
+    "location": {
+      "latitude": null,
+      "longitude": null,
+      "present": false,
+      "public_copy": null,
+      "warning": null
+    },
+    "location_warning": null,
+    "metadata_read": true,
+    "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+    "signals": [
+      {
+        "detail": "the file names no capture device in its metadata",
+        "does_not_establish": "a missing camera name is not evidence about the photo either way",
+        "establishes": "nothing; most files that pass through editing or messaging tools lose these tags",
+        "finding": "not_stated",
+        "signal": "capture_device"
+      },
+      {
+        "detail": "no editing software is named anywhere in the file's metadata",
+        "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+        "establishes": "nothing; this is the expected state of an untouched camera file",
+        "finding": "none_named",
+        "signal": "editor_software"
+      },
+      {
+        "detail": "no edit history is recorded in the file",
+        "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+        "establishes": "nothing; most camera files carry no history packet at all",
+        "finding": "none_recorded",
+        "signal": "edit_history"
+      },
+      {
+        "detail": "no XMP document identifiers are present",
+        "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+        "establishes": "nothing",
+        "finding": "absent",
+        "signal": "document_ids"
+      },
+      {
+        "detail": "the file states no capture or modification date",
+        "does_not_establish": "missing dates are common after exports and strips, and say nothing about the photo",
+        "establishes": "nothing",
+        "finding": "no_dates_stated",
+        "signal": "date_consistency"
+      },
+      {
+        "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+        "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+        "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+        "finding": "absent",
+        "signal": "content_credentials"
+      },
+      {
+        "detail": "the metadata states no pixel dimensions, so there is nothing to compare with the decoded image",
+        "does_not_establish": "most formats state dimensions in their structure rather than their metadata; this check simply has nothing to bite on here",
+        "establishes": "nothing",
+        "finding": "not_stated",
+        "signal": "dimensions_consistency"
+      },
+      {
+        "detail": "no bytes follow the end of the image data",
+        "does_not_establish": "a clean ending says nothing about the image data itself",
+        "establishes": "the file ends where its structure says it ends",
+        "finding": "none",
+        "signal": "trailing_data"
+      }
+    ],
+    "version": 1
+  },
+  "qr_sha256": "2c681958ae5e65fc1b183936ac63960b2bcbc0e4a58c5a351cbf8a987f764cc8",
+  "receipt_schema": 2,
+  "scene_prompt": "a bright, calm room with a plain warm-white wall and a light wooden table surface, soft daylight",
+  "source_asset": "asset://9a25421d048d44e2b96c0cae8072bb35",
+  "source_pixel_sha256": "f077a8bc097abec62525971043667debac8e7a18880ca52b3b17d100ddf05408",
+  "source_sha256": "eb8ba867a76ec390c1b1966dd65b4984c6ad440282b465db5ddd50fd8b7f86b1",
+  "tool": "draw",
+  "transformations": [],
+  "transparent_pixels": 1966842,
+  "usage": {
+    "cached_input_tokens": 0,
+    "images": 1,
+    "input_tokens": 12551,
+    "output_tokens": 1053
+  },
+  "verify_url": "https://ausernameforyou.github.io/agenthand/verify#a665f5783c7d5ed95526fce7d3ecfefb3fd41fddf0f14cac5348827498edb31f"
+}

@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agenthand"
+version = "0.1.2"
+description = "agenthand: an MCP server that gives AI sales agents three production tools - identify, cut_out, draw - for turning messy product photos into listing-ready images."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Daniel Wagner" },
+]
+# Pinned as floor + next-major ceiling: the floor is the oldest
+# version the suite is verified against (or the first version with
+# an API we call), the ceiling keeps a future major release from
+# being installed untested. Verified set at pin time (2026-10-27):
+# mcp 2.3.0, openai 3.39.0, Pillow 13.0.0, pillow-heif 1.8.1,
+# meta-sam-parser 0.1.0, numpy 2.5.4, opencv-python-headless 5.0.0.93.
+dependencies = [
+    "mcp>=2.0,<3",
+    # Floor is the first release line with the Responses API
+    # (meta_client.segment_image calls client.responses.create).
+    "openai>=1.66,<4",
+    "Pillow>=10,<14",
+    "pillow-heif>=1.8,<2",
+    "meta-sam-parser>=0.1.0,<0.2",
+    # measure.py (prototype estimator): classical CV + array math.
+    # composite.py / segmentation.py use numpy + cv2 for the
+    # fidelity counting and mask analysis hot paths.
+    "numpy>=1.26,<3",
+    "opencv-python-headless>=4.8,<6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    # Property-based tests for the verifier/compositor counting
+    # core (tests/test_fidelity_properties.py).
+    "hypothesis>=6,<7",
+]
+
+[project.scripts]
+agenthand = "agenthand.server:main"
+agenthand-verify = "agenthand.verify:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agenthand"]
+
+# Keep the source distribution focused on installable source and release
+# metadata. The website images, test suite, and local build scripts are
+# development artifacts and would otherwise add roughly 14 MB to the sdist.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.github",
+    "/assets",
+    "/docs",
+    "/scripts",
+    "/tests",
+    "/BUILD_LOG.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

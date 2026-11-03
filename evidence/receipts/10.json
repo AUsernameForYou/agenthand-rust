@@ -1,0 +1,128 @@
+{
+  "claim": "this crop comes from exactly this file, captured at the time the file states, unchanged since",
+  "condition_note": null,
+  "condition_notes": "Light fading on lid and minor rust near side shelf, otherwise intact.",
+  "condition_source": "identify (muse-spark-1.3) over the item crop",
+  "crop": {
+    "asset": "asset://d61594dc1c9c4321a13bf558db1b9cd4",
+    "pixel_sha256": "23ab0e08950a2fdaccc461ece919891442d1b266938806df5dd1623ea611c5e7",
+    "rect_px": [
+      426,
+      0,
+      1293,
+      1080
+    ],
+    "sha256": "29b51d68846516f5da239c93f51c7021a588b40999ba4cb0f1a222e83acb611e"
+  },
+  "cut_quality": {
+    "grade": "PASS",
+    "mask_warnings": [],
+    "reshoot_instruction": null
+  },
+  "foreground_asset": "asset://6c350fc26ca949419ce850d77de64299",
+  "identify_call_id": "8e248dfb0c4c4c9abbd873faaff650e5",
+  "intent": "keep",
+  "item": "the barbecue",
+  "mask_asset": "asset://f6e9fa133d9e46a29afa5248f33121bb",
+  "provenance": {
+    "census": {
+      "container": "jpeg",
+      "has_embedded_thumbnail": false,
+      "has_exif": false,
+      "has_xmp": false,
+      "segments": {
+        "COM": 1,
+        "DHT": 1,
+        "DQT": 1,
+        "SOF0": 1,
+        "SOS": 1
+      },
+      "stated_dimensions": [
+        1920,
+        1080
+      ]
+    },
+    "format": "jpeg",
+    "location": {
+      "latitude": null,
+      "longitude": null,
+      "present": false,
+      "public_copy": null,
+      "warning": null
+    },
+    "location_warning": null,
+    "metadata_read": true,
+    "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+    "signals": [
+      {
+        "detail": "the file names no capture device in its metadata",
+        "does_not_establish": "a missing camera name is not evidence about the photo either way",
+        "establishes": "nothing; most files that pass through editing or messaging tools lose these tags",
+        "finding": "not_stated",
+        "signal": "capture_device"
+      },
+      {
+        "detail": "no editing software is named anywhere in the file's metadata",
+        "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+        "establishes": "nothing; this is the expected state of an untouched camera file",
+        "finding": "none_named",
+        "signal": "editor_software"
+      },
+      {
+        "detail": "no edit history is recorded in the file",
+        "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+        "establishes": "nothing; most camera files carry no history packet at all",
+        "finding": "none_recorded",
+        "signal": "edit_history"
+      },
+      {
+        "detail": "no XMP document identifiers are present",
+        "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+        "establishes": "nothing",
+        "finding": "absent",
+        "signal": "document_ids"
+      },
+      {
+        "detail": "the file states no capture or modification date",
+        "does_not_establish": "missing dates are common after exports and strips, and say nothing about the photo",
+        "establishes": "nothing",
+        "finding": "no_dates_stated",
+        "signal": "date_consistency"
+      },
+      {
+        "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+        "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+        "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+        "finding": "absent",
+        "signal": "content_credentials"
+      },
+      {
+        "detail": "the metadata states no pixel dimensions, so there is nothing to compare with the decoded image",
+        "does_not_establish": "most formats state dimensions in their structure rather than their metadata; this check simply has nothing to bite on here",
+        "establishes": "nothing",
+        "finding": "not_stated",
+        "signal": "dimensions_consistency"
+      },
+      {
+        "detail": "no bytes follow the end of the image data",
+        "does_not_establish": "a clean ending says nothing about the image data itself",
+        "establishes": "the file ends where its structure says it ends",
+        "finding": "none",
+        "signal": "trailing_data"
+      }
+    ],
+    "version": 1
+  },
+  "receipt_schema": 1,
+  "receipt_type": "ownership",
+  "recorded_at": "2026-11-02T00:00:29.840754+00:00",
+  "source": {
+    "asset": "asset://262ad8902d004b4592231d5ff675087b",
+    "exif_capture_time": null,
+    "file_name": "grill-frame-t50.jpg",
+    "file_sha256": "7e15a4be25336abded1754b0e41a51eaaa692d7b2cfa9cd4256e7ed519f465e8",
+    "height": 1080,
+    "pixel_sha256": "3a3686ab37928259a94dfa95e990c8d063196fae45c2e9a852349948323dcec0",
+    "width": 1920
+  }
+}

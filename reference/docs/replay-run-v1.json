@@ -1,0 +1,283 @@
+{
+  "schema": "agenthand.cached-replay/1",
+  "presentation": "REPLAY OF A REAL RUN",
+  "is_live": false,
+  "notice": "This is a cached presentation of recorded files and ledger lines. It does not call a model or the MCP server.",
+  "run": {
+    "label": "verified live end-to-end run, 2026-10-26",
+    "started_at": "2026-10-26T23:13:47+00:00",
+    "ended_at": "2026-10-26T23:14:23+00:00",
+    "asset_timeline_seconds": 36.5,
+    "total_settled_cost_usd": 0.020044
+  },
+  "calls": [
+    {
+      "call_id": "0b2f6e0953374858b4a554438944c1f1",
+      "model": "muse-spark-1.3",
+      "status": "ok",
+      "pending_at": "2026-10-26T23:13:47.484718+00:00",
+      "settled_at": "2026-10-26T23:13:56.563356+00:00",
+      "duration_seconds": 9.078638,
+      "settled_cost_usd": 0.007544,
+      "ledger_usage": {
+        "input_tokens": 3159,
+        "output_tokens": 1638,
+        "cached_input_tokens": 3060,
+        "images": 0,
+        "pricing_table_version": "2026-10-26.2"
+      },
+      "sequence": 1,
+      "tool": "identify",
+      "input": {
+        "assets": [
+          {
+            "asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+            "kind": "source_photo",
+            "site_file": "proof-source-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 644137,
+            "sha256": "f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b",
+            "pixel_sha256": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4",
+            "source_asset": null,
+            "created_at": "2026-10-26T23:13:47.180042+00:00"
+          }
+        ],
+        "recorded_context": "The source photo was the input. The plan produced by this call was consumed by the cut_out chain."
+      },
+      "output": {
+        "kind": "internal_plan",
+        "standalone_asset": null,
+        "frozen_payload": null,
+        "note": "No standalone identify JSON was frozen in the replay package; the page does not reconstruct one."
+      }
+    },
+    {
+      "call_id": "bbdb8433ad30497b8e05d7baae490fcb",
+      "model": "sam-3.1",
+      "status": "ok",
+      "pending_at": "2026-10-26T23:13:56.566132+00:00",
+      "settled_at": "2026-10-26T23:14:07.865121+00:00",
+      "duration_seconds": 11.298989,
+      "settled_cost_usd": 0.0025,
+      "ledger_usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_input_tokens": 0,
+        "images": 1,
+        "pricing_table_version": "2026-10-26.2"
+      },
+      "sequence": 2,
+      "tool": "cut_out",
+      "input": {
+        "assets": [
+          {
+            "asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+            "kind": "source_photo",
+            "site_file": "proof-source-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 644137,
+            "sha256": "f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b",
+            "pixel_sha256": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4",
+            "source_asset": null,
+            "created_at": "2026-10-26T23:13:47.180042+00:00"
+          }
+        ],
+        "concept": "none given",
+        "recorded_context": "The recorded chain on the project site says no concept was given; the planning step ran inside the chain."
+      },
+      "output": {
+        "assets": [
+          {
+            "asset": "asset://b8663615419e40389f4e48dbd0e38698",
+            "kind": "foreground_png",
+            "site_file": "proof-layer-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 209055,
+            "sha256": "fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf",
+            "pixel_sha256": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100",
+            "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+            "created_at": "2026-10-26T23:14:08.219082+00:00"
+          },
+          {
+            "asset": "asset://7dc19362be4c47abadac2edd7e69129e",
+            "kind": "mask_png",
+            "site_file": "proof-mask-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 6917,
+            "sha256": "121a3f85f51067e848dfe776d57df83baece3c2369325ebf751354517a3e950b",
+            "pixel_sha256": "e4f189b470f82430e15cd5060d100e555495c349aad7cfe5e824794955c18748",
+            "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+            "created_at": "2026-10-26T23:14:07.969806+00:00"
+          }
+        ]
+      }
+    },
+    {
+      "call_id": "85cb0449d4eb47e2a272525ae04f5302",
+      "model": "muse-image-1.0",
+      "status": "ok",
+      "pending_at": "2026-10-26T23:14:08.384798+00:00",
+      "settled_at": "2026-10-26T23:14:21.621972+00:00",
+      "duration_seconds": 13.237174,
+      "settled_cost_usd": 0.01,
+      "ledger_usage": {
+        "input_tokens": 10242,
+        "output_tokens": 1019,
+        "cached_input_tokens": 0,
+        "images": 1,
+        "pricing_table_version": "2026-10-26.2"
+      },
+      "sequence": 3,
+      "tool": "draw",
+      "input": {
+        "assets": [
+          {
+            "asset": "asset://b8663615419e40389f4e48dbd0e38698",
+            "kind": "foreground_png",
+            "site_file": "proof-layer-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 209055,
+            "sha256": "fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf",
+            "pixel_sha256": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100",
+            "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+            "created_at": "2026-10-26T23:14:08.219082+00:00"
+          }
+        ],
+        "scene_prompt": {
+          "frozen_payload": null,
+          "note": "A scene prompt was supplied, but its exact text was not frozen in the replay package; the resulting plate is the recorded output."
+        }
+      },
+      "output": {
+        "assets": [
+          {
+            "asset": "asset://4f1740f4ec3e493cbc380f97e49c7e8f",
+            "kind": "background_plate",
+            "site_file": "proof-plate-v1.png",
+            "width": 1280,
+            "height": 1920,
+            "byte_size": 2528814,
+            "sha256": "03eb75bfb812326f9f2632cfbdf747775b4d664953c91205b80333d49be907a7",
+            "pixel_sha256": "061d98dcb7aa55f03c36538b5409cd750ae06594f2d2f88b55eac978f63a29db",
+            "source_asset": null,
+            "created_at": "2026-10-26T23:14:21.620338+00:00"
+          },
+          {
+            "asset": "asset://45deaf1acea14ab5839c641eee1cd277",
+            "kind": "composite",
+            "site_file": "proof-output-v1.png",
+            "width": 1206,
+            "height": 1925,
+            "byte_size": 2198917,
+            "sha256": "13b58a327820aa97e9aa306e861b9dd85c199d6a9ef5d53ea7755c3365a35451",
+            "pixel_sha256": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802",
+            "source_asset": "asset://b8663615419e40389f4e48dbd0e38698",
+            "created_at": "2026-10-26T23:14:23.709548+00:00"
+          }
+        ],
+        "receipt": "proof-receipt-v1.json"
+      }
+    }
+  ],
+  "assets": [
+    {
+      "asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+      "kind": "source_photo",
+      "site_file": "proof-source-v1.png",
+      "width": 1206,
+      "height": 1925,
+      "byte_size": 644137,
+      "sha256": "f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b",
+      "pixel_sha256": "2e2af4170256ffce7ef4653b3079c50d03c9fd1cbab004c3897d785ec307b7d4",
+      "source_asset": null,
+      "created_at": "2026-10-26T23:13:47.180042+00:00"
+    },
+    {
+      "asset": "asset://7dc19362be4c47abadac2edd7e69129e",
+      "kind": "mask_png",
+      "site_file": "proof-mask-v1.png",
+      "width": 1206,
+      "height": 1925,
+      "byte_size": 6917,
+      "sha256": "121a3f85f51067e848dfe776d57df83baece3c2369325ebf751354517a3e950b",
+      "pixel_sha256": "e4f189b470f82430e15cd5060d100e555495c349aad7cfe5e824794955c18748",
+      "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+      "created_at": "2026-10-26T23:14:07.969806+00:00"
+    },
+    {
+      "asset": "asset://b8663615419e40389f4e48dbd0e38698",
+      "kind": "foreground_png",
+      "site_file": "proof-layer-v1.png",
+      "width": 1206,
+      "height": 1925,
+      "byte_size": 209055,
+      "sha256": "fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf",
+      "pixel_sha256": "99e8890ff5e3dcdf825275d327bf5a28c21c31673fc19ed29549a5aa0fb74100",
+      "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+      "created_at": "2026-10-26T23:14:08.219082+00:00"
+    },
+    {
+      "asset": "asset://4f1740f4ec3e493cbc380f97e49c7e8f",
+      "kind": "background_plate",
+      "site_file": "proof-plate-v1.png",
+      "width": 1280,
+      "height": 1920,
+      "byte_size": 2528814,
+      "sha256": "03eb75bfb812326f9f2632cfbdf747775b4d664953c91205b80333d49be907a7",
+      "pixel_sha256": "061d98dcb7aa55f03c36538b5409cd750ae06594f2d2f88b55eac978f63a29db",
+      "source_asset": null,
+      "created_at": "2026-10-26T23:14:21.620338+00:00"
+    },
+    {
+      "asset": "asset://45deaf1acea14ab5839c641eee1cd277",
+      "kind": "composite",
+      "site_file": "proof-output-v1.png",
+      "width": 1206,
+      "height": 1925,
+      "byte_size": 2198917,
+      "sha256": "13b58a327820aa97e9aa306e861b9dd85c199d6a9ef5d53ea7755c3365a35451",
+      "pixel_sha256": "8b8defea41e94004ddc0affd2abef697f32e20c5cf2fdab4c268236611c9e802",
+      "source_asset": "asset://b8663615419e40389f4e48dbd0e38698",
+      "created_at": "2026-10-26T23:14:23.709548+00:00"
+    }
+  ],
+  "receipt": {
+    "site_file": "proof-receipt-v1.json",
+    "source_asset": "asset://e3f0428fbc5e43c7826959a9eecbda50",
+    "foreground_asset": "asset://b8663615419e40389f4e48dbd0e38698",
+    "mask_asset": "asset://7dc19362be4c47abadac2edd7e69129e",
+    "plate_asset": "asset://4f1740f4ec3e493cbc380f97e49c7e8f",
+    "output_asset": "asset://45deaf1acea14ab5839c641eee1cd277",
+    "opaque_pixels": 580613,
+    "changed_opaque_pixels": 0,
+    "color_profile_preserved": true,
+    "edge_band_pixels": 0
+  },
+  "ledger": {
+    "site_file": "replay-ledger-v1.jsonl",
+    "lines": 6,
+    "settled_costs_usd": {
+      "cut_out": 0.0025,
+      "draw": 0.01,
+      "identify": 0.007544,
+      "total": 0.020044
+    }
+  },
+  "baseline": {
+    "comparison": "plain regeneration of the same photo",
+    "status": "not_measured",
+    "changed_opaque_pixels": null,
+    "note": "No same-photo plain-regeneration run is present in the frozen package. No baseline number is inferred.",
+    "todo": "TODO(baseline-regeneration): record that separate run with provenance before publishing a count."
+  },
+  "missing_frozen_payloads": [
+    "Standalone identify JSON output",
+    "Exact draw scene prompt text"
+  ],
+  "source_package": "Offline replay package frozen from the 2026-10-26 run; manifest-checked before use."
+}

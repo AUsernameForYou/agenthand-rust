@@ -1,0 +1,7 @@
+{
+  "receipt_schema": 3,
+  "output_asset": "asset://a330b2b889eb4e84885e20af00eda218",
+  "receipt_file": "assets/a330b2b889eb4e84885e20af00eda218.receipt.json",
+  "receipt_sha256": "293066f86b8bbdb59feaebbe48f2a1520f33eb0f93f59d7a12770377cb7ee9d5",
+  "provenance": "Unmodified receipt emitted offline by archived Python producer ff72fcbfc1a926f84aa828c771d882a9ff078b04 during FIX2. No previously retained schema-3 run was found. This is a historical-producer replay, not a stripped schema-4 receipt; no API call was made."
+}

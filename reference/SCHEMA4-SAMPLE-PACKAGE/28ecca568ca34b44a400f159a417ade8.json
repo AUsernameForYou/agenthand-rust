@@ -1,0 +1,13 @@
+{
+ "asset_id": "28ecca568ca34b44a400f159a417ade8",
+ "byte_size": 299,
+ "color_profile_sha256": null,
+ "created_at": "2026-11-02T06:35:56.615715+00:00",
+ "filename": "28ecca568ca34b44a400f159a417ade8.png",
+ "height": 130,
+ "kind": "foreground_png",
+ "pixel_sha256": "d4283ad39e710d198dc9339fd94ddd45a16e6b7d859b982514b4065787cb24bb",
+ "sha256": "4df54f09109278ea13d76ff4520fb8f38f2bd86b552a32a8a3ff78afad807d74",
+ "source_asset_id": "bbd01e13dc7747ec89d239a4d99ae706",
+ "width": 120
+}

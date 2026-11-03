@@ -1,0 +1,298 @@
+{
+ "backdrop": {
+  "contact_shadow": true,
+  "edge_matte_px": 2,
+  "edit": {
+   "model": "muse-image-1.0",
+   "output_sha256": "b0b693e0f70e9d1b1df00b29c61b1e046a8cb118eaccb628e2c387efa462fbc9",
+   "path": "/images/edits",
+   "size": "1536x1024"
+  },
+  "kind": "source_edit",
+  "reference": {
+   "dilate_px": 8,
+   "fill": "inpaint_diffusion",
+   "fill_iterations": 191,
+   "fill_rgb": null,
+   "fill_texture": {
+    "clamp": 10.0,
+    "gain": 1.0,
+    "kind": "row_mirror_residual",
+    "radius_px": 2
+   },
+   "hole_pixels": 431246,
+   "product_region": "every visible product pixel's footprint plus the dilation was filled from the photo pixels outside it before upload; no product pixel was sent",
+   "sha256": "0be6d3788c415b75e5cd2b24c5ae97d944500e31c01041f7e833da3b621728ea",
+   "size": "1536x1024"
+  },
+  "subject": {
+   "bbox": [
+    487,
+    362,
+    5161,
+    3701
+   ],
+   "coverage": 0.207651,
+   "fills_frame": false,
+   "opaque_pixels": 5081270,
+   "thin_fraction": 0.002081,
+   "thin_structure": false,
+   "touches_frame_edges": []
+  }
+ },
+ "changed_opaque_pixels": 0,
+ "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+ "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match.",
+ "color_profile_foreground_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_output_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_profile_preserved": true,
+ "color_profile_source_sha256": "0ff6958f98684c61f6bbdce1368ddeaf3873baf84545baba482e920d92a914c0",
+ "color_space": "embedded ICC profile (description unreadable)",
+ "count_sample": "decoded_delivered_file",
+ "edge_band_max_width_px": 4,
+ "edge_band_pixels": 22073,
+ "edge_fix": {
+  "applied": true,
+  "contact_band": {
+   "alpha": [
+    30,
+    18,
+    8
+   ],
+   "pixels": 205140,
+   "rebuilt_from_ring_px": [
+    4,
+    6
+   ],
+   "rgb": [
+    58,
+    50,
+    40
+   ],
+   "rim_rebuild_share_256": [
+    256,
+    256,
+    160
+   ],
+   "rim_rebuilt_pixels": 199037,
+   "width_px": 3
+  },
+  "edge_band": {
+   "background_ring_px": [
+    2,
+    4
+   ],
+   "decontaminated": 22015,
+   "method": "un-blend against the local original background: F = (observed - (1-a) B) / a, B = mean source colour 2-4 px outside the footprint, leaning on the local product colour as a -> 0",
+   "pixels": 22073
+  },
+  "feather": {
+   "alpha": 128,
+   "colour": "local product colour (product pixels 3-5 px deep), never the original background",
+   "max_alpha": 128,
+   "pixels": 50948,
+   "rings": 1
+  },
+  "product_pixels_written": 0,
+  "source_edge": {
+   "min_contrast": 32,
+   "ramp_width_px": 2.679688,
+   "rule": "feather alpha = min(max_alpha, 1 - 1/ramp_width): never softer than the source edge",
+   "samples": 27090
+  },
+  "stage": "composite",
+  "thin_structure": false,
+  "version": 1
+ },
+ "foreground_asset": "asset://081f582694534e19987125009815562e",
+ "foreground_pixel_sha256": "9e5057469177e8370ebc26eb75cb68524fe94b63becec6888ce15bab2ecb8e89",
+ "foreground_sha256": "5d5d9cbbbf548f55b14ace540a6f82e231515663653d9c3de3ad7dfb1634f648",
+ "mask_asset": "asset://c874ff5bb54143de88ea071792f40fe8",
+ "mask_pixel_sha256": "a1f89ed77279a8fabb693e530aa8b67ad95248a47646e894fe63c535c7f9d12f",
+ "mask_pixels_total": 5103343,
+ "mask_sam_height": 1206,
+ "mask_sam_width": 1608,
+ "mask_scale_method": "bilinear_threshold_128",
+ "mask_sha256": "152b6d6c1306b15cae207342e2c4a938c9737fea73fec0b89a44276985793779",
+ "mask_source": "asset",
+ "mask_source_height": 4284,
+ "mask_source_width": 5712,
+ "opaque_alpha_threshold": 255,
+ "opaque_fraction": 0.995675,
+ "opaque_pixels": 5081270,
+ "output_asset": "asset://e2b568a54da8419fb9096f68e773b951",
+ "output_format": "PNG",
+ "output_pixel_sha256": "c6951b57eaa9f67cf8af51f3c37f61866e8093305f56d0ada5e0e7bc05aa3bac",
+ "output_sha256": "1126140e32806486c0bfc09434e3a28228fef316211f2fb0fa35c51abb1fedcb",
+ "pixel_tolerance": 0,
+ "plate_asset": "asset://f82d83aedbd144aca191ba9dab56c64b",
+ "plate_kind": "source_edit",
+ "plate_pixel_sha256": "b99cc0ca41a16046d61dbfc76804e230131de313e15258d014b63e64f5c3c8bc",
+ "plate_sha256": "fd259f9b0cf157822eb4967d7ad9635ee2005bc622c93cd5fe1dbe5c4979e38c",
+ "plate_source": "asset",
+ "product_layer_scaled": false,
+ "provenance": {
+  "census": {
+   "aux_item_types": [
+    "urn:com:apple:photo:2020:aux:hdrgainmap",
+    "urn:mpeg:hevc:2015:auxid:2"
+   ],
+   "container": "heic",
+   "depth_item_present": false,
+   "has_embedded_thumbnail": true,
+   "has_exif": true,
+   "has_xmp": true,
+   "hidden_items": 66,
+   "image_tiles": 45,
+   "items_by_type": {
+    "Exif": 1,
+    "grid": 2,
+    "hvc1": 62,
+    "mime": 3,
+    "tmap": 1
+   },
+   "items_total": 69,
+   "major_brand": "heic",
+   "primary_item_type": "grid",
+   "stated_dimensions": [
+    5712,
+    4284
+   ]
+  },
+  "format": "heic",
+  "location": {
+   "latitude": null,
+   "longitude": null,
+   "present": false,
+   "public_copy": null,
+   "warning": null
+  },
+  "location_warning": null,
+  "metadata_read": true,
+  "scope": "Observations about what the file itself contains and claims, read when the photo arrived. These are not a verdict: this record never calls a photo edited or unedited. Metadata is written by software and can be edited or stripped, so the absence of any signal below is not evidence that a file is untouched.",
+  "signals": [
+   {
+    "capture_software_version": "26.6.2",
+    "detail": "the file names its capture device as Apple iPhone 17 Pro",
+    "does_not_establish": "metadata is written by software and can be edited or stripped, so a named device does not prove the photo came from that device",
+    "establishes": "the file's own statement of what captured it",
+    "finding": "stated",
+    "make": "Apple",
+    "model": "iPhone 17 Pro",
+    "signal": "capture_device"
+   },
+   {
+    "detail": "no editing software is named anywhere in the file's metadata",
+    "does_not_establish": "silence is not cleanliness: an edited file whose metadata was stripped reads exactly like this, so this line can never clear a file",
+    "establishes": "nothing; this is the expected state of an untouched camera file",
+    "finding": "none_named",
+    "signal": "editor_software"
+   },
+   {
+    "detail": "no edit history is recorded in the file",
+    "does_not_establish": "an edit history appears only when Adobe-family tools wrote one and the packet survived; its absence says nothing about edits by other tools or after a strip",
+    "establishes": "nothing; most camera files carry no history packet at all",
+    "finding": "none_recorded",
+    "signal": "edit_history"
+   },
+   {
+    "detail": "no XMP document identifiers are present",
+    "does_not_establish": "identifiers speak only to whether copies can be recognised as related; their absence is the normal state of camera files",
+    "establishes": "nothing",
+    "finding": "absent",
+    "signal": "document_ids"
+   },
+   {
+    "detail": "the file's modification date and stated capture time agree (2026:10:31 16:43:27)",
+    "does_not_establish": "agreement is easy to preserve or to fake, and exports often rewrite both together; this line can never clear a file",
+    "establishes": "the file's two dates tell one consistent story",
+    "finding": "agree",
+    "signal": "date_consistency"
+   },
+   {
+    "detail": "no Content Credentials (C2PA) manifest is embedded. Most cameras add none, and no native iPhone photo carries one, so this absence means nothing",
+    "does_not_establish": "absence must never be read as suspicion: the large majority of unedited photos on earth carry no credential",
+    "establishes": "nothing; absence of credentials is the normal state of most honest photos",
+    "finding": "absent",
+    "signal": "content_credentials"
+   },
+   {
+    "detail": "the metadata states 5712x4284 and the decoded image matches (orientation may swap the pair)",
+    "does_not_establish": "agreement is the normal state of untouched and competently exported files alike",
+    "establishes": "the file's description of its size agrees with the image it contains",
+    "finding": "consistent",
+    "signal": "dimensions_consistency"
+   },
+   {
+    "detail": "no bytes follow the end of the image data",
+    "does_not_establish": "a clean ending says nothing about the image data itself",
+    "establishes": "the file ends where its structure says it ends",
+    "finding": "none",
+    "signal": "trailing_data"
+   }
+  ],
+  "version": 1
+ },
+ "receipt_schema": 2,
+ "shadow": {
+  "coherence": 0.906807,
+  "feather_px": 4,
+  "mean_ratio": 0.772727,
+  "mode": "carried",
+  "reason": null,
+  "regions": [
+   {
+    "coherence": 0.967163,
+    "floor": 0.25,
+    "mean_ratio": 0.816792,
+    "pixels": 52624,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.838987,
+    "floor": 0.25,
+    "mean_ratio": 0.751671,
+    "pixels": 37264,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.956511,
+    "floor": 0.25,
+    "mean_ratio": 0.802046,
+    "pixels": 64752,
+    "side": "behind"
+   },
+   {
+    "coherence": 0.842316,
+    "floor": 0.25,
+    "mean_ratio": 0.715484,
+    "pixels": 59968,
+    "side": "behind"
+   }
+  ],
+  "rejected": [
+   {
+    "coherence": 0.721097,
+    "floor": 0.25,
+    "mean_ratio": 0.668678,
+    "pixels": 40272,
+    "reason": "incoherent shadow ratio: 72.1% of the region within 0.15 of the median 0.679 (minimum 75%)",
+    "side": "behind"
+   },
+   {
+    "coherence": 0.748494,
+    "floor": 0.25,
+    "mean_ratio": 0.687556,
+    "pixels": 21248,
+    "reason": "incoherent shadow ratio: 74.8% of the region within 0.15 of the median 0.698 (minimum 75%)",
+    "side": "behind"
+   }
+  ],
+  "shadow_pixels": 345377
+ },
+ "source_asset": "asset://94732bf75b094ff89c157fdec95186cf",
+ "source_pixel_sha256": "1492a4daa4936e5595a9e25633cb6572ca7bba4c5dc755a8bb10664e6df20db7",
+ "source_sha256": "2e767fa0805ccda18beb5de8206607993ee07691ed1d71a890f7276e6c006280",
+ "transformations": [],
+ "transparent_pixels": 19366865
+}

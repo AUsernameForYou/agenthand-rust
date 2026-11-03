@@ -1,0 +1,12 @@
+{
+  "asset_id": "4f1740f4ec3e493cbc380f97e49c7e8f",
+  "byte_size": 2528814,
+  "created_at": "2026-10-26T23:14:21.620338+00:00",
+  "filename": "4f1740f4ec3e493cbc380f97e49c7e8f.png",
+  "height": 1920,
+  "kind": "background_plate",
+  "pixel_sha256": "061d98dcb7aa55f03c36538b5409cd750ae06594f2d2f88b55eac978f63a29db",
+  "sha256": "03eb75bfb812326f9f2632cfbdf747775b4d664953c91205b80333d49be907a7",
+  "source_asset_id": null,
+  "width": 1280
+}

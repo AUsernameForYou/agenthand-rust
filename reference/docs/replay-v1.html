@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agenthand — cached replay of a real run</title>
+<meta name="description" content="A cached, honestly labelled replay of agenthand's verified 2026-10-26 run: recorded identify, cut_out, and draw calls, their assets, costs, and fidelity receipt. This page does not make a live call.">
+<link rel="icon" type="image/png" href="favicon-v1.png">
+<link rel="stylesheet" href="replay-v1.css">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <img src="logo-symbol-256-v1.png" width="256" height="173" alt="agenthand mark">
+    <span class="name">agenthand</span>
+    <nav>
+      <a href="index.html#proof">See the run</a>
+      <a href="index.html#verify">Verify</a>
+      <a href="https://github.com/AUsernameForYou/agenthand">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="replay-banner">
+    <p class="eyebrow">REPLAY OF A REAL RUN · NOT LIVE</p>
+    <h1>The recorded run, step by step.</h1>
+    <p>This page plays back the files, ledger lines, and receipt frozen from the verified run of 26 October 2026. It does not call the MCP server, a model, or an API. The verification you can run from the main page is separate: that check runs in your browser against these recorded files.</p>
+  </div>
+
+  <div class="run-strip" aria-label="Recorded run summary">
+    <div><span class="label">RECORDED</span><span class="value">2026-10-26</span></div>
+    <div><span class="label">TOOL CALLS</span><span class="value">3</span></div>
+    <div><span class="label">SETTLED COST</span><span class="value">$0.020044</span></div>
+    <div><span class="label">PIXELS CHECKED · CHANGED</span><span class="value">580,613 · <span class="zero">0</span></span></div>
+  </div>
+
+  <p id="replay-data-status" class="mono" role="status" aria-live="polite">Loading the versioned replay data…</p>
+
+  <div class="replay-stage" aria-label="Cached replay controls">
+    <span class="corner tl" aria-hidden="true"></span>
+    <span class="corner tr" aria-hidden="true"></span>
+    <span class="corner bl" aria-hidden="true"></span>
+    <span class="corner br" aria-hidden="true"></span>
+    <p class="readout" id="replay-readout">[ REPLAY · STEP 1 OF 3 · IDENTIFY ]</p>
+    <p>Use the controls to inspect each recorded call. “Play” only advances this cached presentation; it never starts a new run.</p>
+    <div class="controls">
+      <button type="button" data-replay-step="0" aria-pressed="true">1 · identify</button>
+      <button type="button" data-replay-step="1" aria-pressed="false">2 · cut_out</button>
+      <button type="button" data-replay-step="2" aria-pressed="false">3 · draw</button>
+      <button type="button" class="play" id="replay-play">Play the recording</button>
+    </div>
+
+    <article class="call-card active" data-replay-card id="replay-identify">
+      <p class="step-label">RECORDED CALL 1 · muse-spark-1.3 · CALL 0b2f6e0953374858b4a554438944c1f1</p>
+      <h2>identify</h2>
+      <div class="io-grid">
+        <div class="io-box">
+          <h3>Input</h3>
+          <ul>
+            <li>Source photo: <a href="proof-source-v1.png">proof-source-v1.png</a></li>
+            <li>Handle: <span class="mono">asset://e3f0428fbc5e43c7826959a9eecbda50</span></li>
+            <li>1206 × 1925 PNG · 644,137 bytes</li>
+            <li class="hash">file sha256 f3dc3c11e57a837d4dc11f28123dd250ca6cde6fb1e2eda9a88548dc6e7aa78b</li>
+          </ul>
+        </div>
+        <div class="io-box">
+          <h3>Recorded output</h3>
+          <p>The call produced the plan consumed by the cut_out chain. No standalone identify JSON was frozen in the replay package, so this page does not invent or reconstruct one.</p>
+          <p class="cost">Ledger: 3,159 input tokens (3,060 cached) · 1,638 output · settled $0.007544 · 9.079 s</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="call-card" data-replay-card id="replay-cut-out">
+      <p class="step-label">RECORDED CALL 2 · sam-3.1 · CALL bbdb8433ad30497b8e05d7baae490fcb</p>
+      <h2>cut_out</h2>
+      <div class="io-grid">
+        <div class="io-box">
+          <h3>Input</h3>
+          <ul>
+            <li>Source photo: <span class="mono">asset://e3f0428fbc5e43c7826959a9eecbda50</span></li>
+            <li>Concept: none given; the recorded chain used the planning step inside cut_out.</li>
+            <li>One image was recorded on the settled ledger line.</li>
+          </ul>
+        </div>
+        <div class="io-box">
+          <h3>Recorded output</h3>
+          <ul>
+            <li>Product layer: <a href="proof-layer-v1.png">proof-layer-v1.png</a><br><span class="mono">asset://b8663615419e40389f4e48dbd0e38698</span></li>
+            <li>Mask: <a href="proof-mask-v1.png">proof-mask-v1.png</a><br><span class="mono">asset://7dc19362be4c47abadac2edd7e69129e</span></li>
+            <li>Both are 1206 × 1925; the mask records 580,613 selected pixels.</li>
+            <li class="hash">layer file sha256 fba19fe69dbb10f4ee087177b4ae07c6c42440af9b77a0e97316bafba9704adf</li>
+            <li class="hash">mask file sha256 121a3f85f51067e848dfe776d57df83baece3c2369325ebf751354517a3e950b</li>
+          </ul>
+          <p class="cost">Settled $0.0025 · 11.299 s</p>
+        </div>
+      </div>
+    </article>
+
+    <article class="call-card" data-replay-card id="replay-draw">
+      <p class="step-label">RECORDED CALL 3 · muse-image-1.0 · CALL 85cb0449d4eb47e2a272525ae04f5302</p>
+      <h2>draw</h2>
+      <div class="io-grid">
+        <div class="io-box">
+          <h3>Input</h3>
+          <ul>
+            <li>Stored product layer: <span class="mono">asset://b8663615419e40389f4e48dbd0e38698</span></li>
+            <li>Scene prompt: supplied for the recorded call; its exact text was not frozen in the replay package.</li>
+            <li>The product layer itself was not sent to the image model; the model generated the background plate.</li>
+          </ul>
+        </div>
+        <div class="io-box">
+          <h3>Recorded output</h3>
+          <ul>
+            <li>Background plate: <a href="proof-plate-v1.png">proof-plate-v1.png</a><br><span class="mono">asset://4f1740f4ec3e493cbc380f97e49c7e8f</span></li>
+            <li>Final composite: <a href="proof-output-v1.png">proof-output-v1.png</a><br><span class="mono">asset://45deaf1acea14ab5839c641eee1cd277</span></li>
+            <li>Fidelity receipt: <a href="proof-receipt-v1.json">proof-receipt-v1.json</a></li>
+            <li class="hash">plate file sha256 03eb75bfb812326f9f2632cfbdf747775b4d664953c91205b80333d49be907a7</li>
+            <li class="hash">output file sha256 13b58a327820aa97e9aa306e861b9dd85c199d6a9ef5d53ea7755c3365a35451</li>
+          </ul>
+          <p class="cost">Ledger usage: 10,242 input tokens · 1,019 output · 1 image · settled $0.01 · 13.237 s</p>
+        </div>
+      </div>
+    </article>
+  </div>
+
+  <section aria-labelledby="assets-h">
+    <p class="section-title">Recorded assets</p>
+    <h2 id="assets-h">Every file the run left behind</h2>
+    <p class="lede">These are the frozen run's assets, published under versioned names. The images are evidence, not recreations.</p>
+    <div class="asset-grid">
+      <figure class="asset-card">
+        <a href="proof-source-v1.png"><img src="proof-source-v1.png" alt="Source photo from the recorded run" loading="lazy"></a>
+        <p class="kind">SOURCE PHOTO</p><p>1206 × 1925 · asset://e3f0428f…</p>
+      </figure>
+      <figure class="asset-card">
+        <a href="proof-mask-v1.png"><img src="proof-mask-v1.png" alt="Mask recorded by cut_out" loading="lazy"></a>
+        <p class="kind">MASK</p><p>1206 × 1925 · asset://7dc19362…</p>
+      </figure>
+      <figure class="asset-card">
+        <a href="proof-layer-v1.png"><img src="proof-layer-v1.png" alt="Stored product layer from the recorded run" loading="lazy"></a>
+        <p class="kind">PRODUCT LAYER</p><p>1206 × 1925 · asset://b8663615…</p>
+      </figure>
+      <figure class="asset-card">
+        <a href="proof-plate-v1.png"><img src="proof-plate-v1.png" alt="Generated background plate from the recorded run" loading="lazy"></a>
+        <p class="kind">BACKGROUND PLATE</p><p>1280 × 1920 · asset://4f1740f4…</p>
+      </figure>
+      <figure class="asset-card">
+        <a href="proof-output-v1.png"><img src="proof-output-v1.png" alt="Final composite from the recorded run" loading="lazy"></a>
+        <p class="kind">FINAL COMPOSITE</p><p>1206 × 1925 · asset://45deaf1a…</p>
+      </figure>
+    </div>
+  </section>
+
+  <section aria-labelledby="receipt-h">
+    <p class="section-title">Receipt</p>
+    <h2 id="receipt-h">The result, in the run's own record</h2>
+    <div class="panel grey">
+      <p><strong>580,613</strong> opaque product pixels checked · <span class="zero">0</span> changed · colour profile preserved · edge-band pixels 0.</p>
+      <p>The full JSON below is loaded from the same published receipt the browser verifier grades. It is not retyped into this page.</p>
+      <div class="downloads">
+        <a href="proof-receipt-v1.json">Raw receipt JSON</a>
+        <a href="replay-run-v1.json">Replay data JSON</a>
+        <a href="replay-ledger-v1.jsonl">Frozen ledger lines</a>
+        <a href="index.html#verify">Run the one-click verifier</a>
+      </div>
+    </div>
+    <pre class="receipt" id="replay-receipt">Loading the published receipt…</pre>
+  </section>
+
+  <section aria-labelledby="baseline-h">
+    <p class="section-title">Baseline</p>
+    <h2 id="baseline-h">Plain regeneration: not measured</h2>
+    <div class="panel" data-baseline-status="not-measured">
+      <p><span class="baseline-value">NOT MEASURED</span> — the frozen package contains no same-photo plain-regeneration run, so there is no honest baseline count to place beside Fidelity Lock's zero.</p>
+      <p>This slot stays blank until that separate run is recorded with its own files and provenance. No number has been inferred from the verified run.</p>
+      <!-- TODO(baseline-regeneration): replace this status only with a measured count from a separately recorded same-photo plain-regeneration run. Do not estimate or reuse the Fidelity Lock count. -->
+    </div>
+  </section>
+
+  <section aria-labelledby="limits-h">
+    <p class="section-title">Replay limits</p>
+    <h2 id="limits-h">What the freeze did not preserve</h2>
+    <div class="panel">
+      <ul>
+        <li>The standalone identify JSON output was not frozen.</li>
+        <li>The exact draw scene-prompt text was not frozen.</li>
+        <li>The page therefore shows the recorded handles, assets, ledger usage, costs, and receipt without reconstructing those two payloads.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><strong>agenthand</strong> · Cached replay of the verified 2026-10-26 run. The run was real; this presentation is a recording, not a new call.</p>
+  </div>
+</footer>
+
+<script src="replay-v1.js" defer></script>
+</body>
+</html>
