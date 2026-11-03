@@ -346,6 +346,7 @@ fn draw_plate_mode_resolution() {
     );
     assert!(backdrop::resolve_draw_plate(Some("bogus")).is_err());
     if std::env::var_os("AGENTHAND_DRAW_PLATE").is_none() {
-        assert_eq!(backdrop::resolve_draw_plate(None).unwrap(), "source_edit");
+        // Decision 135: the generated listing scene is the default.
+        assert_eq!(backdrop::resolve_draw_plate(None).unwrap(), "generated");
     }
 }

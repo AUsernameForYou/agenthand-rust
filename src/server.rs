@@ -1089,7 +1089,7 @@ fn angle_lock_json(angle: &staging::AngleEstimate, clause: &str) -> Value {
 
 /// draw: returns (result, preview PNG bytes) — Python returns
 /// [result, Image]; the JSON-RPC layer renders both. The plate mode
-/// comes from `AGENTHAND_DRAW_PLATE` (default `source_edit`).
+/// comes from `AGENTHAND_DRAW_PLATE` (default `generated`).
 pub fn tool_draw(asset: &str, scene_prompt: &str) -> Result<(Value, Vec<u8>), String> {
     tool_draw_with_plate(asset, scene_prompt, None)
 }
@@ -1388,13 +1388,13 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "draw",
-            "description": "Stage the real product in a cleaned-up version of its own photo. Fidelity Lock applies. By default (plate source_edit) the original photo is sent to muse-image-1.0's edit mode with the product region removed and filled from its surroundings, so the plate keeps the photo's camera angle, ground and light; the product stays at its original position and scale, its pixels are never sent to the image model, and a contact shadow and 1-2 px edge matte are drawn on the plate around it. If the edit call fails, a code-only plate (the masked photo, filled, blurred and brightened) stands in and the result says so. plate generated keeps the legacy text-only scene. Any subject works, surfaces included; a subject that fills the frame keeps its pixels and only its surroundings change. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
+            "description": "Stage the real product in an upgraded listing scene. Fidelity Lock applies. By default (plate generated) muse-image-1.0 draws the scene from the scene text, steered to the photo's camera angle and light; the product stays at its original position and scale and its pixels are never sent to the image model. plate source_edit instead sends the original photo to the edit mode with the product region removed and filled from its surroundings, keeping the photo's own ground and light; if that edit call fails, a code-only plate stands in and the result says so. Any subject works, surfaces included; a subject that fills the frame keeps its pixels and only its surroundings change. Returns the composite's asset handle, its fidelity receipt, and an image preview. Also returns a verify_qr sidecar asset (a QR encoding the receipt's public verify URL) and a ready-to-paste disclosure label naming that URL; the QR is a separate asset, never composited into the photo. A measured changed-opaque-pixel count other than zero (or a lost colour profile) returns a FIDELITY_VIOLATION error instead of a false receipt.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "asset": {"type": "string", "description": "Asset handle (asset://<id>) of the cut-out product layer produced by cut_out."},
                     "scene_prompt": {"type": "string", "description": "Description of the scene to generate around the product (styling only in source_edit mode; the photo's geometry is kept)."},
-                    "plate": {"type": "string", "enum": ["source_edit", "generated"], "description": "How the plate is built: source_edit (default; the original photo with the product removed, edited in place) or generated (legacy text-only scene)."}
+                    "plate": {"type": "string", "enum": ["source_edit", "generated"], "description": "How the plate is built: generated (default; the upgraded listing scene) or source_edit (the original photo with the product removed, edited in place)."}
                 },
                 "required": ["asset", "scene_prompt"]
             }

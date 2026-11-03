@@ -19,10 +19,11 @@
 //! the gradient is evaluated per pixel with a smoothstep falloff).
 //!
 //! draw's own plate choice lives here too (`resolve_draw_plate`):
+//! `generated` (the default since decision 135) is the upgraded
+//! listing scene, a text-prompted plate receipted as `model_generated`;
 //! `source_edit` builds the plate from the original photo (see
 //! `staging`), receipted as plate kind `source_edit`, or `source_blur`
-//! when the edit call failed and the code-only plate stood in;
-//! `generated` keeps the legacy text-only plate (`model_generated`).
+//! when the edit call failed and the code-only plate stood in.
 
 use serde_json::{json, Value};
 
@@ -216,10 +217,14 @@ pub fn is_backdrop_mode(stage_mode: &str) -> bool {
 
 /// draw plate mode: build the plate from the original photo.
 pub const DRAW_PLATE_SOURCE_EDIT: &str = "source_edit";
-/// draw plate mode: the legacy text-only generated scene.
+/// draw plate mode: the generated listing scene (text-prompted plate).
 pub const DRAW_PLATE_GENERATED: &str = "generated";
+/// The plate mode a draw uses when neither the call nor
+/// `AGENTHAND_DRAW_PLATE` names one (decision 135: the upgraded
+/// listing scene; it was `source_edit` before).
+pub const DRAW_PLATE_DEFAULT: &str = DRAW_PLATE_GENERATED;
 /// Every draw plate mode, default first.
-pub const DRAW_PLATE_MODES: [&str; 2] = [DRAW_PLATE_SOURCE_EDIT, DRAW_PLATE_GENERATED];
+pub const DRAW_PLATE_MODES: [&str; 2] = [DRAW_PLATE_GENERATED, DRAW_PLATE_SOURCE_EDIT];
 
 /// Receipt plate kind: Muse Image edit of the item-masked original.
 pub const PLATE_KIND_SOURCE_EDIT: &str = "source_edit";
@@ -228,14 +233,15 @@ pub const PLATE_KIND_SOURCE_EDIT: &str = "source_edit";
 pub const PLATE_KIND_SOURCE_BLUR: &str = "source_blur";
 
 /// The plate mode for one draw call: the call's own `plate` argument,
-/// else `AGENTHAND_DRAW_PLATE`, else `source_edit`. Unknown values
-/// refuse (no silent fallback to a different staging method).
+/// else `AGENTHAND_DRAW_PLATE`, else `DRAW_PLATE_DEFAULT` (`generated`).
+/// Unknown values refuse (no silent fallback to a different staging
+/// method).
 pub fn resolve_draw_plate(requested: Option<&str>) -> Result<&'static str, String> {
     let env = crate::config::get_draw_plate_mode();
     let raw = match requested.map(str::trim).filter(|s| !s.is_empty()) {
         Some(value) => value.to_string(),
         None if !env.is_empty() => env,
-        None => return Ok(DRAW_PLATE_SOURCE_EDIT),
+        None => return Ok(DRAW_PLATE_DEFAULT),
     };
     DRAW_PLATE_MODES
         .iter()
