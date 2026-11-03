@@ -57,6 +57,7 @@ All distances are chessboard distances in source pixels. All work happens inside
      - it links to an accepted window across gaps of at most 14 px (a spoke or another thin line in between). Linking is transitive: the accepted windows and the window cells are each grown by 7 px and labelled together;
      - **pocket guard:** less than half of it lies in a pocket of solid kept parts. Solid kept parts are kept structure, dense line work (thin pixels with at least 60% thin pixels in the 25x25 box around them: a chain, reflector prisms) and the outer band, opened with the thin square so spokes drop out. Pockets are what a closing with a square of 0.42% of the bbox diagonal (24 px on IMG_1443) adds to them. The cog between the rear chain and the dropout is such a pocket and stays.
    - **Release.** Windows are released whole, colour-proven or not. They join the carve after the line release and the specks below, which judge only the colour-proven windows. So a background-coloured spoke, a spoke nipple or a chain plate next to a completed window keeps the status the colour-only carve gave it.
+4d'. **Faint lines** (computed with the thin structures, used by 4e and 4f). A metal spoke in shadow over shaded paving sits under the thin contrast floor, and a light spoke over paving can fail the colour test; the completion then released it with its cell and the spoke read torn. Faint lines are raw line work at the thin floor whatever its colour, plus bright line work (top-hat at least 14) over a dark local background (luma opening at most 90), where at most 45% of the 25x25 box around a pixel is line work (both polarities counted, so rough shade and texture fail), in components at least as long as a thin line. The completion and the strip step do not open them; the colour-proven carve is unchanged. A dark band in shade is not bright, so paver joints still release.
 4f. **Strips** (`release_strips`, after the completed windows join). Colour cannot tell a paver joint in shade from the tyre, so the completion keeps dark joint bands across the windows. Kept interior pixels (deeper than the depth floor, in a carved component, not thin line work, not pale) form the strip set when they are narrower than a square of 0.37% of the bbox diagonal (43 px on IMG_1443) and their core survives an opening of 0.09% of diag (11 px; a spoke in shade is narrower and stays).
    - A strip whose border is at least 60% released windows is released. It is part of the completion, so `AGENTHAND_HOLE_COMPLETE=off` turns it off.
    - **Spoke bridges:** a released strip pixel goes back to the product when a straight line through it (16 directions) leaves the strip within three times the width square on both sides and then runs through at least 12 kept pixels on both sides: a spoke crossing the joint.
@@ -104,6 +105,7 @@ All thresholds are `pub const` in src/segmentation.rs.
 | `CARVE_STRIP_CORE_MIN_PX` / `_DIAG_FRAC` | 2 / 0.0009 | strip core opening |
 | `CARVE_STRIP_RELEASE_FRAC` / `_RESIDUE_FRAC` | 0.6 / 0.3 | released-window share of a strip's border: release / count as residue |
 | `CARVE_STRIP_BRIDGE_CONTINUE_PX` | 12 | spoke bridge: kept run beyond the strip on both sides |
+| `CARVE_FAINT_CONTRAST` / `_MAX_BG_LUMA` / `_MAX_DENSITY` | 14 / 90 / 0.45 | faint lines: bright line contrast over a dark background, line density limit |
 | `CARVE_PALE_MIN_LUMA` / `_MAX_CHROMA` | 120 / 50 | pale pixels |
 | `CARVE_PALE_KEPT_FRAC` / `_SOLIDITY` | 0.6 / 0.7 | pale part: kept share, share of its convex hull |
 | `CARVE_PALE_SPOKE_JOIN_MIN_PX` / `_DIAG_FRAC` | 1 / 0.0014 | pale pieces joined across a spoke |
@@ -183,16 +185,16 @@ Why 10%. Remainder fractions measured offline:
 
 | Photo / mask | Completion on | Colour-only carve (completion off) |
 |---|---|---|
-| IMG_1443, run-1443-fixed mask | 7.72% | 51.4% |
-| IMG_1443, 19:06 recorded take mask | 7.84% | 52.4% |
-| IMG_1443, run-1443-merged mask | 7.67% | 51.2% |
-| IMG_1443 (older decode), box-fixed mask | 3.85% | 37.5% |
+| IMG_1443, run-1443-fixed mask | 7.33% | 51.1% |
+| IMG_1443, 19:06 recorded take mask | 7.46% | 52.1% |
+| IMG_1443, run-1443-merged mask | 7.37% | 50.9% |
+| IMG_1443 (older decode), box-fixed mask | 3.87% | 37.5% |
 | P12 blue bike frame (1920x1080) | 2.83% | 14.2% |
 
 The pocket guard keeps cells such as the cog, and the strip residue (joints that step 4f does not release) counts too, so the hero values rose from about 3% to about 7.8%. The largest passing value is 7.84% and the smallest failing value is 14.2%. A 10% limit leaves 2.2 points (1.3x) of margin on the hero photo. The residue term does not yet separate a round-2 style output (no strip release) from round 3: emulated, it reads about 9%, under the limit. P12 barbecue, P12 patio set, both P18 jacket masks, the P17 card and both P16 car frames do not apply the carve, so the gate does not apply to them.
 
 ## Evidence
-`tests/hole_carve.rs` (`cargo test --release --test hole_carve`) has 12 tests plus 1 opt-in.
+`tests/hole_carve.rs` (`cargo test --release --test hole_carve`) has 13 tests plus 1 opt-in.
 
 | Test | Asserts |
 |---|---|
@@ -206,6 +208,7 @@ The pocket guard keeps cells such as the cog, and the strip residue (joints that
 | `completion_kill_switch_keeps_the_colour_proven_carve` | `AGENTHAND_HOLE_COMPLETE` off / OFF / 0 / false / no: the colour-only mask and record, completion disabled, gate still measured; unset or "on": the completed carve; `AGENTHAND_HOLE_CARVE=off` still returns the identical input mask |
 | `reflector_and_bolt_stay_product_inside_a_completed_wheel` | A pale, prism-textured plate with a brass bolt between two spokes, half over sun and half over the shade of the shaded wheel: 0 plate and 0 bolt pixels released, the shade still completes, spokes kept, gate passes |
 | `dark_joint_band_releases_while_spokes_reflector_and_bolt_stay` | A straight non-radial band 12 px wide (about 5% of the rim radius) darker than the shade, across the shaded wheel with the reflector plate: at least 60% released (measured 70%; the rest is fringe beside spokes and the ends below the depth floor), spokes in the band and overall kept, reflector and bolt 0 released, gate passes; with the completion off the band counts as strip residue |
+| `dim_spokes_in_the_shade_stay_continuous` | Smooth shade with the spokes in it dimmed to about 20 levels above it (under the thin floor): every spoke's centre line kept through the shade (longest gap at most 2 px, at least 13 px from the shadow edge), at least 90% of shaded spoke px kept, the shade still completes |
 | `gate_refuses_a_partial_open_frame_carve_with_a_retake` | The colour-only carve of the shaded wheel fails the gate (40% remainder); `hole_carve_gate_refusal` returns `HOLE_CARVE_INCOMPLETE` with the remainder numbers, three retake changes and the operator override. The completed carve, the sunlit wheel and a carve that did not apply return no refusal |
 | `real_fixture` (`#[ignore]`) | real cut_out: writes `bike_carve_record.json`, `mask_carved.png` and `bike_carve_before_after.jpg` |
 
@@ -239,6 +242,7 @@ With the completion pass and both guards (same fixture):
 - **Background the inside model calls product stays.** The completion releases shaded background the colour test could not prove, but a pixel the second colour model proves product is kept structure. On IMG_1443 the darkest paver joints in the lower front wheel stay as dark lines across the window, and the synthetic test leaves about 22% of its shade (a band next to the shadow edge). The gate counts unreleased open cells, not structure, so it does not see this residue.
 - **Dark parts are protected by shape only.** The pocket guard keeps the cog because the chain and the dropout enclose it. A dark product part that no solid part encloses (a dark sticker on a shaded window) has no colour evidence against the shade and can be completed. The pocket guard also keeps about 8,000 px of small background slivers on IMG_1443 (next to the dropout, the front hub nut and the rim).
 - **Pale parts only.** The pale-part guard covers pale, compact parts (reflectors, light plates). A brass part on its own is not covered; on a reflector the hull covers it.
+- **Spokes grazing a shadow edge.** A spoke whose shaded run lies within one line square (13 px) of the shadow edge sits in the edge's own line contrast, fails the density limit and is not a faint line; the completion can still release it. Faint lines need smooth shade: in rough shade the density limit rejects them.
 - **Wide joints and shaded patches can stay.** Step 4f releases joint bands up to about 43 px wide on IMG_1443 (17,123 px in the front wheel's lower sector). The upper horizontal joint in the front wheel is wider and stays as a dark bar, as do parts of the lower and vertical joints next to spokes and below the depth floor. Raising the width limit would let the fork (about 70 px) qualify; telling them apart needs the wheel's hub (spoke convergence), which is not implemented. Shaded patches in the rear wheel's lower right sector and behind the frame tubes are not linked to an accepted window and stay. The gate counts strip residue (31,827 px on IMG_1443) but not these patches.
 - **Windows behind the frame.** Cells separated from every accepted window by a frame tube (over 14 px) are not linked and stay. On IMG_1443, 78,585 px of open cells in the rear wheel are unlinked or below the cell floor; most lie between the chainstay and the seat stay.
 - **Window size.** Spaces between spokes narrower than about 13 px, or under the cell floor, are left. The very centre of a dense spoke cross, near the hub, usually stays.

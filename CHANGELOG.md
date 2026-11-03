@@ -79,9 +79,18 @@
   upper joint and the rear shade patches remain (docs/HOLE-CARVE.md
   Limits). Record: completion.strip_pixels, strip_cells,
   spoke_bridge_pixels; gate.strip_pixels, strip_residue_pixels.
-- Tests: five new tests in `tests/hole_carve.rs` (shaded wheel
+- **Faint lines** (review round 4). Muse's acceptance draw showed spokes
+  torn where completed windows meet them: in shade a metal spoke is under
+  the thin contrast floor, so the completion released it with its cell.
+  Bright line work over a dark background (top-hat >= 14, opening <= 90)
+  and line work the colour test called texture, where the line density
+  stays under 45%, is now kept by the completion and the strip step.
+  IMG_1443: 2,881 px of spoke returned, nothing newly carved; gate 7.33% /
+  7.46%. Known limit: spokes grazing a shadow edge. The upper front joint
+  bar and the rear lower-right shade patches remain.
+- Tests: six new tests in `tests/hole_carve.rs` (shaded wheel
   completed, completion kill switch, gate refusal, reflector and bolt
-  kept, dark joint band released).
+  kept, dark joint band released, dim spokes continuous).
 - **Pocket guard and pale-part guard** (review round 2). The completion
   had released the rear cog between the chain and the dropout (17,640
   px) and the rear reflector's bolt; the colour-only carve already frayed
