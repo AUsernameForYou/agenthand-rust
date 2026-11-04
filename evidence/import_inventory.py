@@ -198,6 +198,7 @@ def main():
     take_idx = row_by_label("Recorded hero take (screen recording, build 380eff0)")
     fill_idx = row_by_label("P13 open-house fill run (two placed items on IMG_1408 canvas)")
     suitcase_idx = row_by_label("Suitcase still chain (Oct 28 room run)")
+    w5_idx = row_by_label("Hero re-cut v109 two-zone (W5 hybrid)")
 
     required = {
         "hero": hero_idx,
@@ -205,6 +206,7 @@ def main():
         "take": take_idx,
         "fill": fill_idx,
         "suitcase": suitcase_idx,
+        "w5": w5_idx,
     }
     assert all(v is not None for v in required.values()), \
         f"inventory labels changed; missing claim-seed rows: {required}"
@@ -335,6 +337,24 @@ def main():
                            "settle_over_the_cap_is_recorded_and_fails_loudly_in_both_stores"),
             "criterion": "Technical Depth & Execution",
             "row_idx": None,
+        },
+        {
+            "text": ("Two-zone hero (IMG_1443, decisions 143/145): proof core "
+                     "4,053,953 pixels checked, 0 changed; repair margin 381,802 px "
+                     "rebuilt and counted (138,892 verbatim spokes, 139,525 "
+                     "unmixed-kept, 1,055 drawn fill, 102,330 released)."),
+            "status": "verified",
+            "scope_photo": "IMG_1443",
+            "scope_build": rows[w5_idx].get("build"),
+            "scope_date": rows[w5_idx].get("date"),
+            "reason": ("Scope is the v109 two-zone rebuild only: its receipt checks "
+                       "the eroded proof core, and the repair margin is disclosed as "
+                       "counts, never as verbatim pixels. Claim 1 covers the earlier "
+                       "whole-product receipt for the same photo; the two receipts "
+                       "measure different zones and never merge."),
+            "source_url": "film-assets/P25-UPGRADE-VARIANTS/bike-v109-twozone/note.txt",
+            "criterion": "Technical Depth & Execution",
+            "row_idx": w5_idx,
         },
     ]
 

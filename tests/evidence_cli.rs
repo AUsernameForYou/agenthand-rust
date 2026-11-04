@@ -54,7 +54,7 @@ const ROOT_3: &str = "504087b93537f119205c70fe5d74f6a1e882f0a1bb3130861e15e3ce57
 
 /// Receipts root of the real evidence.db (29 hashed receipts), as
 /// import_inventory.py stored it and verify_db.py recomputes it.
-const REAL_ROOT: &str = "54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e";
+const REAL_ROOT: &str = "1179530968c27879e3d84aa5475998a475cba64ba5b95f1823a8e7310174ecc3";
 
 fn sha_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -1118,7 +1118,7 @@ fn database_location_comes_from_env_or_fails_clearly() {
     assert_eq!(unknown.code, 2);
 }
 
-/// The real evidence database with its 29 receipt files. Run in a repo
+/// The real evidence database with its 30 receipt files. Run in a repo
 /// that ships them (`<repo>/evidence/evidence.db` and
 /// `<repo>/evidence/receipts/<id>.json`; set AGENTHAND_EVIDENCE_BASE if
 /// the receipts live elsewhere):
@@ -1138,7 +1138,7 @@ fn real_evidence_db_reaches_overall_pass_and_its_root() {
     assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
     assert!(
         o.stdout
-            .contains("OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))"),
+            .contains("OVERALL: PASS (30 re-hashed, 0 skipped, 0 failing line(s))"),
         "{}",
         o.stdout
     );
@@ -1146,6 +1146,6 @@ fn real_evidence_db_reaches_overall_pass_and_its_root() {
     assert_eq!(r.code, 0, "{}{}", r.stdout, r.stderr);
     let v: serde_json::Value = serde_json::from_str(&r.stdout).unwrap();
     assert_eq!(v["receipts_root"], REAL_ROOT);
-    assert_eq!(v["rooted_receipts"], 29);
+    assert_eq!(v["rooted_receipts"], 30);
     assert_eq!(v["stored_receipts_root"], "matches");
 }

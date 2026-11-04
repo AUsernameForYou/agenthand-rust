@@ -1,6 +1,6 @@
 {
  "generated_from": "local package files only (no API, no tracker DB)",
- "row_count": 34,
+ "row_count": 35,
  "rows": [
   {
    "label": "Frozen offline replay (live run frozen 2026-10-26)",
@@ -888,6 +888,31 @@
    ],
    "notes": null,
    "receipt_sha256": "db96bd7c3e6d7265b8c066f5e0987e9fb9f20ae80e7e5e87bcc65052ede957b5"
+  },
+  {
+   "label": "Hero re-cut v109 two-zone (W5 hybrid)",
+   "date": "2026-11-02",
+   "build": "752a6af chain; two-zone rebuild local (Rust unmix-cf solver + step8_w5.py); consolidation HEAD a148586",
+   "item": "Blue kids BMX bike (IMG_1443)",
+   "identify_model": null,
+   "identify_cost_usd": null,
+   "cut_out_model": null,
+   "cut_out_mask_px": null,
+   "cut_out_cost_usd": null,
+   "draw_model": null,
+   "draw_mode": null,
+   "draw_cost_usd": null,
+   "receipt_checked_px": 4053953,
+   "receipt_changed_px": 0,
+   "verify_result": "PASS",
+   "verify_by": "verify-w5.json measured on the final PNG: proof core 4,053,953 px 100% byte-identical to the pass-2 foreground; 0 differing px outside the disc interiors",
+   "total_settled_usd": 0.0,
+   "package_path": "film-assets/P25-UPGRADE-VARIANTS/bike-v109-twozone/",
+   "receipt_file": "film-assets/P25-UPGRADE-VARIANTS/bike-v109-twozone/verify-w5.json",
+   "source": "hero-spokes-rebuild/RESULT-W5.md; hero-spokes-rebuild/verify-w5.json (copied into the package as verify-w5.json); wheel-band-prototype/RESULT-pass2.md; connector ledger v108 chain",
+   "flags": [],
+   "notes": "Two-zone rebuild (decisions 143/145) of the v108 hero: base composite = pass-2 cleaned foreground (band release) over the v108 draw-C courtyard plate; wheels rebuilt by closed-form matte + line-coherence veto + gated drawn fill (hero-spokes-rebuild/step8_w5.py). Incremental settled cost $0 (local compute only); the underlying v108 fresh chain settled $0.049569 (identify d3a87fd8 $0.010012 + identify ddaa1beb $0.007057 + cut_out 552f1cf9 $0.0025 + draws 9be89b6c/b4ad5abd/b60c3af7 $0.01 each) and is recorded in the package note, not in this row's calls, so nothing double-counts. Repair split over the 381,802 px repair zone: 138,892 verbatim spokes + 139,525 unmixed-kept + 1,055 drawn fill + 102,330 released bare; drawn fill also covers 34,118 sightline px inside the margin. The receipt checks the proof core only; the repair zone is counted and disclosed, never claimed verbatim.",
+   "receipt_sha256": "c2d82995876539b333c46e8cbfe72bbf9c8607e1fb510b42e7a157b1b928a234"
   }
  ]
 }
