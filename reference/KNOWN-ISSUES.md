@@ -37,3 +37,12 @@ edited to make a check pass. Defects in it are disclosed beside it, like
 this, and fixes land in the living code. Editing the snapshot to turn these
 4 tests green would break the byte-honesty the conformance story rests on,
 and the green would prove nothing about the product.
+
+## A note on names in the snapshot's build log
+
+The snapshot's BUILD_LOG.md and a few test comments mention Grok. Grok was
+one of the review tools consulted during development. It is not part of the
+shipped product, was never called by it at runtime, and appears nowhere in
+the Rust tree, the README, or the docs. The snapshot is left exactly as
+frozen, per the rule above, so the mention is disclosed here instead of
+edited out.
