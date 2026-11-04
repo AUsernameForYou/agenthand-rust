@@ -29,7 +29,7 @@ never drawn by hand.
   rendered.
 - No keys needed: `conformance/` holds a frozen offline replay of a
   real run (580,613 pixels checked, 0 changed) that verifies locally.
-- Receipts root: `54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`
+- Receipts root: `1179530968c27879e3d84aa5475998a475cba64ba5b95f1823a8e7310174ecc3`
   — one hash pins the whole evidence set; recompute it with
   `agenthand evidence root` and compare.
 

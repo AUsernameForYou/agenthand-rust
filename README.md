@@ -37,7 +37,7 @@ run you can re-check yourself.
 | Impact (30%) | [Impact](#impact) | A real room run staged six real items: 352,597 product pixels checked, 0 changed |
 | Use of Meta AI tooling (25%) | [Use of Meta AI tooling](#use-of-meta-ai-tooling) | Every runtime model is a Meta model, and the open-weight one does real work |
 | Demo (25%) | [Demo](#demo) | Every moment of the demo film traces to a claim in the Proof Graph |
-| Technical Depth and Execution (20%) | [Technical Depth and Execution](#technical-depth-and-execution) | Two builds ran one frozen proof run and agreed exactly: 580,613 pixels checked, 0 changed |
+| Technical Depth and Execution (20%) | [Technical Depth and Execution](#technical-depth-and-execution) | Two builds ran one frozen proof run and agreed exactly: 580,613 pixels checked, 0 changed. Architecture chosen on measured evidence: see "Paths we explored" under Technical Depth and Execution |
 
 To run it, go to [Install](#install). To check the claims with no
 API key at all, the frozen replay in `conformance/replay-package/`
@@ -261,6 +261,58 @@ Ranges are min–max across the three runs, never a single run. The
 baseline is this model's edit mode, measured as a method, not a
 tested third-party tool.
 
+### Riding the model curve
+
+![The same blue bike, staged two ways](docs/images/hero-bike-v109.jpg)
+
+**Through agenthand, on the Meta models this MCP calls.** A real photo of
+the seller's bike, staged with the two-zone rule: the core is byte-identical
+to the source photo, the margin and the spokes are rebuilt and counted, and
+the run carries a receipt in the Proof Graph.
+
+![The same bike, rendered by a general image model](docs/images/bike-look-locked-b2.jpg)
+
+**Rendered with a general-purpose image model** (an edit of our own
+composite, made while art-directing this project). **Not an agenthand
+output.** It is the prettier picture, and we kept it as our look target.
+Nothing in it is receipted, and the same class of model melted this bike's
+wheels on another take.
+
+A general image model out-paints the Meta runtime models today. Given the
+same bike, it grounds the tires, matches the light, and fills a courtyard
+the way the second picture does. agenthand's runtime stays Meta-only, by
+the hackathon rules and by our choice, so its plates are plainer for now.
+We say that in the open because the gap is real, and because we spent a
+large share of this build trying to close it with the allowed tools:
+
+- **Model edit of the whole staged bike.** The prettiest path, and dead on
+  arrival: the model repainted the wheels and the spokes melted.
+- **Code-drawn spokes over the real cut.** Fully provable and visibly fake.
+  It stayed in the project as the control everything else is measured
+  against.
+- **Frequency suppression.** Recovered genuine spoke pixels from the photo
+  itself, 138,892 of them, and still read wrong to the eye. It proved the
+  real pixels were there to recover.
+- **Per-pixel unmixing, closed-form matting.** Recovered more of the real
+  wheel and fed the shipped hybrid: real pixels wherever the photo allows
+  them, drawn fill only where it does not, every drawn pixel counted in
+  the margin.
+- **Angle and surface redraws.** Round after round of scene steering, then
+  measured fine-tuning (vanishing point, shadow direction, contact band)
+  to seat a flat-lay product in a generated room without the floating read.
+- **Background-only repaint of the source photo.** Killed by the API
+  itself. The edit endpoint accepts no mask parameter, so the model can
+  never be handed the background alone; the camera geometry is inherited
+  and the new room is always a re-skin of the seller's own room.
+
+The proof is ours. The product in an agenthand photo is the seller's actual
+product, accounted for pixel by pixel, with a receipt anyone can re-check.
+That layer has nothing to do with which model painted the room, and it
+never has to change. The whole MCP is a bet placed on top of it: every
+Meta tool behind one server, so as Meta's models improve, every install
+of agenthand gets better pictures for free, proof intact. We built the
+harness. The models bring the curve.
+
 ## Demo
 
 **Every claim in the demo film traces to a receipt.** The film
@@ -349,7 +401,11 @@ implementation in Rust. Both were run against the same frozen proof
 run and measured side by side. The two builds agree exactly: same
 output pixel hash (sha256 8b8defea…e802), same count (580,613 opaque
 pixels checked, 0 changed), and the same total billed cost, $0.020044
-to the micro-dollar. What differs is how fast the local work runs:
+to the micro-dollar. The interface both builds speak is written down
+once, in `spec/interface.schema.json`, and a shared differential
+fixture (`tests/fixtures/interface/`) runs in both test suites: one
+written contract, two independent implementations, both tested
+against it. What differs is how fast the local work runs:
 
 | Operation | Python | Rust |
 |---|---|---|
@@ -373,6 +429,53 @@ The vectors carry independently computed expected outputs for boundary
 cases, so the builds are checked through differential testing against
 the same conformance suite.
 
+### Paths we explored
+
+agenthand ships as two independent builds of the same tool: a Rust build and
+a Python build, written separately, each checking the other's output.
+Where they disagree, that is a defect, and the pair is the quality control.
+Before settling on that shape we built and measured three alternatives.
+
+**Differential Conformance Suite.** We declared the tool interface
+once, as a schema, and loaded shared test vectors into both test
+suites. The vectors carry independently computed expected outputs, so
+each build is checked through differential testing against the same
+conformance suite. In a seeded-drift test the suite caught all seven
+planted divergences; the original suites had caught one. It also found
+two real divergences nobody had planted: a Python rounding function in
+receipt provenance that rounded ties the wrong way, and a Rust verifier
+that accepted a stripped receipt the Python verifier rejects. Both are
+fixed in this submission, and the suite ships with it, so the fixes
+stay pinned.
+
+**A generated seam.** We also built the stronger version: generate both
+builds' surface code from a single declaration, so the surfaces cannot
+drift by construction. That experiment was built in a silo, separate from
+the shipping trees. Measured there, the seam build ran its full suites
+green (Rust 412 passed / 0 failed, Python 584 passed / 0 failed) with
+the frozen replay bit-identical, and it caught surface drift
+exhaustively; it also structurally missed the one value-level
+divergence above, which only the conformance suite's test vectors
+caught. We did not adopt it for this submission. The
+suite above bought the measured drift protection for a fraction of the
+machinery, and a generated seam shares the fault space it generates: when
+the generator is wrong, both builds are wrong together, in the same way,
+silently. It stays on the list as the first upgrade candidate after this
+submission.
+
+**Three smaller lanes, one line each.** A transpiler that would emit both
+builds from one source: rejected, apart from a few small decision tables
+worth keeping. A WebAssembly component build of the Rust core: it works,
+and nothing in the product needs it yet. A seam design study: the
+inventory and design that fed the generated-seam experiment above.
+
+Why we landed here: independence is the verification mechanism, so any
+design that shares code between the builds spends the thing that makes the
+pair worth having. Where a cheaper instrument measured the same
+protection, we took the cheaper instrument. The results above, including
+the ones that made our own suites look bad, are the reason the submission
+is shaped the way it is.
+
 ### It reads photos
 
 The Rust build decodes HEIC itself (no decoding library), and on
@@ -388,6 +491,17 @@ against the decoder (the M5 robustness pass: 1,520 mutations of
 defects were fixed) produced 0 panics, 0 hangs, and 0 aborts; a
 decoder fault is contained at the ingest boundary as an ordinary
 error.
+
+### A note on photo uploads
+
+One gap sits outside agenthand's control. Photos attached in Muse
+are re-encoded on upload, and the shot angle is stripped in that
+re-encode, so a photo that arrives through a chat upload carries no
+record of how it was shot. agenthand therefore measures the angle
+from the image itself. The author has filed a feature request with
+the Muse team asking Muse to pass the camera capture angle and
+full photo metadata through with uploads, so tools like agenthand
+can use how a photo was shot instead of re-measuring it.
 
 ### A real fidelity receipt
 
@@ -500,359 +614,368 @@ flowchart LR
   n5["claim:6<br/>The estimator measured a fence-height extent of ..."]
   n6["claim:7<br/>estimator-refusal-1403: The hardened estimator r..."]
   n7["claim:8<br/>f5-overcap: An over-cap settle is recorded over_..."]
-  n8["run:1<br/>Frozen offline replay (live run frozen 2026-10-2..."]
-  n9["run:6<br/>Hero run IMG_1443 (final Rust master, hole-carve..."]
-  n10["run:3<br/>Hero run IMG_1443 (merged build)"]
-  n11["run:2<br/>Hero run IMG_1443 (rev-5 packaged build)"]
-  n12["run:33<br/>Jacket full chain on IMG_1491 (reshoot)"]
-  n13["run:4<br/>Look-test draw on hero cutout (logo sign scene t..."]
-  n14["run:10<br/>P12 merged keep-path steps: barbecue (identify +..."]
-  n15["run:8<br/>P12 merged re-run: blue bike (SELL)"]
-  n16["run:9<br/>P12 merged re-run: patio furniture (SELL)"]
-  n17["run:17<br/>P13 dream draw (patio set foreground, imagined b..."]
-  n18["run:19<br/>P13 merged dream draw"]
-  n19["run:18<br/>P13 merged-build rebuild (same canvas and placem..."]
-  n20["run:16<br/>P13 open-house fill run (two placed items on IMG..."]
-  n21["run:20<br/>P24 premium draw A: studio backdrop"]
-  n22["run:21<br/>P24 premium draw B: golden-hour driveway"]
-  n23["run:28<br/>P25 suitcase variants: mask differs from the Oct..."]
-  n24["run:30<br/>P25 upgrade variant (bike-v102): A"]
-  n25["run:31<br/>P25 upgrade variant (bike-v102): B"]
-  n26["run:32<br/>P25 upgrade variant (bike-v102): C"]
-  n27["run:29<br/>P25 upgrade variant (bike-v102): tidy"]
-  n28["run:22<br/>P25 upgrade variant (first set): bike A"]
-  n29["run:23<br/>P25 upgrade variant (first set): bike B"]
-  n30["run:24<br/>P25 upgrade variant (first set): bike C"]
-  n31["run:25<br/>P25 upgrade variant (first set): suitcase A"]
-  n32["run:26<br/>P25 upgrade variant (first set): suitcase B"]
-  n33["run:27<br/>P25 upgrade variant (first set): suitcase C"]
-  n34["run:5<br/>Recorded hero take (screen recording, build 380e..."]
-  n35["run:12<br/>Room run room-5bd7595c: RC cars lot (STAGED)"]
-  n36["run:11<br/>Room run room-5bd7595c: barbecue KEEP record"]
-  n37["run:13<br/>Room run room-5bd7595c: dip bar (STAGED)"]
-  n38["run:15<br/>Room run room-5bd7595c: outdoor furniture (STAGE..."]
-  n39["run:14<br/>Room run room-5bd7595c: white bike (STAGED)"]
-  n40["run:34<br/>Suitcase still chain (Oct 28 room run)"]
-  n41["run:7<br/>run-1443-fixed (Claude's package)"]
-  n42["call:1<br/>identify"]
-  n43["call:2<br/>cut_out"]
-  n44["call:3<br/>draw"]
-  n45["call:4<br/>identify (muse-spark-1.3)"]
-  n46["call:5<br/>cut_out (sam-3.1)"]
-  n47["call:6<br/>draw (muse-image-1.0)"]
-  n48["call:7<br/>identify (muse-spark-1.3)"]
-  n49["call:8<br/>cut_out (sam-3.1)"]
-  n50["call:9<br/>draw (muse-image-1.0)"]
-  n51["call:10<br/>draw (muse-image-1.0)"]
-  n52["call:11<br/>identify (muse-spark-1.3)"]
-  n53["call:12<br/>cut_out (sam-3.1)"]
-  n54["call:13<br/>draw (muse-image-1.0)"]
-  n55["call:14<br/>identify"]
-  n56["call:15<br/>cut_out"]
-  n57["call:16<br/>draw"]
-  n58["call:17<br/>identify (muse-spark-1.3)"]
-  n59["call:18<br/>cut_out (sam-3.1)"]
-  n60["call:19<br/>draw (muse-image-1.0)"]
-  n61["call:20<br/>identify (muse-spark-1.3)"]
-  n62["call:21<br/>cut_out (sam-3.1)"]
-  n63["call:22<br/>draw (muse-image-1.0)"]
-  n64["call:23<br/>identify (muse-spark-1.3)"]
-  n65["call:24<br/>cut_out (sam-3.1)"]
-  n66["call:25<br/>identify (muse-spark-1.3)"]
-  n67["call:26<br/>draw (muse-image-1.0)"]
-  n68["call:27<br/>draw (muse-image-1.0)"]
-  n69["call:28<br/>draw (muse-image-1.0)"]
-  n70["call:29<br/>draw (muse-image-1.0)"]
-  n71["call:30<br/>draw (muse-image-1.0)"]
-  n72["call:31<br/>draw (muse-image-1.0)"]
-  n73["call:32<br/>identify (muse-spark-1.3)"]
-  n74["call:33<br/>cut_out (sam-3.1)"]
-  n75["call:34<br/>draw (muse-image-1.0)"]
-  n76["call:35<br/>identify (muse-spark-1.3)"]
-  n77["call:36<br/>cut_out (sam-3.1)"]
-  n78["call:37<br/>draw (muse-image-1.0)"]
-  n79["call:38<br/>cut_out"]
-  n80["call:39<br/>draw (muse-image-1.0)"]
-  n81["call:40<br/>cut_out"]
-  n82["call:41<br/>draw (muse-image-1.0)"]
-  n83["call:42<br/>cut_out"]
-  n84["call:43<br/>draw (muse-image-1.0)"]
-  n85["call:44<br/>cut_out"]
-  n86["call:45<br/>draw (muse-image-1.0)"]
-  n87["call:46<br/>cut_out"]
-  n88["call:47<br/>draw (muse-image-1.0)"]
-  n89["call:48<br/>cut_out"]
-  n90["call:49<br/>draw (muse-image-1.0)"]
-  n91["call:50<br/>identify (muse-spark-1.3)"]
-  n92["call:51<br/>cut_out (sam-3.1)"]
-  n93["call:52<br/>draw (muse-image-1.0)"]
-  n94["call:53<br/>identify (muse-spark-1.3)"]
-  n95["call:54<br/>cut_out (sam-3.1)"]
-  n96["call:55<br/>draw (muse-image-1.0)"]
-  n97["call:56<br/>identify (muse-spark-1.3)"]
-  n98["call:57<br/>cut_out (sam-3.1)"]
-  n99["call:58<br/>draw (muse-image-1.0)"]
-  n100["call:59<br/>identify (muse-spark-1.3)"]
-  n101["call:60<br/>cut_out (sam-3.1)"]
-  n102["call:61<br/>draw (muse-image-1.0)"]
-  n103["call:62<br/>identify (muse-spark-1.3)"]
-  n104["call:63<br/>cut_out (sam-3.1)"]
-  n105["call:64<br/>draw (muse-image-1.0)"]
-  n106["call:65<br/>cut_out"]
-  n107["call:66<br/>draw (muse-image-1.0)"]
-  n108["receipt:1<br/>fidelity_receipt 580613 checked / 0 changed"]
-  n109["receipt:2<br/>fidelity_receipt 3422482 checked / 0 changed"]
-  n110["receipt:3<br/>fidelity_receipt 5654781 checked / 0 changed"]
-  n111["receipt:4<br/>fidelity_receipt 5654781 checked / 0 changed"]
-  n112["receipt:5<br/>fidelity_receipt 5659218 checked / 0 changed"]
-  n113["receipt:6<br/>fidelity_receipt 5072763 checked / 0 changed"]
-  n114["receipt:7<br/>fidelity_receipt 5660280 checked / 0 changed"]
-  n115["receipt:8<br/>fidelity_receipt 142071 checked / 0 changed"]
-  n116["receipt:9<br/>fidelity_receipt 1116952 checked / 0 changed"]
-  n117["receipt:10<br/>keep_record"]
-  n118["receipt:11<br/>fidelity_receipt 232231 checked / 0 changed"]
-  n119["receipt:12<br/>fidelity_receipt 38901 checked / 0 changed"]
-  n120["receipt:13<br/>fidelity_receipt 106758 checked / 0 changed"]
-  n121["receipt:14<br/>fidelity_receipt 288450 checked / 0 changed"]
-  n122["receipt:15<br/>recount 1128708 checked / 0 changed"]
-  n123["receipt:16<br/>fidelity_receipt 404265 checked / 0 changed"]
-  n124["receipt:17<br/>recount 2216386 checked / 0 changed"]
-  n125["receipt:18<br/>fidelity_receipt 1116952 checked / 0 changed"]
-  n126["receipt:19<br/>fidelity_receipt 5654357 checked / 0 changed"]
-  n127["receipt:20<br/>fidelity_receipt 5654357 checked / 0 changed"]
-  n128["receipt:21<br/>fidelity_receipt 5656640 checked / 0 changed"]
-  n129["receipt:22<br/>fidelity_receipt 5656640 checked / 0 changed"]
-  n130["receipt:23<br/>fidelity_receipt 5656640 checked / 0 changed"]
-  n131["receipt:24<br/>fidelity_receipt 223410 checked / 0 changed"]
-  n132["receipt:25<br/>fidelity_receipt 223410 checked / 0 changed"]
-  n133["receipt:26<br/>fidelity_receipt 223410 checked / 0 changed"]
-  n134["receipt:27<br/>fidelity_receipt 5081270 checked / 0 changed"]
-  n135["receipt:28<br/>fidelity_receipt 5081270 checked / 0 changed"]
-  n136["receipt:29<br/>fidelity_receipt 5081270 checked / 0 changed"]
-  n137["receipt:30<br/>fidelity_receipt 5081270 checked / 0 changed"]
-  n138["receipt:31<br/>fidelity_receipt 5695383 checked / 0 changed"]
-  n139["receipt:32<br/>fidelity_receipt 223600 checked / 0 changed"]
-  n140["chapter:1<br/>Ch0 baseline: suitcase still, Muse Image edit vs..."]
-  n141["chapter:2<br/>Ch1 switchboard: yard, phone, board, run-1443-v1..."]
-  n142["chapter:3<br/>Ch2 hero: run-1443-v102, 5,072,763 product pixel..."]
-  n143["chapter:4<br/>Ch3a buyer/seller: verifier PASS, deliberate tam..."]
-  n144["chapter:5<br/>Ch3b fence bid packet: card printed width 10 in,..."]
-  n145["chapter:6<br/>Ch4 moving-day narration: what was said / what t..."]
-  n146["chapter:7<br/>Ch5 open-house fill: 1,128,708 placed pixels, 0 ..."]
-  n147["chapter:8<br/>Ch6 walkaround and dashboard counters"]
-  n148["chapter:9<br/>Ch7 under the hood: Python/Rust parity, 580,613 ..."]
-  n149["chapter:10<br/>Ch8 real screen recording 19:06 take sped up 20x..."]
-  n150["chapter:11<br/>Ch9 cast and prints"]
-  n151["chapter:12<br/>ChClose lockup, recorded-run call times (wall ti..."]
-  n152["criterion:Demo"]
-  n153["criterion:Technical Depth & Execution"]
-  n154["criterion:Use of Meta AI Tooling"]
-  n155["model:muse-image-1.0"]
-  n156["model:muse-spark-1.3"]
-  n157["model:sam-3.1"]
-  n158["build:166ea6b"]
-  n159["build:380eff0"]
-  n160["build:380eff0-line (session transcript + receipt in package; exact hash per package transcript)"]
-  n161["build:cd5e250 (agenthand 0.3.0 rev-5 package)"]
-  n162["build:d8d0efc"]
-  n163["build:f70f194 (local review build)"]
-  n0 -->|evidenced_by| n9
-  n1 -->|evidenced_by| n8
-  n2 -->|evidenced_by| n34
-  n3 -->|evidenced_by| n20
-  n4 -->|evidenced_by| n40
-  n0 -->|evidenced_by| n113
-  n1 -->|evidenced_by| n108
-  n2 -->|evidenced_by| n112
-  n3 -->|evidenced_by| n122
-  n4 -->|evidenced_by| n139
-  n0 -->|addresses| n153
-  n1 -->|addresses| n153
-  n2 -->|addresses| n152
-  n3 -->|addresses| n152
-  n4 -->|addresses| n154
-  n5 -->|addresses| n153
-  n6 -->|addresses| n153
-  n7 -->|addresses| n153
-  n8 -->|has_call| n42
-  n8 -->|has_call| n43
-  n8 -->|has_call| n44
-  n11 -->|has_call| n45
-  n11 -->|has_call| n46
-  n11 -->|has_call| n47
-  n10 -->|has_call| n48
-  n10 -->|has_call| n49
-  n10 -->|has_call| n50
-  n13 -->|has_call| n51
-  n9 -->|has_call| n52
-  n9 -->|has_call| n53
-  n9 -->|has_call| n54
-  n41 -->|has_call| n55
-  n41 -->|has_call| n56
-  n41 -->|has_call| n57
-  n15 -->|has_call| n58
-  n15 -->|has_call| n59
-  n15 -->|has_call| n60
-  n16 -->|has_call| n61
-  n16 -->|has_call| n62
-  n16 -->|has_call| n63
-  n14 -->|has_call| n64
-  n14 -->|has_call| n65
-  n36 -->|has_call| n66
-  n35 -->|has_call| n67
-  n37 -->|has_call| n68
-  n39 -->|has_call| n69
-  n38 -->|has_call| n70
-  n17 -->|has_call| n71
-  n18 -->|has_call| n72
-  n21 -->|has_call| n73
-  n21 -->|has_call| n74
-  n21 -->|has_call| n75
-  n22 -->|has_call| n76
-  n22 -->|has_call| n77
-  n22 -->|has_call| n78
-  n28 -->|has_call| n79
-  n28 -->|has_call| n80
-  n29 -->|has_call| n81
-  n29 -->|has_call| n82
-  n30 -->|has_call| n83
-  n30 -->|has_call| n84
-  n31 -->|has_call| n85
-  n31 -->|has_call| n86
-  n32 -->|has_call| n87
-  n32 -->|has_call| n88
-  n33 -->|has_call| n89
-  n33 -->|has_call| n90
-  n27 -->|has_call| n91
-  n27 -->|has_call| n92
-  n27 -->|has_call| n93
-  n24 -->|has_call| n94
-  n24 -->|has_call| n95
-  n24 -->|has_call| n96
-  n25 -->|has_call| n97
-  n25 -->|has_call| n98
-  n25 -->|has_call| n99
-  n26 -->|has_call| n100
-  n26 -->|has_call| n101
-  n26 -->|has_call| n102
-  n12 -->|has_call| n103
-  n12 -->|has_call| n104
-  n12 -->|has_call| n105
-  n40 -->|has_call| n106
-  n40 -->|has_call| n107
-  n8 -->|has_receipt| n108
-  n11 -->|has_receipt| n109
-  n10 -->|has_receipt| n110
+  n8["claim:9<br/>Two-zone hero (IMG_1443, decisions 143/145): pro..."]
+  n9["run:1<br/>Frozen offline replay (live run frozen 2026-10-2..."]
+  n10["run:35<br/>Hero re-cut v109 two-zone (W5 hybrid)"]
+  n11["run:6<br/>Hero run IMG_1443 (final Rust master, hole-carve..."]
+  n12["run:3<br/>Hero run IMG_1443 (merged build)"]
+  n13["run:2<br/>Hero run IMG_1443 (rev-5 packaged build)"]
+  n14["run:33<br/>Jacket full chain on IMG_1491 (reshoot)"]
+  n15["run:4<br/>Look-test draw on hero cutout (logo sign scene t..."]
+  n16["run:10<br/>P12 merged keep-path steps: barbecue (identify +..."]
+  n17["run:8<br/>P12 merged re-run: blue bike (SELL)"]
+  n18["run:9<br/>P12 merged re-run: patio furniture (SELL)"]
+  n19["run:17<br/>P13 dream draw (patio set foreground, imagined b..."]
+  n20["run:19<br/>P13 merged dream draw"]
+  n21["run:18<br/>P13 merged-build rebuild (same canvas and placem..."]
+  n22["run:16<br/>P13 open-house fill run (two placed items on IMG..."]
+  n23["run:20<br/>P24 premium draw A: studio backdrop"]
+  n24["run:21<br/>P24 premium draw B: golden-hour driveway"]
+  n25["run:28<br/>P25 suitcase variants: mask differs from the Oct..."]
+  n26["run:30<br/>P25 upgrade variant (bike-v102): A"]
+  n27["run:31<br/>P25 upgrade variant (bike-v102): B"]
+  n28["run:32<br/>P25 upgrade variant (bike-v102): C"]
+  n29["run:29<br/>P25 upgrade variant (bike-v102): tidy"]
+  n30["run:22<br/>P25 upgrade variant (first set): bike A"]
+  n31["run:23<br/>P25 upgrade variant (first set): bike B"]
+  n32["run:24<br/>P25 upgrade variant (first set): bike C"]
+  n33["run:25<br/>P25 upgrade variant (first set): suitcase A"]
+  n34["run:26<br/>P25 upgrade variant (first set): suitcase B"]
+  n35["run:27<br/>P25 upgrade variant (first set): suitcase C"]
+  n36["run:5<br/>Recorded hero take (screen recording, build 380e..."]
+  n37["run:12<br/>Room run room-5bd7595c: RC cars lot (STAGED)"]
+  n38["run:11<br/>Room run room-5bd7595c: barbecue KEEP record"]
+  n39["run:13<br/>Room run room-5bd7595c: dip bar (STAGED)"]
+  n40["run:15<br/>Room run room-5bd7595c: outdoor furniture (STAGE..."]
+  n41["run:14<br/>Room run room-5bd7595c: white bike (STAGED)"]
+  n42["run:34<br/>Suitcase still chain (Oct 28 room run)"]
+  n43["run:7<br/>run-1443-fixed (Claude's package)"]
+  n44["call:1<br/>identify"]
+  n45["call:2<br/>cut_out"]
+  n46["call:3<br/>draw"]
+  n47["call:4<br/>identify (muse-spark-1.3)"]
+  n48["call:5<br/>cut_out (sam-3.1)"]
+  n49["call:6<br/>draw (muse-image-1.0)"]
+  n50["call:7<br/>identify (muse-spark-1.3)"]
+  n51["call:8<br/>cut_out (sam-3.1)"]
+  n52["call:9<br/>draw (muse-image-1.0)"]
+  n53["call:10<br/>draw (muse-image-1.0)"]
+  n54["call:11<br/>identify (muse-spark-1.3)"]
+  n55["call:12<br/>cut_out (sam-3.1)"]
+  n56["call:13<br/>draw (muse-image-1.0)"]
+  n57["call:14<br/>identify"]
+  n58["call:15<br/>cut_out"]
+  n59["call:16<br/>draw"]
+  n60["call:17<br/>identify (muse-spark-1.3)"]
+  n61["call:18<br/>cut_out (sam-3.1)"]
+  n62["call:19<br/>draw (muse-image-1.0)"]
+  n63["call:20<br/>identify (muse-spark-1.3)"]
+  n64["call:21<br/>cut_out (sam-3.1)"]
+  n65["call:22<br/>draw (muse-image-1.0)"]
+  n66["call:23<br/>identify (muse-spark-1.3)"]
+  n67["call:24<br/>cut_out (sam-3.1)"]
+  n68["call:25<br/>identify (muse-spark-1.3)"]
+  n69["call:26<br/>draw (muse-image-1.0)"]
+  n70["call:27<br/>draw (muse-image-1.0)"]
+  n71["call:28<br/>draw (muse-image-1.0)"]
+  n72["call:29<br/>draw (muse-image-1.0)"]
+  n73["call:30<br/>draw (muse-image-1.0)"]
+  n74["call:31<br/>draw (muse-image-1.0)"]
+  n75["call:32<br/>identify (muse-spark-1.3)"]
+  n76["call:33<br/>cut_out (sam-3.1)"]
+  n77["call:34<br/>draw (muse-image-1.0)"]
+  n78["call:35<br/>identify (muse-spark-1.3)"]
+  n79["call:36<br/>cut_out (sam-3.1)"]
+  n80["call:37<br/>draw (muse-image-1.0)"]
+  n81["call:38<br/>cut_out"]
+  n82["call:39<br/>draw (muse-image-1.0)"]
+  n83["call:40<br/>cut_out"]
+  n84["call:41<br/>draw (muse-image-1.0)"]
+  n85["call:42<br/>cut_out"]
+  n86["call:43<br/>draw (muse-image-1.0)"]
+  n87["call:44<br/>cut_out"]
+  n88["call:45<br/>draw (muse-image-1.0)"]
+  n89["call:46<br/>cut_out"]
+  n90["call:47<br/>draw (muse-image-1.0)"]
+  n91["call:48<br/>cut_out"]
+  n92["call:49<br/>draw (muse-image-1.0)"]
+  n93["call:50<br/>identify (muse-spark-1.3)"]
+  n94["call:51<br/>cut_out (sam-3.1)"]
+  n95["call:52<br/>draw (muse-image-1.0)"]
+  n96["call:53<br/>identify (muse-spark-1.3)"]
+  n97["call:54<br/>cut_out (sam-3.1)"]
+  n98["call:55<br/>draw (muse-image-1.0)"]
+  n99["call:56<br/>identify (muse-spark-1.3)"]
+  n100["call:57<br/>cut_out (sam-3.1)"]
+  n101["call:58<br/>draw (muse-image-1.0)"]
+  n102["call:59<br/>identify (muse-spark-1.3)"]
+  n103["call:60<br/>cut_out (sam-3.1)"]
+  n104["call:61<br/>draw (muse-image-1.0)"]
+  n105["call:62<br/>identify (muse-spark-1.3)"]
+  n106["call:63<br/>cut_out (sam-3.1)"]
+  n107["call:64<br/>draw (muse-image-1.0)"]
+  n108["call:65<br/>cut_out"]
+  n109["call:66<br/>draw (muse-image-1.0)"]
+  n110["receipt:1<br/>fidelity_receipt 580613 checked / 0 changed"]
+  n111["receipt:2<br/>fidelity_receipt 3422482 checked / 0 changed"]
+  n112["receipt:3<br/>fidelity_receipt 5654781 checked / 0 changed"]
+  n113["receipt:4<br/>fidelity_receipt 5654781 checked / 0 changed"]
+  n114["receipt:5<br/>fidelity_receipt 5659218 checked / 0 changed"]
+  n115["receipt:6<br/>fidelity_receipt 5072763 checked / 0 changed"]
+  n116["receipt:7<br/>fidelity_receipt 5660280 checked / 0 changed"]
+  n117["receipt:8<br/>fidelity_receipt 142071 checked / 0 changed"]
+  n118["receipt:9<br/>fidelity_receipt 1116952 checked / 0 changed"]
+  n119["receipt:10<br/>keep_record"]
+  n120["receipt:11<br/>fidelity_receipt 232231 checked / 0 changed"]
+  n121["receipt:12<br/>fidelity_receipt 38901 checked / 0 changed"]
+  n122["receipt:13<br/>fidelity_receipt 106758 checked / 0 changed"]
+  n123["receipt:14<br/>fidelity_receipt 288450 checked / 0 changed"]
+  n124["receipt:15<br/>recount 1128708 checked / 0 changed"]
+  n125["receipt:16<br/>fidelity_receipt 404265 checked / 0 changed"]
+  n126["receipt:17<br/>recount 2216386 checked / 0 changed"]
+  n127["receipt:18<br/>fidelity_receipt 1116952 checked / 0 changed"]
+  n128["receipt:19<br/>fidelity_receipt 5654357 checked / 0 changed"]
+  n129["receipt:20<br/>fidelity_receipt 5654357 checked / 0 changed"]
+  n130["receipt:21<br/>fidelity_receipt 5656640 checked / 0 changed"]
+  n131["receipt:22<br/>fidelity_receipt 5656640 checked / 0 changed"]
+  n132["receipt:23<br/>fidelity_receipt 5656640 checked / 0 changed"]
+  n133["receipt:24<br/>fidelity_receipt 223410 checked / 0 changed"]
+  n134["receipt:25<br/>fidelity_receipt 223410 checked / 0 changed"]
+  n135["receipt:26<br/>fidelity_receipt 223410 checked / 0 changed"]
+  n136["receipt:27<br/>fidelity_receipt 5081270 checked / 0 changed"]
+  n137["receipt:28<br/>fidelity_receipt 5081270 checked / 0 changed"]
+  n138["receipt:29<br/>fidelity_receipt 5081270 checked / 0 changed"]
+  n139["receipt:30<br/>fidelity_receipt 5081270 checked / 0 changed"]
+  n140["receipt:31<br/>fidelity_receipt 5695383 checked / 0 changed"]
+  n141["receipt:32<br/>fidelity_receipt 223600 checked / 0 changed"]
+  n142["receipt:33<br/>fidelity_receipt 4053953 checked / 0 changed"]
+  n143["chapter:1<br/>Ch0 baseline: suitcase still, Muse Image edit vs..."]
+  n144["chapter:2<br/>Ch1 switchboard: yard, phone, board, run-1443-v1..."]
+  n145["chapter:3<br/>Ch2 hero: run-1443-v102, 5,072,763 product pixel..."]
+  n146["chapter:4<br/>Ch3a buyer/seller: verifier PASS, deliberate tam..."]
+  n147["chapter:5<br/>Ch3b fence bid packet: card printed width 10 in,..."]
+  n148["chapter:6<br/>Ch4 moving-day narration: what was said / what t..."]
+  n149["chapter:7<br/>Ch5 open-house fill: 1,128,708 placed pixels, 0 ..."]
+  n150["chapter:8<br/>Ch6 walkaround and dashboard counters"]
+  n151["chapter:9<br/>Ch7 under the hood: Python/Rust parity, 580,613 ..."]
+  n152["chapter:10<br/>Ch8 real screen recording 19:06 take sped up 20x..."]
+  n153["chapter:11<br/>Ch9 cast and prints"]
+  n154["chapter:12<br/>ChClose lockup, recorded-run call times (wall ti..."]
+  n155["criterion:Demo"]
+  n156["criterion:Technical Depth & Execution"]
+  n157["criterion:Use of Meta AI Tooling"]
+  n158["model:muse-image-1.0"]
+  n159["model:muse-spark-1.3"]
+  n160["model:sam-3.1"]
+  n161["build:166ea6b"]
+  n162["build:380eff0"]
+  n163["build:380eff0-line (session transcript + receipt in package; exact hash per package transcript)"]
+  n164["build:752a6af chain; two-zone rebuild local (Rust unmix-cf solver + step8_w5.py); consolidation HEAD a148586"]
+  n165["build:cd5e250 (agenthand 0.3.0 rev-5 package)"]
+  n166["build:d8d0efc"]
+  n167["build:f70f194 (local review build)"]
+  n0 -->|evidenced_by| n11
+  n1 -->|evidenced_by| n9
+  n2 -->|evidenced_by| n36
+  n3 -->|evidenced_by| n22
+  n4 -->|evidenced_by| n42
+  n8 -->|evidenced_by| n10
+  n0 -->|evidenced_by| n115
+  n1 -->|evidenced_by| n110
+  n2 -->|evidenced_by| n114
+  n3 -->|evidenced_by| n124
+  n4 -->|evidenced_by| n141
+  n8 -->|evidenced_by| n142
+  n0 -->|addresses| n156
+  n1 -->|addresses| n156
+  n2 -->|addresses| n155
+  n3 -->|addresses| n155
+  n4 -->|addresses| n157
+  n5 -->|addresses| n156
+  n6 -->|addresses| n156
+  n7 -->|addresses| n156
+  n8 -->|addresses| n156
+  n9 -->|has_call| n44
+  n9 -->|has_call| n45
+  n9 -->|has_call| n46
+  n13 -->|has_call| n47
+  n13 -->|has_call| n48
+  n13 -->|has_call| n49
+  n12 -->|has_call| n50
+  n12 -->|has_call| n51
+  n12 -->|has_call| n52
+  n15 -->|has_call| n53
+  n11 -->|has_call| n54
+  n11 -->|has_call| n55
+  n11 -->|has_call| n56
+  n43 -->|has_call| n57
+  n43 -->|has_call| n58
+  n43 -->|has_call| n59
+  n17 -->|has_call| n60
+  n17 -->|has_call| n61
+  n17 -->|has_call| n62
+  n18 -->|has_call| n63
+  n18 -->|has_call| n64
+  n18 -->|has_call| n65
+  n16 -->|has_call| n66
+  n16 -->|has_call| n67
+  n38 -->|has_call| n68
+  n37 -->|has_call| n69
+  n39 -->|has_call| n70
+  n41 -->|has_call| n71
+  n40 -->|has_call| n72
+  n19 -->|has_call| n73
+  n20 -->|has_call| n74
+  n23 -->|has_call| n75
+  n23 -->|has_call| n76
+  n23 -->|has_call| n77
+  n24 -->|has_call| n78
+  n24 -->|has_call| n79
+  n24 -->|has_call| n80
+  n30 -->|has_call| n81
+  n30 -->|has_call| n82
+  n31 -->|has_call| n83
+  n31 -->|has_call| n84
+  n32 -->|has_call| n85
+  n32 -->|has_call| n86
+  n33 -->|has_call| n87
+  n33 -->|has_call| n88
+  n34 -->|has_call| n89
+  n34 -->|has_call| n90
+  n35 -->|has_call| n91
+  n35 -->|has_call| n92
+  n29 -->|has_call| n93
+  n29 -->|has_call| n94
+  n29 -->|has_call| n95
+  n26 -->|has_call| n96
+  n26 -->|has_call| n97
+  n26 -->|has_call| n98
+  n27 -->|has_call| n99
+  n27 -->|has_call| n100
+  n27 -->|has_call| n101
+  n28 -->|has_call| n102
+  n28 -->|has_call| n103
+  n28 -->|has_call| n104
+  n14 -->|has_call| n105
+  n14 -->|has_call| n106
+  n14 -->|has_call| n107
+  n42 -->|has_call| n108
+  n42 -->|has_call| n109
+  n9 -->|has_receipt| n110
   n13 -->|has_receipt| n111
-  n34 -->|has_receipt| n112
-  n9 -->|has_receipt| n113
-  n41 -->|has_receipt| n114
-  n15 -->|has_receipt| n115
-  n16 -->|has_receipt| n116
-  n36 -->|has_receipt| n117
-  n35 -->|has_receipt| n118
-  n37 -->|has_receipt| n119
-  n39 -->|has_receipt| n120
-  n38 -->|has_receipt| n121
-  n20 -->|has_receipt| n122
-  n17 -->|has_receipt| n123
-  n19 -->|has_receipt| n124
-  n18 -->|has_receipt| n125
+  n12 -->|has_receipt| n112
+  n15 -->|has_receipt| n113
+  n36 -->|has_receipt| n114
+  n11 -->|has_receipt| n115
+  n43 -->|has_receipt| n116
+  n17 -->|has_receipt| n117
+  n18 -->|has_receipt| n118
+  n38 -->|has_receipt| n119
+  n37 -->|has_receipt| n120
+  n39 -->|has_receipt| n121
+  n41 -->|has_receipt| n122
+  n40 -->|has_receipt| n123
+  n22 -->|has_receipt| n124
+  n19 -->|has_receipt| n125
   n21 -->|has_receipt| n126
-  n22 -->|has_receipt| n127
-  n28 -->|has_receipt| n128
-  n29 -->|has_receipt| n129
+  n20 -->|has_receipt| n127
+  n23 -->|has_receipt| n128
+  n24 -->|has_receipt| n129
   n30 -->|has_receipt| n130
   n31 -->|has_receipt| n131
   n32 -->|has_receipt| n132
   n33 -->|has_receipt| n133
-  n27 -->|has_receipt| n134
-  n24 -->|has_receipt| n135
-  n25 -->|has_receipt| n136
+  n34 -->|has_receipt| n134
+  n35 -->|has_receipt| n135
+  n29 -->|has_receipt| n136
   n26 -->|has_receipt| n137
-  n12 -->|has_receipt| n138
-  n40 -->|has_receipt| n139
-  n47 -->|uses_model| n155
-  n50 -->|uses_model| n155
-  n51 -->|uses_model| n155
-  n54 -->|uses_model| n155
-  n60 -->|uses_model| n155
-  n63 -->|uses_model| n155
-  n67 -->|uses_model| n155
-  n68 -->|uses_model| n155
-  n69 -->|uses_model| n155
-  n70 -->|uses_model| n155
-  n71 -->|uses_model| n155
-  n72 -->|uses_model| n155
-  n75 -->|uses_model| n155
-  n78 -->|uses_model| n155
-  n80 -->|uses_model| n155
-  n82 -->|uses_model| n155
-  n84 -->|uses_model| n155
-  n86 -->|uses_model| n155
-  n88 -->|uses_model| n155
-  n90 -->|uses_model| n155
-  n93 -->|uses_model| n155
-  n96 -->|uses_model| n155
-  n99 -->|uses_model| n155
-  n102 -->|uses_model| n155
-  n105 -->|uses_model| n155
-  n107 -->|uses_model| n155
-  n45 -->|uses_model| n156
-  n48 -->|uses_model| n156
-  n52 -->|uses_model| n156
-  n58 -->|uses_model| n156
-  n61 -->|uses_model| n156
-  n64 -->|uses_model| n156
-  n66 -->|uses_model| n156
-  n73 -->|uses_model| n156
-  n76 -->|uses_model| n156
-  n91 -->|uses_model| n156
-  n94 -->|uses_model| n156
-  n97 -->|uses_model| n156
-  n100 -->|uses_model| n156
-  n103 -->|uses_model| n156
-  n46 -->|uses_model| n157
-  n49 -->|uses_model| n157
-  n53 -->|uses_model| n157
-  n59 -->|uses_model| n157
-  n62 -->|uses_model| n157
-  n65 -->|uses_model| n157
-  n74 -->|uses_model| n157
-  n77 -->|uses_model| n157
-  n92 -->|uses_model| n157
-  n95 -->|uses_model| n157
-  n98 -->|uses_model| n157
-  n101 -->|uses_model| n157
-  n104 -->|uses_model| n157
-  n9 -->|built_with| n158
-  n27 -->|built_with| n158
-  n24 -->|built_with| n158
-  n25 -->|built_with| n158
-  n26 -->|built_with| n158
-  n34 -->|built_with| n159
-  n21 -->|built_with| n159
-  n22 -->|built_with| n159
-  n41 -->|built_with| n160
+  n27 -->|has_receipt| n138
+  n28 -->|has_receipt| n139
+  n14 -->|has_receipt| n140
+  n42 -->|has_receipt| n141
+  n10 -->|has_receipt| n142
+  n49 -->|uses_model| n158
+  n52 -->|uses_model| n158
+  n53 -->|uses_model| n158
+  n56 -->|uses_model| n158
+  n62 -->|uses_model| n158
+  n65 -->|uses_model| n158
+  n69 -->|uses_model| n158
+  n70 -->|uses_model| n158
+  n71 -->|uses_model| n158
+  n72 -->|uses_model| n158
+  n73 -->|uses_model| n158
+  n74 -->|uses_model| n158
+  n77 -->|uses_model| n158
+  n80 -->|uses_model| n158
+  n82 -->|uses_model| n158
+  n84 -->|uses_model| n158
+  n86 -->|uses_model| n158
+  n88 -->|uses_model| n158
+  n90 -->|uses_model| n158
+  n92 -->|uses_model| n158
+  n95 -->|uses_model| n158
+  n98 -->|uses_model| n158
+  n101 -->|uses_model| n158
+  n104 -->|uses_model| n158
+  n107 -->|uses_model| n158
+  n109 -->|uses_model| n158
+  n47 -->|uses_model| n159
+  n50 -->|uses_model| n159
+  n54 -->|uses_model| n159
+  n60 -->|uses_model| n159
+  n63 -->|uses_model| n159
+  n66 -->|uses_model| n159
+  n68 -->|uses_model| n159
+  n75 -->|uses_model| n159
+  n78 -->|uses_model| n159
+  n93 -->|uses_model| n159
+  n96 -->|uses_model| n159
+  n99 -->|uses_model| n159
+  n102 -->|uses_model| n159
+  n105 -->|uses_model| n159
+  n48 -->|uses_model| n160
+  n51 -->|uses_model| n160
+  n55 -->|uses_model| n160
+  n61 -->|uses_model| n160
+  n64 -->|uses_model| n160
+  n67 -->|uses_model| n160
+  n76 -->|uses_model| n160
+  n79 -->|uses_model| n160
+  n94 -->|uses_model| n160
+  n97 -->|uses_model| n160
+  n100 -->|uses_model| n160
+  n103 -->|uses_model| n160
+  n106 -->|uses_model| n160
   n11 -->|built_with| n161
-  n10 -->|built_with| n162
-  n13 -->|built_with| n162
-  n15 -->|built_with| n162
-  n16 -->|built_with| n162
-  n14 -->|built_with| n162
+  n29 -->|built_with| n161
+  n26 -->|built_with| n161
+  n27 -->|built_with| n161
+  n28 -->|built_with| n161
   n36 -->|built_with| n162
-  n35 -->|built_with| n162
-  n37 -->|built_with| n162
-  n39 -->|built_with| n162
-  n38 -->|built_with| n162
-  n19 -->|built_with| n162
-  n18 -->|built_with| n162
-  n12 -->|built_with| n163
-  n142 -->|supports| n0
-  n148 -->|supports| n1
-  n149 -->|supports| n2
-  n146 -->|supports| n3
-  n140 -->|supports| n4
+  n23 -->|built_with| n162
+  n24 -->|built_with| n162
+  n43 -->|built_with| n163
+  n10 -->|built_with| n164
+  n13 -->|built_with| n165
+  n12 -->|built_with| n166
+  n15 -->|built_with| n166
+  n17 -->|built_with| n166
+  n18 -->|built_with| n166
+  n16 -->|built_with| n166
+  n38 -->|built_with| n166
+  n37 -->|built_with| n166
+  n39 -->|built_with| n166
+  n41 -->|built_with| n166
+  n40 -->|built_with| n166
+  n21 -->|built_with| n166
+  n20 -->|built_with| n166
+  n14 -->|built_with| n167
+  n145 -->|supports| n0
+  n151 -->|supports| n1
+  n152 -->|supports| n2
+  n149 -->|supports| n3
+  n143 -->|supports| n4
 ```
 
 </details>
@@ -892,6 +1015,12 @@ and every commit in it was written in-window; the history is the
 audit trail. The Rust implementation is a port of the Python
 reference implementation, whose dated build log (BUILD_LOG.md in
 that repo) records the project's provenance from an empty directory.
+
+The whole project behind this submission — every run, test, and
+experiment, not just the ones in the film — cost **$4.52 in Meta API
+calls** (rounded to the nearest cent; the exact settled total is
+$4.522337, struck from the project's call ledgers on November 3,
+2026).
 
 ## License
 

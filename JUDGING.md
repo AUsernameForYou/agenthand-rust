@@ -5,16 +5,16 @@ Pointers only. Every number below resolves in the Proof Graph
 or in the frozen replay under `conformance/`.
 ```mermaid
 graph LR
-  claim["claim (8)"] -->|backed by| run["run (34)"]
+  claim["claim (9)"] -->|backed by| run["run (35)"]
   run -->|made| call["model call (66)"]
-  run -->|proved by| receipt["receipt (32)"]
+  run -->|proved by| receipt["receipt (33)"]
   chapter["video chapter (12)"] -->|maps to| claim
   claim -->|scores against| criterion["rubric criterion (3)"]
 ```
 
 The graph above is rendered from the shipped Proof Graph
 (`agenthand evidence graph --format mermaid` prints the full
-197-edge version): every claim in the film and the README traces
+202-edge version): every claim in the film and the README traces
 through runs and calls to a receipt a judge can re-verify offline.
 
 

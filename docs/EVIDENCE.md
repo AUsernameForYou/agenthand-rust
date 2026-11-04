@@ -134,9 +134,9 @@ text as `verify_db.py` prints.
 The last line carries three counts:
 
 ```
-OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))
-OVERALL: INCOMPLETE (0 re-hashed, 29 skipped, 0 failing line(s))
-OVERALL: FAIL (28 re-hashed, 0 skipped, 1 failing line(s))
+OVERALL: PASS (30 re-hashed, 0 skipped, 0 failing line(s))
+OVERALL: INCOMPLETE (0 re-hashed, 30 skipped, 0 failing line(s))
+OVERALL: FAIL (29 re-hashed, 0 skipped, 1 failing line(s))
 ```
 
 - re-hashed: receipt files in scope whose sha256 was recomputed from
@@ -189,8 +189,8 @@ and `meta.receipt_count_rooted` match. A stored value is printed only
 when it differs, and labelled as the stored value. Exit 1 when either
 differs.
 
-Value for `evidence.db` of 2026-11-02 (29 hashed receipts of 32):
-`54763f911420b4db2104178b5c2420fb46d8ca7ba1af3907e23e1ecc1917b77e`.
+Value for `evidence.db` of 2026-11-02 (30 hashed receipts of 33):
+`1179530968c27879e3d84aa5475998a475cba64ba5b95f1823a8e7310174ecc3`.
 
 ## `export`
 
@@ -223,11 +223,11 @@ Only file-backed receipts count: a receipt whose row names a file
 with `receipts.file_sha256`. A receipt whose row names no file has
 nothing to re-hash; it gets its own named line and never makes the
 pack `PARTIAL`. On the shipped database that is receipts 5, 15 and 17,
-so with all 29 receipt files present the output ends:
+so with all 30 receipt files present the output ends:
 
 ```
 No file by design: receipts 5, 15, 17 (the database names no file to re-hash)
-EXPORT: COMPLETE (29 of 29 file-backed receipt files included, 0 missing)
+EXPORT: COMPLETE (30 of 30 file-backed receipt files included, 0 missing)
 ```
 
 The `EXPORT` line is always last and has one shape:
@@ -318,8 +318,8 @@ pack database byte-identical, manifest hashes and root checked), a
 complete pack (with a no-file receipt) that verifies `PASS` from its
 own copy, a changed receipt file (`EXPORT: FAIL`, exit 1), and a
 refused non-empty target. One `#[ignore]` test runs against the real database and its
-29 receipt files and expects
-`OVERALL: PASS (29 re-hashed, 0 skipped, 0 failing line(s))`:
+30 receipt files and expects
+`OVERALL: PASS (30 re-hashed, 0 skipped, 0 failing line(s))`:
 
 ```sh
 AGENTHAND_EVIDENCE_DB=<repo>/evidence/evidence.db \
