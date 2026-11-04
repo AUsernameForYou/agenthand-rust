@@ -1,0 +1,606 @@
+{
+  "version": "agenthand.differential-fixture/1",
+  "referee": "Expected values computed independently of both builds by fixtures/gen_fixtures.py: exact rational arithmetic (half-even at 6dp), brute-force chessboard distance, and the reconstruction formula both verifiers state in their own error strings.",
+  "round6": {
+    "contract_semantics": "SCALE-FIRST half-even at the 6th decimal: the value under contract is the f64 product x * 10**6, rounded half-even at an exact tie (Rust lib.rs round6 works on the scaled value; Python composite builtin round agrees on every case here). The Python ledger's _round6_half_away is a separately declared money rule and is pinned against expected_half_away (same scale-first product), not against the contract value.",
+    "cases": [
+      {
+        "input_written": "1/128",
+        "input_f64": 0.0078125,
+        "expected": 0.007812,
+        "expected_half_away": 0.007813,
+        "tie_exact_in_f64": true,
+        "note": "dyadic tie, even side down"
+      },
+      {
+        "input_written": "5/128",
+        "input_f64": 0.0390625,
+        "expected": 0.039062,
+        "expected_half_away": 0.039063,
+        "tie_exact_in_f64": true,
+        "note": "dyadic tie, even side down"
+      },
+      {
+        "input_written": "3/128",
+        "input_f64": 0.0234375,
+        "expected": 0.023438,
+        "expected_half_away": 0.023438,
+        "tie_exact_in_f64": true,
+        "note": "dyadic tie, even side up"
+      },
+      {
+        "input_written": "7/128",
+        "input_f64": 0.0546875,
+        "expected": 0.054688,
+        "expected_half_away": 0.054688,
+        "tie_exact_in_f64": true,
+        "note": "dyadic tie, even side up"
+      },
+      {
+        "input_written": "-1/128",
+        "input_f64": -0.0078125,
+        "expected": -0.007812,
+        "expected_half_away": -0.007813,
+        "tie_exact_in_f64": true,
+        "note": "negative dyadic tie"
+      },
+      {
+        "input_written": "-5/128",
+        "input_f64": -0.0390625,
+        "expected": -0.039062,
+        "expected_half_away": -0.039063,
+        "tie_exact_in_f64": true,
+        "note": "negative dyadic tie"
+      },
+      {
+        "input_written": "1/64",
+        "input_f64": 0.015625,
+        "expected": 0.015625,
+        "expected_half_away": 0.015625,
+        "tie_exact_in_f64": false,
+        "note": "exact at 6dp boundary digits"
+      },
+      {
+        "input_written": "1/3",
+        "input_f64": 0.3333333333333333,
+        "expected": 0.333333,
+        "expected_half_away": 0.333333,
+        "tie_exact_in_f64": false,
+        "note": "repeating"
+      },
+      {
+        "input_written": "2/3",
+        "input_f64": 0.6666666666666666,
+        "expected": 0.666667,
+        "expected_half_away": 0.666667,
+        "tie_exact_in_f64": false,
+        "note": "repeating, rounds up"
+      },
+      {
+        "input_written": "580613/2321550",
+        "input_f64": 0.2500971333807155,
+        "expected": 0.250097,
+        "expected_half_away": 0.250097,
+        "tie_exact_in_f64": false,
+        "note": "frozen replay opaque fraction inputs"
+      },
+      {
+        "input_written": "1740937/2321550",
+        "input_f64": 0.7499028666192845,
+        "expected": 0.749903,
+        "expected_half_away": 0.749903,
+        "tie_exact_in_f64": false,
+        "note": "frozen replay transparent share"
+      },
+      {
+        "input_written": "1/8",
+        "input_f64": 0.125,
+        "expected": 0.125,
+        "expected_half_away": 0.125,
+        "tie_exact_in_f64": false,
+        "note": "power of two, exact"
+      },
+      {
+        "input_written": "0",
+        "input_f64": 0.0,
+        "expected": 0.0,
+        "expected_half_away": 0.0,
+        "tie_exact_in_f64": false,
+        "note": "zero"
+      },
+      {
+        "input_written": "1",
+        "input_f64": 1.0,
+        "expected": 1.0,
+        "expected_half_away": 1.0,
+        "tie_exact_in_f64": false,
+        "note": "one"
+      },
+      {
+        "input_written": "0.0000005",
+        "input_f64": 5e-07,
+        "expected": 0.0,
+        "expected_half_away": 1e-06,
+        "tie_exact_in_f64": false,
+        "note": "a decimal tie in decimal only; the f64 received sits just below the tie, but the f64 product x*1e6 lands exactly on .5, so every scale-first implementation sees a true tie"
+      },
+      {
+        "input_written": "0.1234565",
+        "input_f64": 0.1234565,
+        "expected": 0.123456,
+        "expected_half_away": 0.123457,
+        "tie_exact_in_f64": false,
+        "note": "a decimal tie in decimal only; the f64 received sits just below the tie, but the f64 product x*1e6 lands exactly on .5, so every scale-first implementation sees a true tie"
+      },
+      {
+        "input_written": "2.0000025",
+        "input_f64": 2.0000025,
+        "expected": 2.000002,
+        "expected_half_away": 2.000003,
+        "tie_exact_in_f64": false,
+        "note": "a decimal tie in decimal only, with integer part; the f64 product x*1e6 lands exactly on .5 (a true tie at scale)"
+      }
+    ]
+  },
+  "chamfer": {
+    "cap": 32,
+    "metric": "chessboard (8-connected, unit steps)",
+    "cases": [
+      {
+        "name": "single_center_7x7",
+        "w": 7,
+        "h": 7,
+        "targets": [
+          [
+            3,
+            3
+          ]
+        ],
+        "border_is_target": false,
+        "expected": [
+          [
+            3,
+            3,
+            3,
+            3,
+            3,
+            3,
+            3
+          ],
+          [
+            3,
+            2,
+            2,
+            2,
+            2,
+            2,
+            3
+          ],
+          [
+            3,
+            2,
+            1,
+            1,
+            1,
+            2,
+            3
+          ],
+          [
+            3,
+            2,
+            1,
+            0,
+            1,
+            2,
+            3
+          ],
+          [
+            3,
+            2,
+            1,
+            1,
+            1,
+            2,
+            3
+          ],
+          [
+            3,
+            2,
+            2,
+            2,
+            2,
+            2,
+            3
+          ],
+          [
+            3,
+            3,
+            3,
+            3,
+            3,
+            3,
+            3
+          ]
+        ]
+      },
+      {
+        "name": "two_targets_8x5",
+        "w": 8,
+        "h": 5,
+        "targets": [
+          [
+            0,
+            0
+          ],
+          [
+            7,
+            4
+          ]
+        ],
+        "border_is_target": false,
+        "expected": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            4,
+            4,
+            4
+          ],
+          [
+            1,
+            1,
+            2,
+            3,
+            3,
+            3,
+            3,
+            3
+          ],
+          [
+            2,
+            2,
+            2,
+            3,
+            3,
+            2,
+            2,
+            2
+          ],
+          [
+            3,
+            3,
+            3,
+            3,
+            3,
+            2,
+            1,
+            1
+          ],
+          [
+            4,
+            4,
+            4,
+            4,
+            3,
+            2,
+            1,
+            0
+          ]
+        ]
+      },
+      {
+        "name": "border_target_6x6",
+        "w": 6,
+        "h": 6,
+        "targets": [
+          [
+            2,
+            2
+          ]
+        ],
+        "border_is_target": true,
+        "expected": [
+          [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            1,
+            2,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            1,
+            2,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            1,
+            2,
+            1
+          ],
+          [
+            1,
+            2,
+            2,
+            2,
+            2,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        ]
+      },
+      {
+        "name": "no_targets_4x4",
+        "w": 4,
+        "h": 4,
+        "targets": [],
+        "border_is_target": false,
+        "expected": [
+          [
+            32,
+            32,
+            32,
+            32
+          ],
+          [
+            32,
+            32,
+            32,
+            32
+          ],
+          [
+            32,
+            32,
+            32,
+            32
+          ],
+          [
+            32,
+            32,
+            32,
+            32
+          ]
+        ]
+      },
+      {
+        "name": "no_targets_border_4x4",
+        "w": 4,
+        "h": 4,
+        "targets": [],
+        "border_is_target": true,
+        "expected": [
+          [
+            1,
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            2,
+            2,
+            1
+          ],
+          [
+            1,
+            2,
+            2,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            1
+          ]
+        ]
+      },
+      {
+        "name": "corner_target_5x5",
+        "w": 5,
+        "h": 5,
+        "targets": [
+          [
+            0,
+            0
+          ]
+        ],
+        "border_is_target": false,
+        "expected": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          [
+            1,
+            1,
+            2,
+            3,
+            4
+          ],
+          [
+            2,
+            2,
+            2,
+            3,
+            4
+          ],
+          [
+            3,
+            3,
+            3,
+            3,
+            4
+          ],
+          [
+            4,
+            4,
+            4,
+            4,
+            4
+          ]
+        ]
+      },
+      {
+        "name": "full_row_9x3",
+        "w": 9,
+        "h": 3,
+        "targets": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            5,
+            1
+          ],
+          [
+            6,
+            1
+          ],
+          [
+            7,
+            1
+          ],
+          [
+            8,
+            1
+          ]
+        ],
+        "border_is_target": false,
+        "expected": [
+          [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        ]
+      }
+    ]
+  },
+  "reconstruction_fraction": {
+    "formula": "round6(reconstruction_pixels / (reconstruction_pixels + opaque_pixels)); 0.0 when the denominator is 0; verifier tolerance 1e-9",
+    "cases": [
+      {
+        "reconstruction_pixels": 0,
+        "opaque_pixels": 580613,
+        "expected_fraction": 0.0
+      },
+      {
+        "reconstruction_pixels": 1000,
+        "opaque_pixels": 580613,
+        "expected_fraction": 0.001719
+      },
+      {
+        "reconstruction_pixels": 123457,
+        "opaque_pixels": 580613,
+        "expected_fraction": 0.175348
+      },
+      {
+        "reconstruction_pixels": 1,
+        "opaque_pixels": 3,
+        "expected_fraction": 0.25
+      },
+      {
+        "reconstruction_pixels": 1,
+        "opaque_pixels": 127,
+        "expected_fraction": 0.007812
+      },
+      {
+        "reconstruction_pixels": 5,
+        "opaque_pixels": 123,
+        "expected_fraction": 0.039062
+      },
+      {
+        "reconstruction_pixels": 333,
+        "opaque_pixels": 667,
+        "expected_fraction": 0.333
+      },
+      {
+        "reconstruction_pixels": 0,
+        "opaque_pixels": 0,
+        "expected_fraction": 0.0
+      }
+    ]
+  },
+  "error_strings": {
+    "reconstruction_fraction_disagrees": "reconstruction_fraction disagrees with reconstruction_pixels / (reconstruction_pixels + opaque_pixels)",
+    "reconstruction_applied_no_layer": "reconstruction status is 'applied' but no layer asset or no paper pixels are claimed",
+    "scene_guard_refusal_template": "The scene text names the product: \"{term}\" (from the cut concept \"{concept}\"). Naming the product in a scene prompt makes the image model paint its own copy of it beside the real one. Describe the environment only — the room, the surfaces, the light — and call draw again.",
+    "scene_guard_probe": {
+      "term": "bike",
+      "concept": "blue BMX bike"
+    }
+  }
+}

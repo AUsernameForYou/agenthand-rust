@@ -3378,3 +3378,58 @@ pub fn carve_holes_opts(
     });
     (out, record)
 }
+
+// ---------------------------------------------------------------------
+// EXPERIMENT (Grok lane prescription): differential-fixture tests for
+// the chamfer distance map. The fixture is byte-identical in the
+// Python tree; its expected maps were computed by brute force,
+// independently of both implementations. Added by the cherry-pick
+// experiment; nothing above this line is touched.
+// ---------------------------------------------------------------------
+#[cfg(test)]
+mod interface_contract_chamfer {
+    use super::chessboard_distance;
+    use serde_json::Value;
+
+    fn fixture() -> Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/interface/differential.json"
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn chessboard_distance_matches_differential_fixture() {
+        let fx = fixture();
+        for case in fx["chamfer"]["cases"].as_array().unwrap() {
+            let w = case["w"].as_u64().unwrap() as usize;
+            let h = case["h"].as_u64().unwrap() as usize;
+            let mut target = vec![false; w * h];
+            for t in case["targets"].as_array().unwrap() {
+                let x = t[0].as_u64().unwrap() as usize;
+                let y = t[1].as_u64().unwrap() as usize;
+                target[y * w + x] = true;
+            }
+            let got = chessboard_distance(
+                &target,
+                w,
+                h,
+                case["border_is_target"].as_bool().unwrap(),
+            );
+            let expected: Vec<u8> = case["expected"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|row| {
+                    row.as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| v.as_u64().unwrap() as u8)
+                        .collect::<Vec<u8>>()
+                })
+                .collect();
+            assert_eq!(got, expected, "chamfer case {}", case["name"]);
+        }
+    }
+}

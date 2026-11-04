@@ -1,0 +1,196 @@
+{
+  "backdrop": null,
+  "call_id": "8aee05f7d96841d69f65641630e7b8dd",
+  "call_ids": [
+    "8aee05f7d96841d69f65641630e7b8dd"
+  ],
+  "changed_opaque_pixels": 0,
+  "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+  "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match. The reconstruction block accounts for every generated paper pixel in the frame: paper is placed only where the product layer is fully transparent, is counted separately, and is not product evidence.",
+  "color_profile_foreground_sha256": null,
+  "color_profile_output_sha256": null,
+  "color_profile_preserved": true,
+  "color_profile_source_sha256": null,
+  "color_space": "sRGB (no embedded ICC profile)",
+  "cost_usd": 0.0,
+  "count_sample": "decoded_delivered_file",
+  "cut_quality": {
+    "after": {
+      "codes": [],
+      "grade": "PASS",
+      "instructions": [],
+      "metrics": {
+        "ambiguous_support_pixels": 0,
+        "ambiguous_window_clipped_pixels": 0,
+        "bbox": [
+          0,
+          0,
+          4,
+          4
+        ],
+        "bbox_fill": 1.0,
+        "body_bbox": [
+          0,
+          0,
+          4,
+          4
+        ],
+        "captured_support_components": 0,
+        "components": 1,
+        "coverage": 0.666667,
+        "dominant_fraction": 1.0,
+        "enclosed_hole_pixels": 0,
+        "foreign_top_concavity_pixels": 0,
+        "foreign_top_hole_pixels": 0,
+        "mask_pixels": 16,
+        "observed_support_pixels": 0,
+        "open_geometry_pixels": 0,
+        "proven_top_footprint_pixels": 0,
+        "source_supported_top_concavity_pixels": 0,
+        "source_supported_top_hole_pixels": 0,
+        "top_concavity_pixels": 0,
+        "top_island_pixels": 0,
+        "uncaptured_support_pixels": 0
+      },
+      "source_evidence": true,
+      "version": "agenthand.cut-quality/6"
+    },
+    "before": {
+      "codes": [],
+      "grade": "PASS",
+      "instructions": [],
+      "metrics": {
+        "ambiguous_support_pixels": 0,
+        "ambiguous_window_clipped_pixels": 0,
+        "bbox": [
+          0,
+          0,
+          4,
+          4
+        ],
+        "bbox_fill": 1.0,
+        "body_bbox": [
+          0,
+          0,
+          4,
+          4
+        ],
+        "captured_support_components": 0,
+        "components": 1,
+        "coverage": 0.666667,
+        "dominant_fraction": 1.0,
+        "enclosed_hole_pixels": 0,
+        "foreign_top_concavity_pixels": 0,
+        "foreign_top_hole_pixels": 0,
+        "mask_pixels": 16,
+        "observed_support_pixels": 0,
+        "open_geometry_pixels": 0,
+        "proven_top_footprint_pixels": 0,
+        "source_supported_top_concavity_pixels": 0,
+        "source_supported_top_hole_pixels": 0,
+        "top_concavity_pixels": 0,
+        "top_island_pixels": 0,
+        "uncaptured_support_pixels": 0
+      },
+      "source_evidence": true,
+      "version": "agenthand.cut-quality/6"
+    },
+    "version": "agenthand.cut-quality/6"
+  },
+  "edge_band_max_width_px": 1,
+  "edge_band_pixels": 4,
+  "foreground_asset": "asset://a1eb82d1988c4da1a99749e8827f25a3",
+  "foreground_pixel_sha256": "61f2ad5c519c95bb5fc7542d5dc9056963ffbbf1f08686ee437f793b85169e9e",
+  "foreground_sha256": "fc7f6074e627dffe5a07e3759856a9cba3aeb7dced1a61f6b503d2889c4037be",
+  "mask_asset": null,
+  "mask_pixel_sha256": "966c3b1f32b70cb9a3292840fe7f986f2a7e5b8064cbe5d9c1ec1abdc4669ecd",
+  "mask_pixels_total": 16,
+  "mask_sha256": "9537b355cbd674ac855639e91220355f67e32fe5a4496f0dec60b3ff11459af7",
+  "mask_source": "foreground_alpha",
+  "model": "muse-image-1.0",
+  "opaque_alpha_threshold": 255,
+  "opaque_fraction": 0.75,
+  "opaque_pixels": 12,
+  "output_asset": "asset://4f7fd065afd04cb9bbdb130a23365ed6",
+  "output_format": "PNG",
+  "output_pixel_sha256": "713f652bcf123df17b9552897e285ae1af7d5dceb4cda28f4c7decbad8d08349",
+  "output_sha256": "2cac3a6b46a37abd979808a40537a2c62f75059c8a1c911d4520585a310c1ef1",
+  "pixel_tolerance": 0,
+  "plate_asset": null,
+  "plate_kind": "local_placeholder",
+  "plate_pixel_sha256": null,
+  "plate_quality": {
+    "assessment": {
+      "codes": [],
+      "grade": "PASS",
+      "metrics": {
+        "central_objects": 0,
+        "obstructing_lines": [],
+        "placement_zone": [
+          0.0,
+          0.8,
+          0.72,
+          1.0
+        ],
+        "uniform_studio": true,
+        "wall_floor_y": null
+      },
+      "version": "agenthand.plate-quality/2"
+    },
+    "attempts": [],
+    "fallback": false,
+    "fallback_reason": null,
+    "stage_spec": null,
+    "version": "agenthand.plate-quality/2"
+  },
+  "plate_sha256": null,
+  "plate_source": "local_placeholder",
+  "product_layer_scaled": false,
+  "receipt_schema": 4,
+  "reconstruction": {
+    "attempted": false,
+    "evidence": {
+      "occluder_mask_handles": [],
+      "support_mask_handles": []
+    },
+    "guard_ring_px": 1,
+    "layer_asset": null,
+    "layer_pixel_sha256": null,
+    "layer_sha256": null,
+    "max_fraction": 0.4,
+    "motif": null,
+    "policy_version": "agenthand.paperfill/2",
+    "reconstruction_fraction": 0.0,
+    "reconstruction_overlap_product_pixels": 0,
+    "reconstruction_pixels": 0,
+    "refusals": [],
+    "region_map_asset": null,
+    "region_map_pixel_sha256": null,
+    "region_map_sha256": null,
+    "regions": [],
+    "renderer": null,
+    "status": "none",
+    "unfilled_gap_pixels": 0
+  },
+  "scene_guard": {
+    "checked_terms": [],
+    "concept": null,
+    "reason": "no concept recorded in the foreground's mask; nothing to check the scene text against",
+    "rule": "the scene text describes the environment only \u2014 the room, the surfaces, the light \u2014 and must not name the product: naming it makes the image model paint its own copy of the product into the scene",
+    "status": "skipped"
+  },
+  "scene_prompt": "a bright empty studio",
+  "source_asset": "asset://7f2e00993a254b2dba051740ea8e1cb7",
+  "source_pixel_sha256": "0e76093c41e5ab2ea8ec971cc6836d6bc2752dfc80bfff1551432f380de2f05f",
+  "source_sha256": "22035e3fbc12e8ae9f0f162411fba95f69155687d38b7a8c775d723fbfe920b7",
+  "tool": "draw",
+  "transformations": [],
+  "transparent_pixels": 8,
+  "usage": {
+    "cached_input_tokens": 0,
+    "images": 0,
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "verify_url": "https://ausernameforyou.github.io/agenthand/verify#8486e32b1b57eef2a98d4ded155f9e9816dbc72ded42aefc97d92b9cb6506d6b"
+}

@@ -1,0 +1,1030 @@
+{
+  "$defs": {
+    "asset_handle": {
+      "pattern": "^asset://[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "cut_grade_block": {
+      "properties": {
+        "codes": {
+          "items": {
+            "enum": [
+              "MASK_FRAGMENTED",
+              "SUPPORT_NOT_CAPTURED",
+              "TOP_OCCLUDED",
+              "TOP_PERFORATED"
+            ]
+          },
+          "type": "array"
+        },
+        "grade": {
+          "enum": [
+            "PASS",
+            "REPAIRABLE",
+            "RESHOOT"
+          ]
+        },
+        "instructions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "metrics": {
+          "type": "object"
+        },
+        "source_evidence": {
+          "type": "boolean"
+        },
+        "version": {
+          "const": "agenthand.cut-quality/6"
+        }
+      },
+      "required": [
+        "version",
+        "grade",
+        "codes",
+        "metrics",
+        "instructions",
+        "source_evidence"
+      ],
+      "type": "object",
+      "x-builds": "Python only. The Rust build has no cut grade block on any tool result or receipt (its only grade is the room-run ownership record, see x-grades)."
+    },
+    "hash_pair": {
+      "properties": {
+        "pixel_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256hex"
+        }
+      },
+      "required": [
+        "sha256",
+        "pixel_sha256"
+      ],
+      "type": "object"
+    },
+    "hashes": {
+      "properties": {
+        "foreground": {
+          "$ref": "#/$defs/hash_pair"
+        },
+        "mask": {
+          "$ref": "#/$defs/hash_pair"
+        },
+        "source": {
+          "$ref": "#/$defs/hash_pair"
+        }
+      },
+      "required": [
+        "source",
+        "foreground",
+        "mask"
+      ],
+      "type": "object"
+    },
+    "ledger_receipt": {
+      "properties": {
+        "phase": {
+          "enum": [
+            "pending",
+            "settled",
+            "final"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "x-values": "\"ok\" normally; Rust also \"stub\" (placeholder draw) and \"over_cap\" (settle breached the cap)"
+        },
+        "tool": {
+          "enum": [
+            "identify",
+            "cut_out",
+            "draw"
+          ]
+        }
+      },
+      "required": [
+        "tool",
+        "model",
+        "usd_estimate",
+        "pricing_table_version",
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "images",
+        "status",
+        "phase",
+        "call_id",
+        "note",
+        "timestamp"
+      ],
+      "type": "object",
+      "x-source": "Identical 13-field shape in both builds (Rust ledger::Receipt / Python ledger.Receipt) and in the frozen replay ledger lines."
+    },
+    "mask_provenance": {
+      "properties": {
+        "sam_height": {
+          "type": "integer"
+        },
+        "sam_width": {
+          "type": "integer"
+        },
+        "scale_method": {
+          "enum": [
+            "none",
+            "bilinear_threshold_128"
+          ]
+        },
+        "source_height": {
+          "type": "integer"
+        },
+        "source_width": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source_width",
+        "source_height",
+        "sam_width",
+        "sam_height",
+        "scale_method"
+      ],
+      "type": "object",
+      "x-notes": "The mask PNG text chunk carries a 6th key, concept, in both builds; results and receipts republish only these five."
+    },
+    "plate_grade_block": {
+      "properties": {
+        "codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "grade": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "metrics": {
+          "type": "object"
+        },
+        "version": {
+          "const": "agenthand.plate-quality/2"
+        }
+      },
+      "required": [
+        "version",
+        "grade",
+        "codes",
+        "metrics"
+      ],
+      "type": "object",
+      "x-builds": "Python only. Plate codes: WALL_FLOOR_LINE_UNCLEAR, WALL_FLOOR_LINE_IN_PLACEMENT, RAISED_SLAB_OR_INTERRUPTED_FLOOR, CENTRAL_OBJECT, CODE_BACKDROP_MISMATCH, PLATE_REPORT_MISMATCH (synthetic)."
+    },
+    "receipt_any_core": {
+      "properties": {
+        "changed_opaque_pixels": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "color_profile_output_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256hex"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color_profile_preserved": {
+          "type": "boolean"
+        },
+        "color_profile_source_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256hex"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "edge_band_max_width_px": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "edge_band_pixels": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "foreground_asset": {
+          "$ref": "#/$defs/asset_handle"
+        },
+        "foreground_pixel_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "foreground_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "mask_pixels_total": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "opaque_fraction": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "opaque_pixels": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_asset": {
+          "$ref": "#/$defs/asset_handle"
+        },
+        "output_pixel_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "output_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "source_asset": {
+          "$ref": "#/$defs/asset_handle"
+        },
+        "source_pixel_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256hex"
+        },
+        "transparent_pixels": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source_asset",
+        "foreground_asset",
+        "output_asset",
+        "source_sha256",
+        "source_pixel_sha256",
+        "foreground_sha256",
+        "foreground_pixel_sha256",
+        "output_sha256",
+        "output_pixel_sha256",
+        "changed_opaque_pixels",
+        "opaque_pixels",
+        "edge_band_pixels",
+        "transparent_pixels",
+        "mask_pixels_total",
+        "edge_band_max_width_px",
+        "opaque_fraction",
+        "color_profile_source_sha256",
+        "color_profile_output_sha256",
+        "color_profile_preserved"
+      ],
+      "type": "object",
+      "x-source": "Python composite._RECEIPT_FIELDS_ANY_SCHEMA \u2014 the field set every receipt version is graded on; the intersection both verifiers demand."
+    },
+    "receipt_v1_frozen": {
+      "properties": {
+        "mask_asset": {
+          "$ref": "#/$defs/asset_handle"
+        },
+        "plate_asset": {
+          "$ref": "#/$defs/asset_handle"
+        },
+        "provenance": {
+          "required": [
+            "call_ids",
+            "freeze_note",
+            "originally_recorded",
+            "run",
+            "settled_costs_usd"
+          ],
+          "type": "object",
+          "x-warning": "Freeze/run attribution (call_ids, freeze_note, originally_recorded, run, settled_costs_usd) \u2014 NOT the file-signals provenance block of v2+ receipts. Same key name, different shape; both are contractual in their own version."
+        }
+      },
+      "required": [
+        "changed_opaque_pixels",
+        "color_profile_output_sha256",
+        "color_profile_preserved",
+        "color_profile_source_sha256",
+        "edge_band_max_width_px",
+        "edge_band_pixels",
+        "foreground_asset",
+        "foreground_pixel_sha256",
+        "foreground_sha256",
+        "mask_asset",
+        "mask_pixels_total",
+        "opaque_fraction",
+        "opaque_pixels",
+        "output_asset",
+        "output_pixel_sha256",
+        "output_sha256",
+        "plate_asset",
+        "provenance",
+        "source_asset",
+        "source_pixel_sha256",
+        "source_sha256",
+        "transparent_pixels"
+      ],
+      "type": "object",
+      "x-source": "conformance/replay-package/receipt.json \u2014 the historical unmarked (pre-receipt_schema) fidelity receipt, 22 keys, sha256 f0f68ec2\u2026 in the package manifest. A v1 receipt carrying any v2-only field is refused by the legacy downgrade guard."
+    },
+    "receipt_v2_rust": {
+      "properties": {
+        "count_sample": {
+          "const": "decoded_delivered_file"
+        },
+        "mask_source": {
+          "enum": [
+            "asset",
+            "foreground_alpha"
+          ]
+        },
+        "model": {
+          "const": "muse-image-1.0"
+        },
+        "output_format": {
+          "const": "PNG"
+        },
+        "pixel_tolerance": {
+          "const": 0
+        },
+        "plate_kind": {
+          "enum": [
+            "model_generated",
+            "local_placeholder",
+            "source_edit",
+            "source_blur"
+          ]
+        },
+        "plate_source": {
+          "enum": [
+            "asset",
+            "local_placeholder"
+          ]
+        },
+        "product_layer_scaled": {
+          "const": false
+        },
+        "receipt_schema": {
+          "const": 2
+        },
+        "scene_guard": {
+          "$ref": "#/$defs/scene_guard_record"
+        },
+        "tool": {
+          "const": "draw"
+        },
+        "usage": {
+          "$ref": "#/$defs/usage4"
+        }
+      },
+      "required": [
+        "receipt_schema",
+        "source_asset",
+        "source_sha256",
+        "source_pixel_sha256",
+        "foreground_asset",
+        "foreground_sha256",
+        "foreground_pixel_sha256",
+        "mask_asset",
+        "mask_sha256",
+        "mask_pixel_sha256",
+        "mask_source",
+        "changed_opaque_pixels",
+        "opaque_pixels",
+        "edge_band_pixels",
+        "transparent_pixels",
+        "mask_pixels_total",
+        "opaque_fraction",
+        "edge_band_max_width_px",
+        "opaque_alpha_threshold",
+        "changed_predicate",
+        "pixel_tolerance",
+        "count_sample",
+        "output_asset",
+        "output_sha256",
+        "output_pixel_sha256",
+        "output_format",
+        "color_space",
+        "color_profile_source_sha256",
+        "color_profile_foreground_sha256",
+        "color_profile_output_sha256",
+        "color_profile_preserved",
+        "transformations",
+        "product_layer_scaled",
+        "plate_source",
+        "plate_asset",
+        "plate_sha256",
+        "plate_pixel_sha256",
+        "plate_kind",
+        "backdrop",
+        "claim",
+        "tool",
+        "model",
+        "scene_prompt",
+        "scene_guard",
+        "cost_usd",
+        "usage",
+        "call_id"
+      ],
+      "type": "object",
+      "x-conditional": [
+        "edge_fix (source-derived plates)",
+        "shadow (source-derived plates)",
+        "ground_shadow (generated plates)",
+        "ground_match (generated plates with a plan)",
+        "plate_fitted_pixel_sha256 (generated plates)",
+        "mask_source_width/mask_source_height/mask_sam_width/mask_sam_height/mask_scale_method (complete set, mask carried provenance)",
+        "provenance (source PNG carried the signals block)",
+        "verify_url + qr_sha256 (QR sidecar built; Rust-only annotation)"
+      ],
+      "x-source": "Issued by the Rust build (RECEIPT_SCHEMA_VERSION = 2): composite::draw_product_impl base receipt + server::persist_full_receipt enrichment."
+    },
+    "receipt_v4_python": {
+      "properties": {
+        "count_sample": {
+          "const": "decoded_delivered_file"
+        },
+        "cut_quality": {
+          "properties": {
+            "after": {
+              "$ref": "#/$defs/cut_grade_block"
+            },
+            "before": {
+              "$ref": "#/$defs/cut_grade_block"
+            },
+            "version": {
+              "const": "agenthand.cut-quality/6"
+            }
+          },
+          "required": [
+            "version",
+            "before",
+            "after"
+          ],
+          "type": "object",
+          "x-constraint": "before.grade in (PASS, REPAIRABLE); after.grade == PASS \u2014 enforced by preflight (StageabilityError) before a receipt can issue."
+        },
+        "mask_source": {
+          "enum": [
+            "asset",
+            "foreground_alpha"
+          ]
+        },
+        "model": {
+          "const": "muse-image-1.0"
+        },
+        "opaque_alpha_threshold": {
+          "const": 255
+        },
+        "output_format": {
+          "const": "PNG"
+        },
+        "pixel_tolerance": {
+          "const": 0
+        },
+        "plate_kind": {
+          "enum": [
+            "model_generated",
+            "code_rendered",
+            "local_placeholder",
+            "source_edit",
+            "source_blur"
+          ]
+        },
+        "plate_quality": {
+          "properties": {
+            "assessment": {
+              "$ref": "#/$defs/plate_grade_block"
+            },
+            "version": {
+              "const": "agenthand.plate-quality/2"
+            }
+          },
+          "required": [
+            "version",
+            "assessment",
+            "attempts",
+            "fallback",
+            "fallback_reason",
+            "stage_spec"
+          ],
+          "type": "object"
+        },
+        "plate_source": {
+          "enum": [
+            "asset",
+            "local_placeholder"
+          ]
+        },
+        "product_layer_scaled": {
+          "const": false
+        },
+        "receipt_schema": {
+          "const": 4
+        },
+        "reconstruction": {
+          "$ref": "#/$defs/reconstruction_block"
+        },
+        "scene_guard": {
+          "$ref": "#/$defs/scene_guard_record"
+        },
+        "tool": {
+          "const": "draw"
+        }
+      },
+      "required": [
+        "receipt_schema",
+        "scene_prompt",
+        "source_asset",
+        "source_sha256",
+        "source_pixel_sha256",
+        "foreground_asset",
+        "foreground_sha256",
+        "foreground_pixel_sha256",
+        "mask_asset",
+        "mask_sha256",
+        "mask_pixel_sha256",
+        "mask_source",
+        "changed_opaque_pixels",
+        "opaque_pixels",
+        "edge_band_pixels",
+        "transparent_pixels",
+        "mask_pixels_total",
+        "opaque_fraction",
+        "edge_band_max_width_px",
+        "opaque_alpha_threshold",
+        "changed_predicate",
+        "pixel_tolerance",
+        "count_sample",
+        "output_asset",
+        "output_sha256",
+        "output_pixel_sha256",
+        "output_format",
+        "color_space",
+        "color_profile_source_sha256",
+        "color_profile_foreground_sha256",
+        "color_profile_output_sha256",
+        "color_profile_preserved",
+        "transformations",
+        "product_layer_scaled",
+        "plate_source",
+        "plate_asset",
+        "plate_sha256",
+        "plate_pixel_sha256",
+        "plate_kind",
+        "backdrop",
+        "claim",
+        "reconstruction",
+        "plate_quality",
+        "cut_quality",
+        "tool",
+        "model",
+        "scene_guard",
+        "cost_usd",
+        "usage",
+        "call_id",
+        "call_ids",
+        "verify_url"
+      ],
+      "type": "object",
+      "x-conditional": [
+        "edge_fix (edge-fix plate kinds only)",
+        "the five mask_* provenance fields (complete set)",
+        "provenance (source PNG carried the signals block)"
+      ],
+      "x-never": [
+        "qr_sha256 / qr_asset on the persisted receipt \u2014 the QR sidecar fields exist in the Rust build only"
+      ],
+      "x-source": "Issued by the Python build (RECEIPT_SCHEMA_VERSION = 4): composite.draw_product receipt + server enrichment (_persist_full_receipt, _annotate_verify_fields).",
+      "x-verification_asymmetry": "VERIFIER STRICTNESS GAP, CLOSED by decision 150 (2026-11-03): Python's validator requires cut_quality and plate_quality on a schema-4 receipt and fails closed without them ('missing field: cut_quality'); Rust's verifier originally graded schema 4 under its schema-3-era policy and accepted the same stripped receipt with zero problems (measured by the Differential Conformance Suite experiment, both directions pinned in the suites). Rust now requires both blocks on schema-4 receipts and fails closed identically. Genuine issued receipts cross-verify in both directions; a downgraded v4 receipt verifies in neither build."
+    },
+    "reconstruction_block": {
+      "properties": {
+        "attempted": {
+          "type": "boolean"
+        },
+        "guard_ring_px": {
+          "const": 1
+        },
+        "max_fraction": {
+          "const": 0.4
+        },
+        "policy_version": {
+          "const": "agenthand.paperfill/2"
+        },
+        "reconstruction_fraction": {
+          "type": "number"
+        },
+        "status": {
+          "enum": [
+            "none",
+            "applied",
+            "refused"
+          ]
+        },
+        "x-formula": "reconstruction_fraction == round6(reconstruction_pixels / (reconstruction_pixels + opaque_pixels)), 0.0 when the denominator is 0; verifier tolerance 1e-9. Pinned by the shared differential fixture."
+      },
+      "required": [
+        "policy_version",
+        "max_fraction",
+        "attempted",
+        "status",
+        "renderer",
+        "evidence",
+        "layer_asset",
+        "layer_sha256",
+        "layer_pixel_sha256",
+        "region_map_asset",
+        "region_map_sha256",
+        "region_map_pixel_sha256",
+        "reconstruction_pixels",
+        "reconstruction_overlap_product_pixels",
+        "reconstruction_fraction",
+        "guard_ring_px",
+        "motif",
+        "regions",
+        "refusals",
+        "unfilled_gap_pixels"
+      ],
+      "type": "object",
+      "x-source": "Python composite receipt block (v3+; required and policy-checked at v4). The Rust verifier checks the same key set and the same policy constants in schema-3/4 receipts it verifies; the Rust build does not issue this block (its receipts are v2)."
+    },
+    "scene_guard_record": {
+      "properties": {
+        "checked_terms": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "concept": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offending_term": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rule": {
+          "const": "the scene text describes the environment only \u2014 the room, the surfaces, the light \u2014 and must not name the product: naming it makes the image model paint its own copy of the product into the scene"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "refused",
+            "skipped"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "concept",
+        "checked_terms",
+        "rule"
+      ],
+      "type": "object",
+      "x-notes": "offending_term present only on refusals; reason present only when status is \"skipped\", verbatim: \"no concept recorded in the foreground's mask; nothing to check the scene text against\". Identical in both builds (verified from sceneguard.rs / sceneguard.py and live probes)."
+    },
+    "sha256hex": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "usage4": {
+      "properties": {
+        "cached_input_tokens": {
+          "type": "integer"
+        },
+        "images": {
+          "type": "integer"
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cached_input_tokens",
+        "images"
+      ],
+      "type": "object",
+      "x-divergence": "Python live draw returns usage as the 1-key object {\"images\": n}: generate_background_plate's combined billing assigns usage={\"images\": len(billings)}, overriding the last billed_call's 4-key usage. Rust draw returns the full 4-key object. identify and cut_out return the 4-key object in both builds. REAL result-shape divergence, recorded; see x-results.draw."
+    }
+  },
+  "$id": "agenthand/interface/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agenthand interface contract",
+  "tools": {
+    "cut_out": {
+      "inputSchema": {
+        "properties": {
+          "concept": {
+            "type": "string"
+          },
+          "image": {
+            "description": "The product photo \u2014 an asset handle (asset://<id>), an http(s) URL, or a base64 data URI.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "type": "object"
+      },
+      "x-differences": [
+        {
+          "classification": "intentional, wire-compatible: the argument is optional in both; Rust never requires or receives an explicit null, Python accepts one.",
+          "field": "concept schema type",
+          "python": "{\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null}, generated from `concept: str | None = None`",
+          "rust": "{\"type\": \"string\"} with a description; no default",
+          "severity": "cosmetic"
+        }
+      ]
+    },
+    "draw": {
+      "inputSchema": {
+        "properties": {
+          "asset": {
+            "description": "Asset handle (asset://<id>) of the cut-out product layer produced by cut_out.",
+            "type": "string"
+          },
+          "scene_prompt": {
+            "description": "Description of the scene to generate around the product \u2014 the environment only (the room, the surfaces, the light); never name the product itself, or the draw is refused before any spend.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset",
+          "scene_prompt"
+        ],
+        "type": "object"
+      },
+      "x-differences": [
+        {
+          "classification": "REAL interface divergence, intentional per build: a client may send `plate` only to the Rust build. Recorded here so no client depends on it cross-build by accident.",
+          "field": "plate argument",
+          "python": "No `plate` parameter exists in the signature. Python draw always builds a generated-family plate: the scene text is compiled to a StageSpec (agenthand.stage-spec/2; only studio/concrete/warm selections are recognized, unmatched prose is dropped and disclosed via scene_prompt_note), with disclosed code-rendered fallbacks.",
+          "rust": "Optional `plate` argument, enum [\"source_edit\", \"generated\"], default resolution arg -> AGENTHAND_DRAW_PLATE env -> \"generated\"; unknown values are a BAD_ARGUMENT error. source_edit mode keeps the photo's own ground and light.",
+          "severity": "capability"
+        },
+        {
+          "classification": "intentional per-build behavior behind the same argument; both honor the scene guard identically.",
+          "field": "scene_prompt semantics",
+          "python": "Prose is compiled to the fixed StageSpec vocabulary; arbitrary rooms are not supported and the reduction is disclosed in the result (scene_prompt_note, stage_spec).",
+          "rust": "Free prose is sent to the image model as the scene description, steered by measured angle/light records.",
+          "severity": "behavioral"
+        }
+      ]
+    },
+    "identify": {
+      "inputSchema": {
+        "properties": {
+          "image": {
+            "description": "The product photo \u2014 an asset handle (asset://<id>), an http(s) URL, or a base64 data URI.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "type": "object"
+      },
+      "x-differences": []
+    }
+  },
+  "version": "agenthand.interface/1",
+  "x-derived-from": "The shipped code of both builds (Rust consolidation b1b7ec2 incl. the scene guard; Python living tree 6f830e5), extracted field-by-field in extract-rust.md / extract-python.md beside this file, and verified against the live tools/list of both servers by harness/contract_check.py.",
+  "x-descriptions": "Tool description/docstring prose is NOT part of this contract. The builds word their descriptions independently (Rust: terse wire copy; Python: long docstrings). The contract pins names, argument types, fields, grades, and codes \u2014 not prose.",
+  "x-errors": {
+    "envelope": {
+      "notes": [
+        "cost_counted_usd / call_made are NOT universal error extras: they appear only on the codes whose call flow counted spend (documented per code in the extracts). NOT_CONFIGURED, BAD_ARGUMENT, NO_CONCEPT, NOT_A_SOURCE_PHOTO carry neither.",
+        "FIDELITY_VIOLATION puts output_asset / fidelity_receipt / cost_usd INSIDE the error object in both builds (Rust: cost_usd, not cost_counted_usd).",
+        "Spend-cap refusal is a result code in Rust (SPEND_CAP_REFUSED, message starts \"Spend cap\") and an exception in Python (ledger.SpendCapExceeded / SpendCapExceededAtSettle, message prefix \"SPEND CAP EXCEEDED at settle: ...\"). Recorded as a mechanism difference, not a wording contract."
+      ],
+      "python_only_codes": [
+        "NOT_A_SOURCE_PHOTO"
+      ],
+      "rust_only_codes": [
+        "HOLE_CARVE_INCOMPLETE",
+        "BAD_ARGUMENT",
+        "EMPTY_FOREGROUND",
+        "STAGING_FAILED",
+        "SPEND_CAP_REFUSED",
+        "BILLING_REFUSED",
+        "BILLING_STOPPED_AFTER_CALL"
+      ],
+      "shape": "{status: \"error\", tool, <echo/null fields>, error: {code, message, ...extras inside error}}",
+      "shared_codes": [
+        "NOT_CONFIGURED",
+        "BAD_MODEL_RESPONSE",
+        "NO_CONCEPT",
+        "NO_MATCH",
+        "POOR_MASK",
+        "SCENE_NAMES_PRODUCT",
+        "FIDELITY_VIOLATION",
+        "IMAGE_REFUSED",
+        "BAD_IMAGE_RESPONSE",
+        "IMAGE_CALL_FAILED"
+      ]
+    },
+    "exception_carried": {
+      "python": [
+        "PLATE_REJECTED (PlateQualityError)",
+        "RESHOOT_REQUIRED (StageabilityError)",
+        "SpendCapExceeded / SpendCapExceededAtSettle",
+        "FidelityLockError (lineage/integrity)",
+        "KeyError (unknown handle)"
+      ],
+      "rust": "Propagated Err(String) becomes JSON-RPC {code: -32603, message}; contained panics surface as \"<tool> failed (internal fault contained; the server is still running)\"."
+    }
+  },
+  "x-grades": {
+    "cut": {
+      "block_version": "agenthand.cut-quality/6",
+      "classification": "intentional, documented asymmetry: grading lives in the Python reference build; the Rust build carries the measured counts and lets the caller decide. A client must not expect a grade from the Rust build.",
+      "python": "Present: mask_review.cut_quality on every cut_out result; receipt cut_quality.before/after on every v4 draw receipt (after.grade is always PASS).",
+      "rust": "ABSENT from tool results and from the fidelity receipt. The only Rust grade is the room-run ownership record cut_quality.grade in {PASS, RESHOOT} (no REPAIRABLE), which is not part of the MCP tool surface.",
+      "vocabulary": [
+        "PASS",
+        "REPAIRABLE",
+        "RESHOOT"
+      ]
+    },
+    "plate": {
+      "block_version": "agenthand.plate-quality/2",
+      "classification": "intentional, documented asymmetry, as for cut grades.",
+      "python": "Present inside receipt plate_quality.assessment and attempts[].quality (v4 receipts).",
+      "rust": "ABSENT (no plate grade block; plate outcomes surface as result fields and error codes).",
+      "vocabulary": [
+        "PASS",
+        "FAIL"
+      ]
+    }
+  },
+  "x-models": {
+    "cut_out": "sam-3.1",
+    "draw": "muse-image-1.0",
+    "identify": "muse-spark-1.3"
+  },
+  "x-purpose": "One written contract for the agenthand MCP interface: tool names and argument types, result and receipt fields per receipt schema version, the grade vocabularies, and the error-code vocabularies. Two independent implementations (Rust product, Python reference) are tested against this file. Where the builds intentionally differ, the difference is recorded here as data (x-differences); a difference that is not recorded here fails the contract tests.",
+  "x-results": {
+    "cut_out": {
+      "always_both": [
+        "status",
+        "tool",
+        "image",
+        "concept",
+        "requested_concept",
+        "concept_source",
+        "alternates",
+        "plan_error",
+        "output_asset",
+        "mask_asset",
+        "mask_overlay_asset",
+        "mask_review",
+        "mask_provenance",
+        "hashes",
+        "attempts",
+        "model",
+        "cost_usd",
+        "usage",
+        "call_id"
+      ],
+      "notes": "mask_review differs inside: Rust has exactly {mask_pixels, coverage, bbox, bbox_fill, touches_frame_edges, warnings}; Python carries those (coverage/bbox_fill rounded to 6dp) PLUS cut_quality (the cut grade block) and dropped_component_pixels. attempts items share {phrase, records, outcome} with outcome in {accepted, no_match, poor_mask, unparseable}; Python items also carry tile/sam_width/sam_height/scale_method.",
+      "python_only_always": [
+        "cut_evidence",
+        "cut_pipeline_version (\"agenthand.cut-pipeline/3\")",
+        "concept_rewritten_from"
+      ],
+      "rust_only_always": [
+        "hole_carve"
+      ]
+    },
+    "draw": {
+      "live_always_both": [
+        "status",
+        "tool",
+        "asset",
+        "scene_prompt",
+        "output_asset",
+        "plate_asset",
+        "fidelity_receipt",
+        "model",
+        "cost_usd",
+        "note",
+        "scene_guard",
+        "verify_url",
+        "label"
+      ],
+      "placeholder": {
+        "both": "plate_asset: null; no usage and no call_id on the result in EITHER build; fidelity_receipt plate_kind/plate_source are \"local_placeholder\".",
+        "divergence": "Rust placeholder results carry no verify_url/label/qr_asset unless the QR sidecar succeeded (conditional); Python placeholder results always carry verify_url/label. The persisted placeholder receipts still validate against receipt_v2_rust / receipt_v4_python respectively (Python's carries usage as the stub's 4-key zero object and call_id; Rust's placeholder ledger row has status \"stub\").",
+        "python_keys": [
+          "status",
+          "tool",
+          "asset",
+          "scene_prompt",
+          "output_asset",
+          "plate_asset",
+          "scene_guard",
+          "stage_spec (null)",
+          "scene_prompt_note",
+          "fidelity_receipt",
+          "model",
+          "cost_usd",
+          "note",
+          "verify_url",
+          "label"
+        ],
+        "rust_keys": [
+          "status",
+          "tool",
+          "asset",
+          "scene_prompt",
+          "output_asset",
+          "plate_asset",
+          "fidelity_receipt",
+          "model",
+          "cost_usd",
+          "note",
+          "scene_guard",
+          "shadow"
+        ]
+      },
+      "python_live_extra_always": [
+        "stage_spec",
+        "scene_prompt_note",
+        "angle_lock (different record shape from Rust's)"
+      ],
+      "python_live_usage": "1-key {\"images\": n} \u2014 see $defs/usage4 x-divergence.",
+      "rust_conditional": [
+        "qr_asset (with verify_url/label, QR sidecar)",
+        "ground_shadow",
+        "ground_match",
+        "provenance",
+        "location_warning",
+        "ground_descriptor/scene_exclusions (generated) or plate_kind/subject/plate_fallback (source_edit)"
+      ],
+      "rust_live_extra_always": [
+        "usage (4-key)",
+        "shadow",
+        "plate_mode",
+        "angle_lock",
+        "light_direction",
+        "thin_structure"
+      ]
+    },
+    "identify": {
+      "always_both": [
+        "status",
+        "tool",
+        "image",
+        "description",
+        "concept",
+        "alternates",
+        "suggested_title",
+        "listing_bullets",
+        "condition_notes",
+        "model",
+        "cost_usd",
+        "usage",
+        "call_id",
+        "pricing"
+      ],
+      "notes": "usage is the 4-key object in both builds. Error results: same echo/null skeleton in both; Python adds concept_rewritten_from: null.",
+      "python_only_always": [
+        "concept_rewritten_from"
+      ],
+      "rust_only_always": [
+        "attempts"
+      ]
+    }
+  },
+  "x-transport": {
+    "python": "Tools return the result dict directly (the MCP SDK wraps it); draw success returns [result_dict, Image], draw errors return the bare dict. Exception-carried failures (PLATE_REJECTED, RESHOOT_REQUIRED, SpendCapExceeded, FidelityLockError, KeyError) propagate as MCP tool errors, never as result dicts.",
+    "rust": "tools/call returns {content: [text JSON, ...], structuredContent: <result object>, isError: false}; isError is false even for status:\"error\" results; draw success appends an image content block. Propagated internal errors become a JSON-RPC error {code: -32603, message}."
+  }
+}

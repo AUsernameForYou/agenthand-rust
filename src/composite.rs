@@ -2570,6 +2570,21 @@ fn receipt_schema_problems(receipt: &Value) -> Vec<String> {
     if version.map(|v| v >= 3).unwrap_or(false) {
         problems.extend(reconstruction_problems(receipt));
     }
+    // Python: a schema-4 receipt must carry its quality blocks;
+    // `_validate_receipt` refuses one stripped of them with
+    // "missing field: cut_quality" / "missing field: plate_quality".
+    // Decision 150 closes the strictness gap the Differential
+    // Conformance Suite measured: this verifier originally graded
+    // v4 under its v3-era policy and accepted the stripped receipt;
+    // it now fails closed identically. Genuine v4 receipts carry
+    // both blocks and are unaffected.
+    if version == Some(4) {
+        for field in ["cut_quality", "plate_quality"] {
+            if receipt.get(field).is_none() {
+                problems.push(format!("missing field: {field}"));
+            }
+        }
+    }
     if !strict && V2_ONLY_FIELDS.iter().any(|f| receipt.get(f).is_some()) {
         problems.push(
             "receipt carries current-schema fields but no valid \
@@ -3937,3 +3952,121 @@ pub fn soften_thin_holes(
     report.texture_after = mean_local_std(&plate_to_grid(&out, ww, wh), ww, wh, &hole_sel);
     (out, report)
 }
+
+// ---------------------------------------------------------------------
+// EXPERIMENT (Grok lane prescription): receipt cross-verification and
+// reconstruction-formula tests against the shared differential
+// fixture (byte-identical in the Python tree). Grok's kill-shot: a
+// receipt one build issues must verify under the other build's own
+// version policy. Added by the cherry-pick experiment; nothing above
+// this line is touched.
+// ---------------------------------------------------------------------
+#[cfg(test)]
+mod interface_contract_receipts {
+    use super::receipt_schema_problems;
+    use serde_json::Value;
+
+    fn load(rel: &str) -> Value {
+        let path = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), rel);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn fixture() -> Value {
+        load("tests/fixtures/interface/differential.json")
+    }
+
+    #[test]
+    fn own_v2_receipt_has_no_schema_problems() {
+        let receipt = load("tests/fixtures/interface/receipts/rust-v2.json");
+        assert_eq!(receipt_schema_problems(&receipt), Vec::<String>::new());
+    }
+
+    #[test]
+    fn python_v4_receipt_verifies_under_rust_policy() {
+        // Grok's kill-shot, this direction: the Python build's issued
+        // schema-4 receipt (cut_quality, plate_quality, reconstruction
+        // blocks and all) under THIS build's verifier.
+        let receipt = load("tests/fixtures/interface/receipts/py-v4.json");
+        assert_eq!(receipt_schema_problems(&receipt), Vec::<String>::new());
+    }
+
+    #[test]
+    fn stripped_v4_quality_blocks_fail_closed() {
+        // Decision 150 (closing the experiment's headline finding):
+        // the Python validator fails a schema-4 receipt closed when
+        // cut_quality or plate_quality is missing ("missing field"),
+        // and this build now does the same. Before the fix, v4 was
+        // graded under the v3-era policy here and the stripped
+        // receipt was accepted; genuine receipts cross-verify both
+        // ways, and a downgraded one now verifies nowhere.
+        for strip in ["cut_quality", "plate_quality"] {
+            let mut receipt = load("tests/fixtures/interface/receipts/py-v4.json");
+            receipt.as_object_mut().unwrap().remove(strip);
+            let problems = receipt_schema_problems(&receipt);
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| p == &format!("missing field: {strip}")),
+                "stripped {strip}: expected a missing-field problem, got {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_v3_receipt_verifies_under_rust_policy() {
+        let receipt = load("tests/fixtures/interface/receipts/py-v3-legacy.json");
+        assert_eq!(receipt_schema_problems(&receipt), Vec::<String>::new());
+    }
+
+    #[test]
+    fn reconstruction_formula_and_wording_match_contract() {
+        // The same cases the Python suite runs through its own
+        // validator: a stated fraction equal to the independently
+        // computed value draws no complaint; +0.01 draws the exact
+        // contract string.
+        let fx = fixture();
+        let want = fx["error_strings"]["reconstruction_fraction_disagrees"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let handle = format!("asset://{}", "0".repeat(32));
+        for case in fx["reconstruction_fraction"]["cases"].as_array().unwrap() {
+            let recon = case["reconstruction_pixels"].as_u64().unwrap();
+            if recon == 0 {
+                continue;
+            }
+            let mut receipt = load("tests/fixtures/interface/receipts/py-v4.json");
+            receipt["opaque_pixels"] = case["opaque_pixels"].clone();
+            {
+                let block = receipt["reconstruction"].as_object_mut().unwrap();
+                block.insert("status".into(), "applied".into());
+                block.insert("attempted".into(), true.into());
+                block.insert("renderer".into(), "agenthand.paperfill/2".into());
+                block.insert("layer_asset".into(), handle.clone().into());
+                block.insert("layer_sha256".into(), "0".repeat(64).into());
+                block.insert("layer_pixel_sha256".into(), "0".repeat(64).into());
+                block.insert("region_map_asset".into(), handle.clone().into());
+                block.insert("region_map_sha256".into(), "0".repeat(64).into());
+                block.insert("region_map_pixel_sha256".into(), "0".repeat(64).into());
+                block.insert("reconstruction_pixels".into(), recon.into());
+                block.insert(
+                    "reconstruction_fraction".into(),
+                    case["expected_fraction"].clone(),
+                );
+            }
+            let problems = receipt_schema_problems(&receipt);
+            assert!(
+                !problems.iter().any(|p| p == &want),
+                "case {case}: unexpected fraction complaint in {problems:?}"
+            );
+            let bad = case["expected_fraction"].as_f64().unwrap() + 0.01;
+            receipt["reconstruction"]["reconstruction_fraction"] = bad.into();
+            let problems = receipt_schema_problems(&receipt);
+            assert!(
+                problems.iter().any(|p| p == &want),
+                "case {case}: contract wording missing from {problems:?}"
+            );
+        }
+    }
+}
+

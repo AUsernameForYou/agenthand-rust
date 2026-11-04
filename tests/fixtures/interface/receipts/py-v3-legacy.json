@@ -1,0 +1,79 @@
+{
+  "backdrop": null,
+  "changed_opaque_pixels": 0,
+  "changed_predicate": "a pixel counts as changed when its RGBA value in the composite differs at all from the stored foreground at a position where the foreground alpha equals opaque_alpha_threshold; edge-band pixels (0 < alpha < threshold) blend by design, are excluded from the count, and are published above as edge_band_pixels and edge_band_max_width_px",
+  "claim": "The stored extracted foreground reached the composite unchanged: every fully opaque foreground pixel in the composite is identical to the stored foreground layer (foreground hashes above pin that layer). Edge-band pixels blend with the plate by design and are counted separately. The composite carries the source photo's colour profile unchanged (color_profile_preserved above); a profile change is a fidelity failure even when pixel values match. The reconstruction block accounts for every generated paper pixel in the frame: paper is placed only where the product layer is fully transparent, is counted separately, and is not product evidence.",
+  "color_profile_foreground_sha256": null,
+  "color_profile_output_sha256": null,
+  "color_profile_preserved": true,
+  "color_profile_source_sha256": null,
+  "color_space": "sRGB (no embedded ICC profile)",
+  "count_sample": "decoded_delivered_file",
+  "edge_band_max_width_px": 0,
+  "edge_band_pixels": 0,
+  "foreground_asset": "asset://574f30601ad14750a50d50331b4d7163",
+  "foreground_pixel_sha256": "69910f51edab15276e5d530440ea0ec129ef47e112f755033c7f5d4c080d77bf",
+  "foreground_sha256": "48eeaf3432585a62b7cc463ef47e1c39053f1951c45b5d3ebc36ef4e9f6f4d48",
+  "mask_asset": "asset://5fee1e2b3f5e4ebf9c51c012b6ffb4c6",
+  "mask_pixel_sha256": "4bd190102175ee44425aea30c06c05ceb4c30514b7a2755649a2f396751ef7a6",
+  "mask_pixels_total": 4500,
+  "mask_sha256": "4aaf0dac1e2ecbec1c655294ef481ff204e6bcf5b33ea0dee0de3744fa7fd9c5",
+  "mask_source": "asset",
+  "opaque_alpha_threshold": 255,
+  "opaque_fraction": 1.0,
+  "opaque_pixels": 4500,
+  "output_asset": "asset://a330b2b889eb4e84885e20af00eda218",
+  "output_format": "PNG",
+  "output_pixel_sha256": "95ace455a7773603ac2d609fb67023494809511afe5eb90f47a952475295014e",
+  "output_sha256": "d0598615539168f4b2df636860c58dc01fea40be571d7cc1f72bc64d120dbde2",
+  "pixel_tolerance": 0,
+  "plate_asset": null,
+  "plate_kind": "local_placeholder",
+  "plate_pixel_sha256": null,
+  "plate_sha256": null,
+  "plate_source": "local_placeholder",
+  "product_layer_scaled": false,
+  "receipt_schema": 3,
+  "reconstruction": {
+    "guard_ring_px": 1,
+    "layer_asset": "asset://5ce67d7f2e374404800101e74e78be2d",
+    "layer_pixel_sha256": "fb9e6f1aeb14f5f953cae74b7ed1c7085697f60fcb4f5bc44db5f9b161f93dfe",
+    "layer_sha256": "96c430397880b5ec87a9074d2219319421b2de5f7dc8777c5ce620962a96cbf3",
+    "motif": {
+      "color": "#00AFE1",
+      "diameter_px": 72,
+      "opacity": 1.0
+    },
+    "reconstruction_fraction": 0.04943,
+    "reconstruction_overlap_product_pixels": 0,
+    "reconstruction_pixels": 234,
+    "refusals": [],
+    "region_map_asset": "asset://8993ac58e1fe42d088ba1ea15afcb2f1",
+    "region_map_pixel_sha256": "0121c6dc040e10cade4b089195f3351ee4e1b895991ff0174a0ae4b50411c474",
+    "region_map_sha256": "a8af03ea0f2f239315f34037d61907c3cc9c54b94a4a656399ebd7bbde8a3d01",
+    "regions": [
+      {
+        "bbox": [
+          50,
+          25,
+          70,
+          40
+        ],
+        "class": "hole",
+        "id": 1,
+        "pixels": 234,
+        "provenance": {
+          "basis": "mask_topology"
+        }
+      }
+    ],
+    "renderer": "agenthand.paperfill/1",
+    "status": "applied",
+    "unfilled_gap_pixels": 66
+  },
+  "source_asset": "asset://e5895412896b4f7f931cac092de25a5b",
+  "source_pixel_sha256": "e37e4695463633a647c2d705f58645747756330d292411446e017eb81e9e7e75",
+  "source_sha256": "f4ed54a37eea8b98187bf0c7ff7257c40c8b1edf0deb52940dbb122d1c3cfd2b",
+  "transformations": [],
+  "transparent_pixels": 6300
+}
