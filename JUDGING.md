@@ -66,8 +66,8 @@ through runs and calls to a receipt a judge can re-verify offline.
 - Dual build, cross-verified: Rust is the product, Python is the
   reference implementation and test oracle; the parity harness in
   `conformance/` runs both against the same cases.
-- Test suites at submission: Rust 393 passed / 0 failed (9
-  ignored); Python 562 passed / 0 failed. Receipt verification
+- Test suites at submission: Rust 416 passed / 0 failed (11
+  ignored); Python 648 passed / 0 failed. Receipt verification
   speed, both shipped CLIs on the frozen replay images, 23
   interleaved rounds on one machine: Rust about 10.5x faster
   (median of per-round ratios; Rust won all 23 rounds).
