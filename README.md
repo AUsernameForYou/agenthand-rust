@@ -367,6 +367,12 @@ note: on a real tool call, Meta API latency dominates, so the
 commercially real win here is cold start, because every MCP client
 spawns the server fresh for each session.
 
+Both builds also run the **Differential Conformance Suite**: a shared
+interface schema plus shared test vectors, loaded by both test suites.
+The vectors carry independently computed expected outputs for boundary
+cases, so the builds are checked through differential testing against
+the same conformance suite.
+
 ### It reads photos
 
 The Rust build decodes HEIC itself (no decoding library), and on
