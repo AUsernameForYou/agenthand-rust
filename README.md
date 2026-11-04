@@ -435,6 +435,9 @@ agenthand ships as two independent builds of the same tool: a Rust build and
 a Python build, written separately, each checking the other's output.
 Where they disagree, that is a defect, and the pair is the quality control.
 Before settling on that shape we built and measured three alternatives.
+Of those, only the first — the Differential Conformance Suite — is in
+the shipped product; the rest were experiments run alongside the build,
+and none of them shipped.
 
 **Differential Conformance Suite.** We declared the tool interface
 once, as a schema, and loaded shared test vectors into both test
