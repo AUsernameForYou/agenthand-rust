@@ -45,6 +45,17 @@ re-proves the headline receipt offline, and
 `agenthand evidence verify --all` re-checks every claim in the
 Proof Graph.
 
+## Repository layout
+
+The product is the Rust crate at the root: `src/` is the MCP server,
+`tests/` its suite. `reference/` is the Python reference build, kept as
+the living specification. `conformance/` holds the Differential
+Conformance Suite fixtures and the frozen replay package. `evidence/`
+is the Proof Graph (database, receipts, verifier). `docs/` is product
+documentation. `experiments/` is quarantined working material from the
+build — **not the product, not built, not shipped** (see
+`experiments/README.md`).
+
 ## Install
 
 Download an MCPB bundle or a bare binary from the
