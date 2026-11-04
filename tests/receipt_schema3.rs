@@ -241,14 +241,47 @@ fn python_schema3_receipt_verifies_with_the_reconstruction_checks() {
 
 #[test]
 fn schema4_is_graded_as_schema3_plus_additive_fields() {
+    // Decision 150: a schema-4 receipt must carry its quality
+    // blocks; with them present, v4 grades as schema 3 plus
+    // tolerated additive fields, exactly as before.
     let draw = schema3_draw(None, false);
     let mut receipt = draw.receipt.clone();
     receipt["receipt_schema"] = json!(4);
+    receipt["cut_quality"] = json!({"grade": "PASS"});
+    receipt["plate_quality"] = json!({"grade": "PASS"});
     receipt["a_future_additive_field"] = json!({"anything": [1, 2, 3]});
     receipt["reconstruction"]["another_additive_key"] = json!("tolerated");
     let report = verify(&draw, &receipt);
     assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
     assert_eq!(report["checks"]["layer_reproduction"], json!(true));
+}
+
+#[test]
+fn schema4_without_quality_blocks_fails_closed() {
+    // Decision 150: the same v4 stamp stripped of either quality
+    // block is refused at the shape door with a missing-field
+    // problem, matching the Python validator; it is not graded
+    // under the v3-era policy.
+    let draw = schema3_draw(None, false);
+    for strip in ["cut_quality", "plate_quality"] {
+        let mut receipt = draw.receipt.clone();
+        receipt["receipt_schema"] = json!(4);
+        receipt["cut_quality"] = json!({"grade": "PASS"});
+        receipt["plate_quality"] = json!({"grade": "PASS"});
+        receipt.as_object_mut().unwrap().remove(strip);
+        let report = verify(&draw, &receipt);
+        assert_eq!(report["ok"], json!(false), "stripped {strip}: {report}");
+        assert_eq!(report["checks"]["receipt_shape"], json!(false));
+        assert!(
+            report["problems"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p.as_str().unwrap_or("").contains(&format!("missing field: {strip}"))),
+            "stripped {strip}: problems: {}",
+            report["problems"]
+        );
+    }
 }
 
 #[test]
