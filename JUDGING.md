@@ -45,9 +45,12 @@ through runs and calls to a receipt a judge can re-verify offline.
 - The film's chapters, timestamps, and narration lines are rows in
   the Proof Graph (`video_chapters`), each mapped to the claim and
   the run behind it. Any second of the film traces to a receipt.
-- The hero run in the film is a real run on the shipped build:
-  5,072,763 product pixels checked, 0 changed, verify PASS.
-  `agenthand evidence trace claim:1`
+- The hero run in the film is a real run on the shipped build
+  (v109, two-zone): proof core 4,053,953 product pixels checked,
+  0 changed, verify PASS. The repair margin is rebuilt and
+  counted, never claimed as original: 381,802 pixels, of which
+  278,417 are real photo pixels.
+  `agenthand evidence trace claim:9`
 - The screen recording in chapter 8 is the same tool running live,
   uncut, on a second real run (its own receipt; the two runs are
   never mixed in one claim).
@@ -86,7 +89,7 @@ film timestamp and it names the chapter and the claim behind it:
 | Film time | Segment | Claim | Check it |
 |---|---|---|---|
 | 0:00 to 0:14 | Ch0 baseline, suitcase | 5 | `agenthand evidence verify 5` |
-| 0:37 to 0:51 | Ch2 hero run | 1 | `agenthand evidence verify 1` |
+| 0:37 to 0:51 | Ch2 hero run | 9 | `agenthand evidence verify 9` |
 | 1:36 to 1:50 | Ch5 open-house fill | 4 | `agenthand evidence verify 4` |
 | 2:05 to 2:20 | Ch7 parity | 2 | `agenthand evidence verify 2` |
 | 2:20 to 2:35 | Ch8 recorded take | 3 | `agenthand evidence verify 3` |
