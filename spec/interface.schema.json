@@ -702,7 +702,7 @@
         "rule"
       ],
       "type": "object",
-      "x-notes": "offending_term present only on refusals; reason present only when status is \"skipped\", verbatim: \"no concept recorded in the foreground's mask; nothing to check the scene text against\". Identical in both builds (verified from sceneguard.rs / sceneguard.py and live probes)."
+      "x-notes": "offending_term present only on refusals; reason present only when status is \"skipped\", verbatim: \"no concept recorded in the foreground's mask; nothing to check the scene text against\". Identical in both builds (verified from sceneguard.rs / sceneguard.py and live probes). SUBMISSION STATE (2026-11-03): the Python build ships the guard; the Rust build does not (its scene guard is decision 146, held as a separate patch lane outside this submission, per the lanes ruling), so Rust draw results and receipts carry no scene_guard field here and the Rust conformance file carries no scene-guard case. The record shape above is the contract both builds are held to when the guard is present."
     },
     "sha256hex": {
       "pattern": "^[0-9a-f]{64}$",
@@ -924,6 +924,7 @@
       ]
     },
     "draw": {
+      "x-scene_guard": "scene_guard appears in the key lists below as measured on the experiment baselines. In this submission only the Python build emits it; the Rust build's guard is a separate patch lane (decision 146) outside the submission. See $defs/scene_guard_record x-notes.",
       "live_always_both": [
         "status",
         "tool",

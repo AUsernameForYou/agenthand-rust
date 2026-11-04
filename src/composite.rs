@@ -3954,9 +3954,9 @@ pub fn soften_thin_holes(
 }
 
 // ---------------------------------------------------------------------
-// EXPERIMENT (Grok lane prescription): receipt cross-verification and
+// Differential Conformance Suite: receipt cross-verification and
 // reconstruction-formula tests against the shared differential
-// fixture (byte-identical in the Python tree). Grok's kill-shot: a
+// fixture (byte-identical in the Python tree). The kill-shot: a
 // receipt one build issues must verify under the other build's own
 // version policy. Added by the cherry-pick experiment; nothing above
 // this line is touched.
@@ -3983,7 +3983,7 @@ mod interface_contract_receipts {
 
     #[test]
     fn python_v4_receipt_verifies_under_rust_policy() {
-        // Grok's kill-shot, this direction: the Python build's issued
+        // The kill-shot, this direction: the Python build's issued
         // schema-4 receipt (cut_quality, plate_quality, reconstruction
         // blocks and all) under THIS build's verifier.
         let receipt = load("tests/fixtures/interface/receipts/py-v4.json");

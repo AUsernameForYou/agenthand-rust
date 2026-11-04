@@ -3380,7 +3380,7 @@ pub fn carve_holes_opts(
 }
 
 // ---------------------------------------------------------------------
-// EXPERIMENT (Grok lane prescription): differential-fixture tests for
+// Differential Conformance Suite: differential-fixture tests for
 // the chamfer distance map. The fixture is byte-identical in the
 // Python tree; its expected maps were computed by brute force,
 // independently of both implementations. Added by the cherry-pick
