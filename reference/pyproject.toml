@@ -8,7 +8,7 @@ version = "0.1.2"
 description = "agenthand: an MCP server that gives AI sales agents three production tools - identify, cut_out, draw - for turning messy product photos into listing-ready images."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Proprietary" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [
     { name = "Daniel Wagner" },
 ]

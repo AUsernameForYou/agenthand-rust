@@ -1024,4 +1024,4 @@ $4.522337, struck from the project's call ledgers on November 3,
 
 ## License
 
-Proprietary. © Daniel Wagner. All rights reserved.
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE) ([polyformproject.org/licenses/noncommercial/1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)). © Daniel Wagner. Noncommercial use is permitted under the license terms; commercial use requires a separate license from the copyright holder.
