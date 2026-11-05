@@ -2,6 +2,7 @@
 name = "agenthand"
 version = "0.3.0"
 edition = "2021"
+rust-version = "1.89"
 description = "agenthand MCP server — Rust build (the public submission build; Python package remains as fallback install)"
 
 [dependencies]
