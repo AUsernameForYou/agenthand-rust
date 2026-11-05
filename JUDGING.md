@@ -70,7 +70,7 @@ through runs and calls to a receipt a judge can re-verify offline.
   reference implementation and test oracle; the parity harness in
   `conformance/` runs both against the same cases.
 - Test suites at submission: Rust 416 passed / 0 failed (11
-  ignored); Python 648 passed / 0 failed. Receipt verification
+  ignored); Python 648 passed / 0 failed (gate commit 943d485). Receipt verification
   speed, both shipped CLIs on the frozen replay images, 23
   interleaved rounds on one machine: Rust about 10.5x faster
   (median of per-round ratios; Rust won all 23 rounds).
