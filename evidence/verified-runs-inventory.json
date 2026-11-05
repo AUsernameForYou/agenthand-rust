@@ -129,7 +129,7 @@
    "source": "take-verification/take-note.txt",
    "flags": [
     "UNSOURCED: per-call costs and cut_out mask px are not stated in take-note.txt (only checked px and total settled)",
-    "UNSOURCED: no receipt file in the local package; the take's run artifacts live on the Mac (/Users/dans/agenthand-runs/take-1443-20261101-190623)"
+    "UNSOURCED: no receipt file in the local package; the take's run artifacts live on the Mac (agenthand-runs/take-1443-20261101-190623, on the builder's Mac)"
    ],
    "notes": "P08's session-transcript.txt is a copy of the earlier run-1443 (rev-5) transcript, not this take's chain; this take's figures are from take-note.txt only.",
    "receipt_sha256": null
@@ -881,8 +881,8 @@
    "verify_by": null,
    "total_settled_usd": null,
    "package_path": "film-assets/P23-SUITCASE-STILL/",
-   "receipt_file": "/home/hatch/workspace/agenthand/data/assets/ac8c768d9ac44fa0a521c71c6296e4d9.receipt.json",
-   "source": "film-assets/P23-SUITCASE-STILL/note.txt; /home/hatch/workspace/agenthand/data/assets/ac8c768d9ac44fa0a521c71c6296e4d9.receipt.json (mask_pixels_total, opaque_pixels, changed_opaque_pixels, cost_usd)",
+   "receipt_file": "agenthand/data/assets/ac8c768d9ac44fa0a521c71c6296e4d9.receipt.json",
+   "source": "film-assets/P23-SUITCASE-STILL/note.txt; agenthand/data/assets/ac8c768d9ac44fa0a521c71c6296e4d9.receipt.json (mask_pixels_total, opaque_pixels, changed_opaque_pixels, cost_usd)",
    "flags": [
     "UNSOURCED: identify/cut_out costs, draw mode (receipt predates the plate_kind/backdrop fields) and build are not recorded; the receipt file lives in the agenthand asset store, outside the film-assets package"
    ],
