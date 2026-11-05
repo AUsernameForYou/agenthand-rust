@@ -191,9 +191,7 @@ where
     }
     if !projected_usd.is_finite() || projected_usd < 0.0 {
         return Err(before(
-            format!(
-                "projected cost: amount {projected_usd} is not a finite non-negative number."
-            ),
+            format!("projected cost: amount {projected_usd} is not a finite non-negative number."),
             0.0,
         ));
     }
@@ -289,7 +287,8 @@ where
                 let overage = crate::sqlledger::settle(ledger_path, &mut receipt, cap_usd)
                     .map_err(unsettled)?;
                 if let Some(mirror) = &mirror {
-                    let settled = |m: String| after(m, actual_usd, Some(actual_usd), overage, &usage);
+                    let settled =
+                        |m: String| after(m, actual_usd, Some(actual_usd), overage, &usage);
                     let _lock = lock_file().map_err(settled)?;
                     ledger::append_receipt(mirror, &receipt).map_err(settled)?;
                 }

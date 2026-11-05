@@ -175,7 +175,9 @@ fn store_rows_for(
             )
             .unwrap();
         let rows = stmt
-            .query_map([call_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .query_map([call_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -239,12 +241,19 @@ fn settle_over_the_cap_is_recorded_and_fails_loudly_in_both_stores() {
 
             // The settle row is present, truthful, and marked over_cap.
             let rows = store_rows_for(&data_dir, store, "underprojected");
-            assert_eq!(rows.len(), 2, "store {store}: pending + settled, got {rows:?}");
+            assert_eq!(
+                rows.len(),
+                2,
+                "store {store}: pending + settled, got {rows:?}"
+            );
             let (phase, status, usd, note) = &rows[1];
             assert_eq!(phase, "settled");
             assert_eq!(status, "over_cap", "store {store}");
             assert!((usd - 4.25125).abs() < 1e-9, "store {store}: {usd}");
-            assert!(note.contains("3.251250 over the $1.00 cap"), "store {store}: {note}");
+            assert!(
+                note.contains("3.251250 over the $1.00 cap"),
+                "store {store}: {note}"
+            );
             assert!((cumulative_total(&data_dir, store) - 4.25125).abs() < 1e-9);
 
             // Every later reservation is refused, before its call runs.
@@ -264,7 +273,9 @@ fn settle_over_the_cap_is_recorded_and_fails_loudly_in_both_stores() {
                     })
                 },
             );
-            let err = next.err().expect("a reservation after the breach must be refused");
+            let err = next
+                .err()
+                .expect("a reservation after the breach must be refused");
             assert!(err.contains("Spend cap"), "store {store}: {err}");
             assert!(!ran.get());
             let _ = std::fs::remove_dir_all(&dir);
@@ -284,12 +295,24 @@ fn settle_within_the_cap_excludes_its_own_reservation() {
         std::env::set_var("AGENTHAND_LEDGER", "jsonl");
         std::env::set_var("AGENTHAND_TOTAL_SPEND_CAP_USD", "1.00");
         // An open reservation from a call that errored ($0.50 stays counted).
-        let _ = billed_call("draw", Some("muse-image-1.0"), 0.50, "ok", "", "open", || {
-            Err("simulated failure".to_string())
-        });
-        let ok = billed_call("draw", Some("muse-image-1.0"), 0.40, "ok", "", "fits", || {
-            Ok(images(45))
-        })
+        let _ = billed_call(
+            "draw",
+            Some("muse-image-1.0"),
+            0.50,
+            "ok",
+            "",
+            "open",
+            || Err("simulated failure".to_string()),
+        );
+        let ok = billed_call(
+            "draw",
+            Some("muse-image-1.0"),
+            0.40,
+            "ok",
+            "",
+            "fits",
+            || Ok(images(45)),
+        )
         .unwrap();
         assert!((ok.actual_usd - 0.45).abs() < 1e-9);
         let rows = store_rows_for(&data_dir, "jsonl", "fits");
@@ -314,9 +337,15 @@ fn billing_failures_say_whether_the_call_happened() {
         std::env::set_var("AGENTHAND_TOTAL_SPEND_CAP_USD", "1.00");
 
         // The call itself fails: its $0.10 reservation stays counted.
-        let failed = billed_call_detailed("draw", Some("muse-image-1.0"), 0.10, "ok", "", "fails", || {
-            Err("simulated failure".to_string())
-        });
+        let failed = billed_call_detailed(
+            "draw",
+            Some("muse-image-1.0"),
+            0.10,
+            "ok",
+            "",
+            "fails",
+            || Err("simulated failure".to_string()),
+        );
         assert_eq!(
             failed.err().unwrap(),
             BillingFailure::CallFailed {
@@ -326,9 +355,15 @@ fn billing_failures_say_whether_the_call_happened() {
         );
 
         // Under-projected and over the cap at settle: $0.95 actual.
-        let over = billed_call_detailed("draw", Some("muse-image-1.0"), 0.10, "ok", "", "over", || {
-            Ok(images(95))
-        });
+        let over = billed_call_detailed(
+            "draw",
+            Some("muse-image-1.0"),
+            0.10,
+            "ok",
+            "",
+            "over",
+            || Ok(images(95)),
+        );
         match over.err().unwrap() {
             BillingFailure::AfterCall {
                 message,
@@ -337,7 +372,10 @@ fn billing_failures_say_whether_the_call_happened() {
                 overage,
                 usage,
             } => {
-                assert!(message.starts_with("SPEND CAP EXCEEDED at settle"), "{message}");
+                assert!(
+                    message.starts_with("SPEND CAP EXCEEDED at settle"),
+                    "{message}"
+                );
                 assert!((counted_usd - 0.95).abs() < 1e-9, "{counted_usd}");
                 assert!((actual_usd.unwrap() - 0.95).abs() < 1e-9);
                 let overage = overage.expect("the breach is carried");
@@ -351,10 +389,18 @@ fn billing_failures_say_whether_the_call_happened() {
         // Every later reservation is refused before its call runs;
         // nothing is reserved for it.
         let ran = Cell::new(false);
-        let refused = billed_call_detailed("draw", Some("muse-image-1.0"), 0.01, "ok", "", "next", || {
-            ran.set(true);
-            Ok(images(1))
-        });
+        let refused = billed_call_detailed(
+            "draw",
+            Some("muse-image-1.0"),
+            0.01,
+            "ok",
+            "",
+            "next",
+            || {
+                ran.set(true);
+                Ok(images(1))
+            },
+        );
         match refused.err().unwrap() {
             BillingFailure::BeforeCall {
                 message,
@@ -397,7 +443,9 @@ fn draw_refused_before_the_call_counts_nothing() {
                 }
             }
             let parent = AssetStore::parse_handle(&photo_handle).unwrap();
-            let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+            let fg_handle = store
+                .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+                .unwrap();
 
             let (result, bytes) =
                 agenthand::server::tool_draw_with_plate(&fg_handle, "a quiet room", Some(plate))
@@ -406,8 +454,16 @@ fn draw_refused_before_the_call_counts_nothing() {
             assert_eq!(result["status"], "error", "{plate}: {result}");
             let error = &result["error"];
             assert_eq!(error["code"], "SPEND_CAP_REFUSED", "{plate}: {result}");
-            assert_eq!(error["cost_counted_usd"], serde_json::json!(0.0), "{plate}: {result}");
-            assert_eq!(error["call_made"], serde_json::json!(false), "{plate}: {result}");
+            assert_eq!(
+                error["cost_counted_usd"],
+                serde_json::json!(0.0),
+                "{plate}: {result}"
+            );
+            assert_eq!(
+                error["call_made"],
+                serde_json::json!(false),
+                "{plate}: {result}"
+            );
             let message = error["message"].as_str().unwrap();
             assert!(
                 message.starts_with("Billing refused the plate ")

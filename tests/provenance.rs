@@ -192,7 +192,9 @@ fn ingest_mints_public_copy_and_draw_receipt_carries_the_block() {
         pixels[i * 4 + 3] = if i % 3 == 0 { 255 } else { 0 };
     }
     let fg = RgbaImage::new(64, 48, pixels);
-    let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+    let fg_handle = store
+        .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+        .unwrap();
     let (composite_handle, receipt) =
         composite::draw_product(&store, &fg_handle, "a quiet room", None).unwrap();
     let carried = &receipt["provenance"];
@@ -221,7 +223,9 @@ fn source_without_a_block_draws_a_receipt_without_provenance() {
         .unwrap();
     let parent = AssetStore::parse_handle(&photo_handle).unwrap();
     let fg = RgbaImage::new(8, 6, pixels);
-    let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+    let fg_handle = store
+        .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+        .unwrap();
     let (_handle, receipt) = composite::draw_product(&store, &fg_handle, "room", None).unwrap();
     assert!(receipt.get("provenance").is_none());
 }

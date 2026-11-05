@@ -639,7 +639,10 @@ pub fn parse(data: &[u8]) -> Res<HeifFile> {
                     // through .get() (N24): fullbox_version above
                     // already proved 4 content bytes exist, but the
                     // reader rule is that no site indexes raw.
-                    let hidden = data.get(ib.content + 3).map(|&b| b & 1 == 1).unwrap_or(false);
+                    let hidden = data
+                        .get(ib.content + 3)
+                        .map(|&b| b & 1 == 1)
+                        .unwrap_or(false);
                     match iv {
                         2 | 3 => {
                             let item_id = if iv == 2 { ic.u16()? as u32 } else { ic.u32()? };

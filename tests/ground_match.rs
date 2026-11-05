@@ -130,10 +130,17 @@ fn clause_rides_the_generated_prompt_only_and_the_kill_switch_drops_it() {
     std::env::remove_var(GROUND_MATCH_ENV);
     let plan = plan_for_draw(Some(&src), &fg);
     let clause = plan.clause().expect("a clause when on");
-    assert!(clause.contains("dark asphalt") && clause.contains("dark value"), "{clause}");
+    assert!(
+        clause.contains("dark asphalt") && clause.contains("dark value"),
+        "{clause}"
+    );
     let scene = "a stone courtyard with planters";
-    let generated = meta::generated_plate_scene_matched(scene, &angle, None, Some(&clause), true, &[]);
-    assert!(generated.starts_with(scene), "the caller's setting leads: {generated}");
+    let generated =
+        meta::generated_plate_scene_matched(scene, &angle, None, Some(&clause), true, &[]);
+    assert!(
+        generated.starts_with(scene),
+        "the caller's setting leads: {generated}"
+    );
     assert!(generated.contains(&clause));
     assert_eq!(
         meta::generated_plate_scene_matched(scene, &angle, None, None, true, &[]),
@@ -148,7 +155,10 @@ fn clause_rides_the_generated_prompt_only_and_the_kill_switch_drops_it() {
         std::env::set_var(GROUND_MATCH_ENV, off);
         let plan = plan_for_draw(Some(&src), &fg);
         assert!(plan.clause().is_none());
-        assert_eq!(plan.reason.as_deref(), Some("disabled by AGENTHAND_GROUND_MATCH"));
+        assert_eq!(
+            plan.reason.as_deref(),
+            Some("disabled by AGENTHAND_GROUND_MATCH")
+        );
         assert_eq!(plan.to_json()["stated"], json!(false));
     }
     match previous {
@@ -177,7 +187,9 @@ fn receipt_records_the_match_and_product_pixels_stay_exact() {
     let (src, fg) = shot([44, 47, 52], 18);
     let source_handle = store.put_image(&src, KIND_SOURCE, None).unwrap();
     let parent = AssetStore::parse_handle(&source_handle).unwrap();
-    let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+    let fg_handle = store
+        .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+        .unwrap();
     // A generated plate with a pale ground, at another size.
     let plate = {
         let p = photo([210, 205, 196], 4);
@@ -206,7 +218,10 @@ fn receipt_records_the_match_and_product_pixels_stay_exact() {
     let m = &receipt["ground_match"];
     eprintln!("{m}");
     assert_eq!(m["applied"], json!(true));
-    assert!(m["sampled"]["surface"].as_str().unwrap().contains("asphalt"));
+    assert!(m["sampled"]["surface"]
+        .as_str()
+        .unwrap()
+        .contains("asphalt"));
     assert_eq!(m["plate"]["value_word"], json!("pale"));
     assert!(m["delta"]["value"].as_f64().unwrap() > 0.5, "{m}");
     assert_eq!(m["delta"]["same_value_word"], json!(false));
@@ -223,7 +238,8 @@ fn receipt_records_the_match_and_product_pixels_stay_exact() {
     // The match never changes pixels: the same draw without a plan
     // gives the same composite.
     let (plain_handle, plain) =
-        composite::draw_product_grounded(&store, &fg_handle, "courtyard", &plate_handle, &light).unwrap();
+        composite::draw_product_grounded(&store, &fg_handle, "courtyard", &plate_handle, &light)
+            .unwrap();
     assert!(plain.get("ground_match").is_none());
     assert_eq!(
         store.read_image(&plain_handle).unwrap().pixels,
@@ -235,14 +251,23 @@ fn receipt_records_the_match_and_product_pixels_stay_exact() {
         reason: Some("disabled by AGENTHAND_GROUND_MATCH".to_string()),
     };
     let (_, r) = composite::draw_product_generated(
-        &store, &fg_handle, "courtyard", &plate_handle, &light, Some(&off),
+        &store,
+        &fg_handle,
+        "courtyard",
+        &plate_handle,
+        &light,
+        Some(&off),
     )
     .unwrap();
     assert_eq!(r["ground_match"]["applied"], json!(false));
-    assert_eq!(r["ground_match"]["reason"], json!("disabled by AGENTHAND_GROUND_MATCH"));
+    assert_eq!(
+        r["ground_match"]["reason"],
+        json!("disabled by AGENTHAND_GROUND_MATCH")
+    );
     // Legacy path: no record.
     let (_, legacy) =
-        composite::draw_product_with_plate_kind(&store, &fg_handle, "x", Some(&plate_handle), None).unwrap();
+        composite::draw_product_with_plate_kind(&store, &fg_handle, "x", Some(&plate_handle), None)
+            .unwrap();
     assert!(legacy.get("ground_match").is_none());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -263,7 +288,9 @@ fn real_fixture_ground_descriptor() {
     };
     let dir = std::path::PathBuf::from(dir);
     let source = load(&dir.join("source.png"));
-    let fg = if std::env::var("AGENTHAND_MATCH_USE_MASK").is_ok() || !dir.join("foreground.png").exists() {
+    let fg = if std::env::var("AGENTHAND_MATCH_USE_MASK").is_ok()
+        || !dir.join("foreground.png").exists()
+    {
         let bytes = std::fs::read(dir.join("mask.png")).unwrap();
         let mask = agenthand::image::decode_image(&bytes).unwrap().into_rgba();
         let mut fg = source.clone();

@@ -112,7 +112,10 @@ impl Server {
         }
     }
     fn notify(&mut self, method: &str) {
-        let msg = obj(vec![("jsonrpc", Value::from("2.0")), ("method", Value::from(method))]);
+        let msg = obj(vec![
+            ("jsonrpc", Value::from("2.0")),
+            ("method", Value::from(method)),
+        ]);
         writeln!(self.stdin, "{msg}").unwrap();
         self.stdin.flush().unwrap();
     }
@@ -147,7 +150,10 @@ fn normalize(raw: &Value) -> Value {
     }
     let mut required: Vec<Value> = raw["required"].as_array().cloned().unwrap_or_default();
     required.sort_by_key(|v| v.as_str().unwrap_or("").to_string());
-    obj(vec![("properties", Value::Object(props)), ("required", Value::Array(required))])
+    obj(vec![
+        ("properties", Value::Object(props)),
+        ("required", Value::Array(required)),
+    ])
 }
 
 #[test]
@@ -161,7 +167,10 @@ fn tools_list_matches_contract_with_only_recorded_deltas() {
             ("capabilities", obj(vec![])),
             (
                 "clientInfo",
-                obj(vec![("name", Value::from("contract-test")), ("version", Value::from("0"))]),
+                obj(vec![
+                    ("name", Value::from("contract-test")),
+                    ("version", Value::from("0")),
+                ]),
             ),
         ]),
     );
@@ -178,7 +187,10 @@ fn tools_list_matches_contract_with_only_recorded_deltas() {
             // The contract's canonical draw surface is the common
             // core; `plate` is this build's recorded addition
             // (x-differences in the schema), pinned explicitly below.
-            observed["properties"].as_object_mut().unwrap().remove("plate");
+            observed["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("plate");
         }
         let canonical = normalize(&schema["tools"][name]["inputSchema"]);
         assert_eq!(

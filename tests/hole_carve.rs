@@ -51,7 +51,9 @@ const SPOKE_HALF_WIDTH: f64 = 2.6;
 
 /// Deterministic per-pixel noise in [-1, 1].
 fn noise(x: u32, y: u32, salt: u32) -> f64 {
-    let mut v = x.wrapping_mul(374_761_393) ^ y.wrapping_mul(668_265_263) ^ salt.wrapping_mul(2_246_822_519);
+    let mut v = x.wrapping_mul(374_761_393)
+        ^ y.wrapping_mul(668_265_263)
+        ^ salt.wrapping_mul(2_246_822_519);
     v = (v ^ (v >> 13)).wrapping_mul(1_274_126_177);
     v ^= v >> 16;
     (v % 2001) as f64 / 1000.0 - 1.0
@@ -62,7 +64,11 @@ fn noise(x: u32, y: u32, salt: u32) -> f64 {
 fn background(x: u32, y: u32) -> [u8; 4] {
     let n = noise(x, y, 1) * 14.0 + noise(x / 3, y / 3, 2) * 10.0;
     let mortar = (y % 48) < 3;
-    let base = if mortar { [168.0, 150.0, 118.0] } else { [214.0, 196.0, 158.0] };
+    let base = if mortar {
+        [168.0, 150.0, 118.0]
+    } else {
+        [214.0, 196.0, 158.0]
+    };
     [
         (base[0] + n).clamp(0.0, 255.0) as u8,
         (base[1] + n).clamp(0.0, 255.0) as u8,
@@ -143,7 +149,12 @@ fn wheel_scene(interior_matches_product: bool) -> (RgbaImage, GrayImage) {
     }
     (
         RgbaImage::new(W, H, px),
-        GrayImage { width: W, height: H, pixels: mask, icc_profile: None },
+        GrayImage {
+            width: W,
+            height: H,
+            pixels: mask,
+            icc_profile: None,
+        },
     )
 }
 
@@ -209,26 +220,48 @@ fn wheel_background_is_carved_and_spokes_hub_and_silhouette_stay() {
         for x in 0..W {
             let i = (y * W + x) as usize;
             if matches!(part(x, y), Part::Tyre | Part::Background) {
-                assert_eq!(out.pixels[i], mask.pixels[i], "silhouette pixel ({x},{y}) changed");
+                assert_eq!(
+                    out.pixels[i], mask.pixels[i],
+                    "silhouette pixel ({x},{y}) changed"
+                );
             }
         }
     }
 
     // The record: additive fields, counts that match the mask.
-    for key in ["applied", "regions", "carved_pixels", "protected_thin_pixels", "reason"] {
+    for key in [
+        "applied",
+        "regions",
+        "carved_pixels",
+        "protected_thin_pixels",
+        "reason",
+    ] {
         assert!(record.get(key).is_some(), "record lacks {key}: {record:#}");
     }
     assert!(record["regions"].as_u64().unwrap() >= 1);
     let carved = count_where(&out, |_, _, v| v < 255) - count_where(&mask, |_, _, v| v < 255);
-    assert_eq!(record["carved_pixels"].as_u64().unwrap(), carved, "{record:#}");
+    assert_eq!(
+        record["carved_pixels"].as_u64().unwrap(),
+        carved,
+        "{record:#}"
+    );
     let product_after = count_where(&out, |_, _, v| v == 255);
-    assert_eq!(record["product_pixels_after"].as_u64().unwrap(), product_after);
+    assert_eq!(
+        record["product_pixels_after"].as_u64().unwrap(),
+        product_after
+    );
     assert_eq!(
         record["product_pixels_before"].as_u64().unwrap(),
         count_where(&mask, |_, _, v| v == 255)
     );
-    assert!(record["protected_thin_pixels"].as_u64().unwrap() > 0, "{record:#}");
-    assert!(record["reason"].as_str().unwrap().contains("open frame"), "{record:#}");
+    assert!(
+        record["protected_thin_pixels"].as_u64().unwrap() > 0,
+        "{record:#}"
+    );
+    assert!(
+        record["reason"].as_str().unwrap().contains("open frame"),
+        "{record:#}"
+    );
 
     // Soft inner edge: partial alpha only on the carved side, capped.
     assert!(out.pixels.iter().all(|&v| v == 0 || v == 255 || v <= 128));
@@ -245,9 +278,14 @@ fn wheel_is_carved_without_a_keyword_when_it_is_an_open_frame() {
     let (out, record) = carve_holes_with(&source, &mask, "product", true);
     assert_eq!(record["applied"], json!(true), "{record:#}");
     assert_eq!(record["open_frame_keyword"], Value::Null);
-    let frac = record["open_frame"]["enclosed_candidate_fraction"].as_f64().unwrap();
+    let frac = record["open_frame"]["enclosed_candidate_fraction"]
+        .as_f64()
+        .unwrap();
     assert!(frac >= 0.1, "{record:#}");
-    assert!(out.pixels.iter().filter(|&&v| v < 255).count() > mask.pixels.iter().filter(|&&v| v < 255).count());
+    assert!(
+        out.pixels.iter().filter(|&&v| v < 255).count()
+            > mask.pixels.iter().filter(|&&v| v < 255).count()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +304,11 @@ fn solid_box_is_a_no_op() {
                 let n = noise(x, y, 3) * 6.0;
                 // A blue box with a darker label stripe (product line work).
                 let stripe = (180..186).contains(&y);
-                let base = if stripe { [20.0, 30.0, 70.0] } else { [40.0, 80.0, 190.0] };
+                let base = if stripe {
+                    [20.0, 30.0, 70.0]
+                } else {
+                    [40.0, 80.0, 190.0]
+                };
                 px.extend_from_slice(&[
                     (base[0] + n) as u8,
                     (base[1] + n) as u8,
@@ -281,13 +323,21 @@ fn solid_box_is_a_no_op() {
         }
     }
     let source = RgbaImage::new(w, h, px);
-    let mask = GrayImage { width: w, height: h, pixels: mask, icc_profile: None };
+    let mask = GrayImage {
+        width: w,
+        height: h,
+        pixels: mask,
+        icc_profile: None,
+    };
     for concept in ["cardboard box", "bike rack box"] {
         let (out, record) = carve_holes_with(&source, &mask, concept, true);
         assert_eq!(record["applied"], json!(false), "{concept}: {record:#}");
         assert_eq!(record["carved_pixels"], json!(0));
         assert_eq!(record["regions"], json!(0));
-        assert!(record["reason"].as_str().is_some_and(|r| !r.is_empty()), "{record:#}");
+        assert!(
+            record["reason"].as_str().is_some_and(|r| !r.is_empty()),
+            "{record:#}"
+        );
         assert_eq!(out.pixels, mask.pixels, "{concept}");
     }
 }
@@ -310,7 +360,10 @@ fn kill_switch_returns_the_identical_mask() {
         assert_eq!(out.height, mask.height);
         assert_eq!(record["applied"], json!(false));
         assert_eq!(record["carved_pixels"], json!(0));
-        assert!(record["reason"].as_str().unwrap().contains(HOLE_CARVE_ENV), "{record:#}");
+        assert!(
+            record["reason"].as_str().unwrap().contains(HOLE_CARVE_ENV),
+            "{record:#}"
+        );
     }
     // Explicitly disabled through the API too.
     let (out, _) = carve_holes_with(&source, &mask, "bicycle wheel", false);
@@ -378,7 +431,11 @@ fn shaded_wheel_scene() -> (RgbaImage, GrayImage) {
     for y in 0..H {
         for x in 0..W {
             let n = noise(x, y, 7) * 4.0;
-            let ground = if shaded(x, y) { shade(x, y) } else { background(x, y) };
+            let ground = if shaded(x, y) {
+                shade(x, y)
+            } else {
+                background(x, y)
+            };
             let c = match part(x, y) {
                 Part::Background | Part::Enclosed => ground,
                 Part::Tyre => [(28.0 + n) as u8, (28.0 + n) as u8, (32.0 + n) as u8, 255],
@@ -392,16 +449,24 @@ fn shaded_wheel_scene() -> (RgbaImage, GrayImage) {
     }
     (
         RgbaImage::new(W, H, px),
-        GrayImage { width: W, height: H, pixels: mask, icc_profile: None },
+        GrayImage {
+            width: W,
+            height: H,
+            pixels: mask,
+            icc_profile: None,
+        },
     )
 }
 
 /// Share of the enclosed (seen-through) pixels on the shaded / sunlit side
 /// that the carve removed (alpha below 255).
 fn removed_share(out: &GrayImage, want_shade: bool) -> f64 {
-    let total = count_where(out, |x, y, _| part(x, y) == Part::Enclosed && shaded(x, y) == want_shade);
-    let removed =
-        count_where(out, |x, y, v| part(x, y) == Part::Enclosed && shaded(x, y) == want_shade && v < 255);
+    let total = count_where(out, |x, y, _| {
+        part(x, y) == Part::Enclosed && shaded(x, y) == want_shade
+    });
+    let removed = count_where(out, |x, y, v| {
+        part(x, y) == Part::Enclosed && shaded(x, y) == want_shade && v < 255
+    });
     removed as f64 / total as f64
 }
 
@@ -422,7 +487,11 @@ fn shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay() {
     assert_eq!(base_rec["completion"]["enabled"], json!(false));
     assert_eq!(base_rec["completion"]["released_pixels"], json!(0));
     let base_shade = removed_share(&base, true);
-    assert!(base_shade <= 0.10, "colour-only carve removed {:.1}% of the shade", base_shade * 100.0);
+    assert!(
+        base_shade <= 0.10,
+        "colour-only carve removed {:.1}% of the shade",
+        base_shade * 100.0
+    );
     assert!(removed_share(&base, false) >= 0.95, "{base_rec:#}");
 
     // With the completion pass.
@@ -438,23 +507,40 @@ fn shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay() {
     );
     assert!(removed_share(&out, false) >= 0.95, "{record:#}");
     let released = record["completion"]["released_pixels"].as_u64().unwrap();
-    assert!(released > 0 && record["completion"]["enabled"] == json!(true), "{record:#}");
-    assert!(record["completion"]["cells_released"].as_u64().unwrap() >= 1, "{record:#}");
+    assert!(
+        released > 0 && record["completion"]["enabled"] == json!(true),
+        "{record:#}"
+    );
+    assert!(
+        record["completion"]["cells_released"].as_u64().unwrap() >= 1,
+        "{record:#}"
+    );
 
     // Structure stays: spokes (also the ones crossing the shade), the hub,
     // and the tyre and everything outside it byte for byte.
     let spokes = kept_share(&out, Part::Spoke);
-    assert!(spokes >= 0.98, "only {:.2}% of spoke pixels kept: {record:#}", spokes * 100.0);
+    assert!(
+        spokes >= 0.98,
+        "only {:.2}% of spoke pixels kept: {record:#}",
+        spokes * 100.0
+    );
     let shaded_spokes = count_where(&out, |x, y, _| part(x, y) == Part::Spoke && shaded(x, y));
-    let shaded_spokes_kept =
-        count_where(&out, |x, y, v| part(x, y) == Part::Spoke && shaded(x, y) && v == 255);
-    assert!(shaded_spokes_kept as f64 >= 0.98 * shaded_spokes as f64, "{shaded_spokes_kept}/{shaded_spokes}");
+    let shaded_spokes_kept = count_where(&out, |x, y, v| {
+        part(x, y) == Part::Spoke && shaded(x, y) && v == 255
+    });
+    assert!(
+        shaded_spokes_kept as f64 >= 0.98 * shaded_spokes as f64,
+        "{shaded_spokes_kept}/{shaded_spokes}"
+    );
     assert!(kept_share(&out, Part::Hub) >= 0.98, "{record:#}");
     for y in 0..H {
         for x in 0..W {
             let i = (y * W + x) as usize;
             if matches!(part(x, y), Part::Tyre | Part::Background) {
-                assert_eq!(out.pixels[i], mask.pixels[i], "tyre/outside pixel ({x},{y}) changed");
+                assert_eq!(
+                    out.pixels[i], mask.pixels[i],
+                    "tyre/outside pixel ({x},{y}) changed"
+                );
             }
         }
     }
@@ -463,13 +549,20 @@ fn shaded_wheel_interior_is_completed_and_spokes_tyre_hub_stay() {
     // removed here too.
     for (i, (&b, &a)) in base.pixels.iter().zip(out.pixels.iter()).enumerate() {
         if b == 0 {
-            assert!(a < 255, "pixel {i} carved by the colour-only pass is product again");
+            assert!(
+                a < 255,
+                "pixel {i} carved by the colour-only pass is product again"
+            );
         }
     }
 
     // The record counts match the mask; the gate passes.
     let carved = count_where(&out, |_, _, v| v < 255) - count_where(&mask, |_, _, v| v < 255);
-    assert_eq!(record["carved_pixels"].as_u64().unwrap(), carved, "{record:#}");
+    assert_eq!(
+        record["carved_pixels"].as_u64().unwrap(),
+        carved,
+        "{record:#}"
+    );
     assert_eq!(
         record["product_pixels_after"].as_u64().unwrap(),
         count_where(&out, |_, _, v| v == 255)
@@ -536,9 +629,16 @@ fn reflector_and_bolt_stay_product_inside_a_completed_wheel() {
     let (out, record) = carve_holes_opts(&source, &mask, "bicycle wheel", true, true);
     assert_eq!(record["applied"], json!(true), "{record:#}");
     assert_never_raised(&mask, &out);
-    let plate = count_where(&out, |x, y, _| in_reflector(x, y) && part(x, y) != Part::Spoke);
-    let lost = count_where(&out, |x, y, v| in_reflector(x, y) && part(x, y) != Part::Spoke && v < 255);
-    assert_eq!(lost, 0, "{lost} of {plate} reflector pixels released: {record:#}");
+    let plate = count_where(&out, |x, y, _| {
+        in_reflector(x, y) && part(x, y) != Part::Spoke
+    });
+    let lost = count_where(&out, |x, y, v| {
+        in_reflector(x, y) && part(x, y) != Part::Spoke && v < 255
+    });
+    assert_eq!(
+        lost, 0,
+        "{lost} of {plate} reflector pixels released: {record:#}"
+    );
     let bolt_lost = count_where(&out, |x, y, v| in_bolt(x, y) && v < 255);
     assert_eq!(bolt_lost, 0, "{bolt_lost} bolt pixels released: {record:#}");
     // The rest of the wheel still completes and the spokes stay.
@@ -577,18 +677,35 @@ fn dark_joint_band_releases_while_spokes_reflector_and_bolt_stay() {
         band_released as f64 >= 0.6 * band as f64,
         "only {band_released} of {band} band pixels released: {record:#}"
     );
-    assert!(record["completion"]["strip_pixels"].as_u64().unwrap() > 0, "{record:#}");
-    let crossing = count_where(&out, |x, y, _| (420..432).contains(&y) && part(x, y) == Part::Spoke);
-    let crossing_kept =
-        count_where(&out, |x, y, v| (420..432).contains(&y) && part(x, y) == Part::Spoke && v == 255);
-    assert!(crossing_kept as f64 >= 0.95 * crossing as f64, "{crossing_kept}/{crossing} spoke px kept in the band");
+    assert!(
+        record["completion"]["strip_pixels"].as_u64().unwrap() > 0,
+        "{record:#}"
+    );
+    let crossing = count_where(&out, |x, y, _| {
+        (420..432).contains(&y) && part(x, y) == Part::Spoke
+    });
+    let crossing_kept = count_where(&out, |x, y, v| {
+        (420..432).contains(&y) && part(x, y) == Part::Spoke && v == 255
+    });
+    assert!(
+        crossing_kept as f64 >= 0.95 * crossing as f64,
+        "{crossing_kept}/{crossing} spoke px kept in the band"
+    );
     assert!(kept_share(&out, Part::Spoke) >= 0.98, "{record:#}");
-    assert_eq!(count_where(&out, |x, y, v| in_reflector(x, y) && part(x, y) != Part::Spoke && v < 255), 0);
+    assert_eq!(
+        count_where(&out, |x, y, v| in_reflector(x, y)
+            && part(x, y) != Part::Spoke
+            && v < 255),
+        0
+    );
     assert_eq!(count_where(&out, |x, y, v| in_bolt(x, y) && v < 255), 0);
     assert_eq!(record["gate"]["pass"], json!(true), "{record:#}");
     // With the completion off the band is left and counted as residue.
     let (_, off) = carve_holes_opts(&source, &mask, "bicycle wheel", true, false);
-    assert!(off["gate"]["strip_residue_pixels"].as_u64().unwrap() > 0, "{off:#}");
+    assert!(
+        off["gate"]["strip_residue_pixels"].as_u64().unwrap() > 0,
+        "{off:#}"
+    );
 }
 
 /// The longest run of non-product pixels along each spoke's centre line,
@@ -608,7 +725,10 @@ fn shaded_spoke_gaps(out: &GrayImage) -> Vec<usize> {
                 // is not protected (docs/HOLE-CARVE.md Limits).
                 if shaded(x, y) && y >= SHADE_Y + 2 * 6 + 1 {
                     let kept = (-1i32..=1).any(|o| {
-                        let (xx, yy) = ((x as i32 + o * uy.round() as i32) as u32, (y as i32 - o * ux.round() as i32) as u32);
+                        let (xx, yy) = (
+                            (x as i32 + o * uy.round() as i32) as u32,
+                            (y as i32 - o * ux.round() as i32) as u32,
+                        );
                         out.pixels[(yy * W + xx) as usize] == 255
                     });
                     run = if kept { 0 } else { run + 1 };
@@ -650,10 +770,18 @@ fn dim_spokes_in_the_shade_stay_continuous() {
     assert!(removed_share(&out, true) >= 0.60, "{record:#}");
     // ...and every spoke is continuous through it.
     let gaps = shaded_spoke_gaps(&out);
-    assert!(gaps.iter().all(|&g| g <= 2), "spoke gaps in the shade (px): {gaps:?}: {record:#}");
+    assert!(
+        gaps.iter().all(|&g| g <= 2),
+        "spoke gaps in the shade (px): {gaps:?}: {record:#}"
+    );
     let shaded_spokes = count_where(&out, |x, y, _| part(x, y) == Part::Spoke && shaded(x, y));
-    let kept = count_where(&out, |x, y, v| part(x, y) == Part::Spoke && shaded(x, y) && v == 255);
-    assert!(kept as f64 >= 0.9 * shaded_spokes as f64, "{kept}/{shaded_spokes}: {record:#}");
+    let kept = count_where(&out, |x, y, v| {
+        part(x, y) == Part::Spoke && shaded(x, y) && v == 255
+    });
+    assert!(
+        kept as f64 >= 0.9 * shaded_spokes as f64,
+        "{kept}/{shaded_spokes}: {record:#}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +832,10 @@ fn completion_kill_switch_keeps_the_colour_proven_carve() {
     assert_eq!(record["completion"]["enabled"], json!(false));
     assert_eq!(record["gate"]["applies"], json!(false));
 
-    for (name, prev) in [(HOLE_CARVE_ENV, prev_carve), (HOLE_COMPLETE_ENV, prev_complete)] {
+    for (name, prev) in [
+        (HOLE_CARVE_ENV, prev_carve),
+        (HOLE_COMPLETE_ENV, prev_complete),
+    ] {
         match prev {
             Some(v) => std::env::set_var(name, v),
             None => std::env::remove_var(name),
@@ -737,8 +868,13 @@ fn gate_refuses_a_partial_open_frame_carve_with_a_retake() {
             + remainder
     );
     // Most of the shaded seen-through area is the remainder.
-    let shade_px = count_where(&mask, |x, y, _| part(x, y) == Part::Enclosed && shaded(x, y));
-    assert!(remainder as f64 >= 0.5 * shade_px as f64, "{remainder} of {shade_px}: {record:#}");
+    let shade_px = count_where(&mask, |x, y, _| {
+        part(x, y) == Part::Enclosed && shaded(x, y)
+    });
+    assert!(
+        remainder as f64 >= 0.5 * shade_px as f64,
+        "{remainder} of {shade_px}: {record:#}"
+    );
 
     // The structured refusal cut_out returns (decision 114: the failure
     // names the remainder and the retake that fixes it).
@@ -751,13 +887,24 @@ fn gate_refuses_a_partial_open_frame_carve_with_a_retake() {
     assert!(message.contains("Retake:"), "{message}");
     assert!(message.contains("shade"), "{message}");
     assert_eq!(extra["remainder"]["remainder_pixels"], json!(remainder));
-    assert_eq!(extra["remainder"]["enclosed_candidate_pixels"], json!(enclosed));
-    assert_eq!(extra["remainder"]["remainder_fraction"], gate["remainder_fraction"]);
+    assert_eq!(
+        extra["remainder"]["enclosed_candidate_pixels"],
+        json!(enclosed)
+    );
+    assert_eq!(
+        extra["remainder"]["remainder_fraction"],
+        gate["remainder_fraction"]
+    );
     assert_eq!(extra["remainder"]["max_remainder_fraction"], json!(limit));
     let retake = extra["retake"].as_array().unwrap();
     assert_eq!(retake.len(), 3);
-    assert!(retake.iter().all(|r| r.as_str().is_some_and(|t| !t.is_empty())));
-    assert!(extra["operator_override"].as_str().unwrap().contains(HOLE_CARVE_ENV));
+    assert!(retake
+        .iter()
+        .all(|r| r.as_str().is_some_and(|t| !t.is_empty())));
+    assert!(extra["operator_override"]
+        .as_str()
+        .unwrap()
+        .contains(HOLE_CARVE_ENV));
 
     // The completed carve of the same photo passes; so does the sunlit
     // wheel; a carve that did not apply has no gate to fail.
@@ -793,12 +940,22 @@ fn open_frame_keywords_match_whole_word_prefixes() {
 #[test]
 fn empty_and_mismatched_masks_are_no_ops() {
     let (source, mask) = wheel_scene(false);
-    let empty = GrayImage { width: W, height: H, pixels: vec![0; (W * H) as usize], icc_profile: None };
+    let empty = GrayImage {
+        width: W,
+        height: H,
+        pixels: vec![0; (W * H) as usize],
+        icc_profile: None,
+    };
     let (out, record) = carve_holes_with(&source, &empty, "bike", true);
     assert_eq!(out.pixels, empty.pixels);
     assert_eq!(record["applied"], json!(false));
 
-    let small = GrayImage { width: 10, height: 10, pixels: vec![255; 100], icc_profile: None };
+    let small = GrayImage {
+        width: 10,
+        height: 10,
+        pixels: vec![255; 100],
+        icc_profile: None,
+    };
     let (out, record) = carve_holes_with(&source, &small, "bike", true);
     assert_eq!(out.pixels, small.pixels);
     assert_eq!(record["applied"], json!(false));
@@ -828,7 +985,12 @@ fn real_fixture() {
     let mask = image::open(dir.join("mask.png")).unwrap().to_luma8();
     let (w, h) = source.dimensions();
     let src = RgbaImage::new(w, h, source.as_raw().clone());
-    let m = GrayImage { width: w, height: h, pixels: mask.as_raw().clone(), icc_profile: None };
+    let m = GrayImage {
+        width: w,
+        height: h,
+        pixels: mask.as_raw().clone(),
+        icc_profile: None,
+    };
 
     let t = std::time::Instant::now();
     let (carved, mut record) = carve_holes_with(&src, &m, &concept, true);
@@ -904,7 +1066,11 @@ fn real_fixture() {
         let size = ((r - l).max(btm - t) as f64 * 1.25) as u32;
         let cx = (l + r) / 2;
         let cy = (t + btm) / 2;
-        (cx.saturating_sub(size / 2).min(w - size), cy.saturating_sub(size / 2).min(h - size), size)
+        (
+            cx.saturating_sub(size / 2).min(w - size),
+            cy.saturating_sub(size / 2).min(h - size),
+            size,
+        )
     };
     let boxes = [side(x0, mid), side(mid + 1, x1)];
 
@@ -926,10 +1092,19 @@ fn real_fixture() {
         })
         .collect();
     let crop_h: u32 = crops.iter().map(|(c, _)| c.height()).sum::<u32>() + 12 * crops.len() as u32;
-    let total_w = (2 * ov_w + 12).max(crops.iter().map(|(c, _)| 2 * c.width() + 12).max().unwrap_or(0));
-    let mut sheet = image::RgbImage::from_pixel(total_w, ov_h + 12 + crop_h, image::Rgb([24, 24, 24]));
-    let small_b = image::imageops::resize(&before, ov_w, ov_h, image::imageops::FilterType::Triangle);
-    let small_a = image::imageops::resize(&after, ov_w, ov_h, image::imageops::FilterType::Triangle);
+    let total_w = (2 * ov_w + 12).max(
+        crops
+            .iter()
+            .map(|(c, _)| 2 * c.width() + 12)
+            .max()
+            .unwrap_or(0),
+    );
+    let mut sheet =
+        image::RgbImage::from_pixel(total_w, ov_h + 12 + crop_h, image::Rgb([24, 24, 24]));
+    let small_b =
+        image::imageops::resize(&before, ov_w, ov_h, image::imageops::FilterType::Triangle);
+    let small_a =
+        image::imageops::resize(&after, ov_w, ov_h, image::imageops::FilterType::Triangle);
     image::imageops::overlay(&mut sheet, &small_b, 0, 0);
     image::imageops::overlay(&mut sheet, &small_a, (ov_w + 12) as i64, 0);
     let mut yy = ov_h + 12;
@@ -939,7 +1114,8 @@ fn real_fixture() {
         yy += cb.height() + 12;
     }
     let file = std::fs::File::create(out_dir.join("bike_carve_before_after.jpg")).unwrap();
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 88);
+    let mut enc =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), 88);
     enc.encode_image(&sheet).unwrap();
     println!("{}", serde_json::to_string_pretty(&record).unwrap());
     println!("carve took {elapsed:?}; wheel boxes {boxes:?}");

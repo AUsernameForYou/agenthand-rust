@@ -998,8 +998,16 @@ fn item_record_carries_the_draw_stage_records() {
     let manifest = run_room(&photos2, &[], &root2.join("out"), opts).unwrap();
     let item = &manifest["items"][0];
     assert_eq!(item["status"], "staged", "{item}");
-    for key in ["shadow", "light_direction", "thin_structure", "scene_exclusions"] {
-        assert!(item.get(key).is_none(), "{key} appeared from nowhere: {item}");
+    for key in [
+        "shadow",
+        "light_direction",
+        "thin_structure",
+        "scene_exclusions",
+    ] {
+        assert!(
+            item.get(key).is_none(),
+            "{key} appeared from nowhere: {item}"
+        );
     }
 }
 
@@ -1150,9 +1158,7 @@ fn speech_pause_wav(path: &Path, rate: u32) -> PathBuf {
     for i in 0..total {
         let t = i as f64 / rate as f64;
         if t < 0.5 || (3.5..4.0).contains(&t) {
-            samples.push(
-                (0.30 * 32767.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16,
-            );
+            samples.push((0.30 * 32767.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16);
         } else {
             samples.push(0);
         }
@@ -1213,9 +1219,8 @@ fn prepare_narration_audio_keeps_speech_sample_exact() {
     assert_eq!(out_rate, 16000);
     let mut expected: Vec<i16> = Vec::new();
     expected.extend_from_slice(&original[..(0.7 * rate as f64) as usize]);
-    expected.extend_from_slice(
-        &original[(3.3 * rate as f64) as usize..(4.2 * rate as f64) as usize],
-    );
+    expected
+        .extend_from_slice(&original[(3.3 * rate as f64) as usize..(4.2 * rate as f64) as usize]);
     assert_eq!(prepared, expected);
 }
 
@@ -1344,8 +1349,7 @@ fn sample_video_frames_dedupes_static_video() {
         .status()
         .unwrap();
     assert!(status.success());
-    let (frames, note, dropped) =
-        sample_video_frames(&video, &root.join("frames"), 1.0, 8, None);
+    let (frames, note, dropped) = sample_video_frames(&video, &root.join("frames"), 1.0, 8, None);
     assert!(note.is_none(), "got: {note:?}");
     assert_eq!(frames.len(), 1, "kept: {frames:?}");
     assert_eq!(dropped.len(), 5, "dropped: {dropped:?}");
@@ -1671,7 +1675,10 @@ fn long_clip_narration_calls_per_piece_and_merges() {
     let parsed = parse_narration_reply(result["reply"].as_str());
     assert!(parsed.transcript.contains("First part."));
     assert!(parsed.transcript.contains("Second part."));
-    assert_eq!(parsed.selling, vec!["bike".to_string(), "grill".to_string()]);
+    assert_eq!(
+        parsed.selling,
+        vec!["bike".to_string(), "grill".to_string()]
+    );
     assert_eq!(parsed.keep, vec!["cornhole".to_string()]);
     assert_eq!(parsed.mentioned, vec!["bubbles".to_string()]);
     assert_eq!(
@@ -1719,9 +1726,7 @@ fn long_clip_piece_failure_names_the_piece() {
     let call = |_data_url: &str| -> Result<Value, String> {
         *count.borrow_mut() += 1;
         if *count.borrow() == 2 {
-            return Err(
-                "RuntimeError: Baseten narration call returned an empty reply".to_string(),
-            );
+            return Err("RuntimeError: Baseten narration call returned an empty reply".to_string());
         }
         Ok(json!({
             "reply": "TRANSCRIPT\npart\n\nSELLING\nNONE\n",
@@ -2659,7 +2664,11 @@ fn narration_is_billed_through_the_ledger_and_refused_over_the_cap() {
         .into_iter()
         .filter(|r| r["tool"] == "narration")
         .collect();
-    assert_eq!(rows.len(), 2, "pending + settled narration rows, got {rows:?}");
+    assert_eq!(
+        rows.len(),
+        2,
+        "pending + settled narration rows, got {rows:?}"
+    );
     assert_eq!(rows[0]["phase"], "pending");
     assert_eq!(rows[1]["phase"], "settled");
     assert_eq!(rows[0]["call_id"], rows[1]["call_id"]);
@@ -2678,7 +2687,10 @@ fn narration_is_billed_through_the_ledger_and_refused_over_the_cap() {
     assert!(approx(rows[1]["usd_estimate"].as_f64().unwrap(), actual));
     // The record's fields are unchanged, and the room's Meta total
     // still excludes the narration spend.
-    assert!(approx(record["cost_usd_estimate"].as_f64().unwrap(), actual));
+    assert!(approx(
+        record["cost_usd_estimate"].as_f64().unwrap(),
+        actual
+    ));
     assert!(approx(
         manifest["total_cost_usd"].as_f64().unwrap(),
         *fake.spend.borrow()
@@ -2703,7 +2715,10 @@ fn narration_is_billed_through_the_ledger_and_refused_over_the_cap() {
         .as_str()
         .unwrap()
         .contains("Spend cap"));
-    assert!(narration.calls.borrow().is_empty(), "no Baseten call over the cap");
+    assert!(
+        narration.calls.borrow().is_empty(),
+        "no Baseten call over the cap"
+    );
     assert!(ledger_rows(&out2.join("ledger.jsonl"))
         .iter()
         .all(|r| r["tool"] != "narration"));
@@ -2777,7 +2792,10 @@ fn room_run_narration_is_capped_by_the_cumulative_ledger() {
     );
     let record = &manifest["narration"]["files"][0];
     assert_eq!(record["error"]["code"], "SPEND_CAP_REFUSED", "{record}");
-    assert!(narration.calls.borrow().is_empty(), "no Baseten call over the cap");
+    assert!(
+        narration.calls.borrow().is_empty(),
+        "no Baseten call over the cap"
+    );
     // The cap ledger is the cumulative one; the room ledger holds no
     // narration row (refused before the reservation was written).
     let cumulative =

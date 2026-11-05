@@ -2007,7 +2007,14 @@ pub fn draw_product_grounded(
     plate_handle: &str,
     light: &crate::ground::GroundLight,
 ) -> Result<(String, Value), String> {
-    draw_product_generated(store, foreground_handle, scene_prompt, plate_handle, light, None)
+    draw_product_generated(
+        store,
+        foreground_handle,
+        scene_prompt,
+        plate_handle,
+        light,
+        None,
+    )
 }
 
 /// `draw_product_grounded` plus the ground match check
@@ -2341,7 +2348,10 @@ fn is_handle_or_null(v: &Value) -> bool {
 }
 
 fn is_fraction(v: &Value) -> bool {
-    !v.is_boolean() && v.as_f64().map(|f| (0.0..=1.0).contains(&f)).unwrap_or(false)
+    !v.is_boolean()
+        && v.as_f64()
+            .map(|f| (0.0..=1.0).contains(&f))
+            .unwrap_or(false)
 }
 
 /// The verifiable schema a receipt is marked with: Some(2 | 3 | 4)
@@ -2363,10 +2373,16 @@ fn is_reconstruction_block(value: &Value) -> bool {
     let Some(block) = value.as_object() else {
         return false;
     };
-    if !RECONSTRUCTION_BLOCK_KEYS.iter().all(|k| block.contains_key(*k)) {
+    if !RECONSTRUCTION_BLOCK_KEYS
+        .iter()
+        .all(|k| block.contains_key(*k))
+    {
         return false;
     }
-    if !matches!(block["status"].as_str(), Some("none" | "applied" | "refused")) {
+    if !matches!(
+        block["status"].as_str(),
+        Some("none" | "applied" | "refused")
+    ) {
         return false;
     }
     if !(block["renderer"].is_null() || block["renderer"].is_string()) {
@@ -2503,7 +2519,9 @@ fn reconstruction_problems(receipt: &Value) -> Vec<String> {
         } else {
             0.0
         };
-        let stated = block["reconstruction_fraction"].as_f64().unwrap_or(f64::NAN);
+        let stated = block["reconstruction_fraction"]
+            .as_f64()
+            .unwrap_or(f64::NAN);
         if !((stated - expected).abs() <= 1e-9) {
             problems.push(
                 "reconstruction_fraction disagrees with reconstruction_pixels / \
@@ -4069,4 +4087,3 @@ mod interface_contract_receipts {
         }
     }
 }
-

@@ -120,7 +120,10 @@ fn malformed_files_are_no_comps_never_errors() {
         ("notjson", "{ this is not json"),
         ("nocats", "{\"generated\": \"2026-11-01\"}"),
         ("catsnotlist", "{\"categories\": {\"a\": 1}}"),
-        ("allbad", "{\"categories\": [{\"item\": \"no key\"}, {\"key\": \"x\"}]}"),
+        (
+            "allbad",
+            "{\"categories\": [{\"item\": \"no key\"}, {\"key\": \"x\"}]}",
+        ),
         ("array", "[1, 2, 3]"),
         ("empty", ""),
     ] {
@@ -168,8 +171,16 @@ fn bike_titles_match_kids_bmx_bike() {
             vec!["blue BMX bicycle", "children's bike"],
             "Haro Shredder 20\" Kids BMX Bike - Blue",
         ),
-        ("blue kids bike", vec!["BMX bike", "bicycle"], "Kids 20-inch BMX Bike, Blue"),
-        ("BMX bike", vec!["kids bicycle", "bike"], "Haro Shredder Kids BMX Bike"),
+        (
+            "blue kids bike",
+            vec!["BMX bike", "bicycle"],
+            "Kids 20-inch BMX Bike, Blue",
+        ),
+        (
+            "BMX bike",
+            vec!["kids bicycle", "bike"],
+            "Haro Shredder Kids BMX Bike",
+        ),
         ("kids bike", vec!["bicycle", "child's bike"], "Kids Bike"),
     ] {
         let result = identify_result(concept, &alts, title);
@@ -186,7 +197,11 @@ fn bike_titles_match_kids_bmx_bike() {
         "kids BMX bike",
         "children's bicycle",
     ] {
-        assert_eq!(name_category(name).as_deref(), Some("kids_bmx_bike"), "{name}");
+        assert_eq!(
+            name_category(name).as_deref(),
+            Some("kids_bmx_bike"),
+            "{name}"
+        );
     }
     // The white P12 bike keeps its own comps.
     assert_eq!(
@@ -256,7 +271,11 @@ fn unrelated_items_are_no_comps() {
         pricing_for_identify(&book(), &result),
         json!({"status": "no_comps"})
     );
-    let duck = identify_result("rubber duck", &["bath toy", "yellow duck"], "Rubber Duck Bath Toy");
+    let duck = identify_result(
+        "rubber duck",
+        &["bath toy", "yellow duck"],
+        "Rubber Duck Bath Toy",
+    );
     assert_eq!(
         pricing_for_identify(&book(), &duck),
         json!({"status": "no_comps"})
@@ -268,7 +287,12 @@ fn unrelated_items_are_no_comps() {
 #[test]
 fn priced_block_shape_and_values() {
     let block = pricing_for_item_name(&book(), "kids BMX bike", None);
-    let keys: Vec<&str> = block.as_object().unwrap().keys().map(String::as_str).collect();
+    let keys: Vec<&str> = block
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert_eq!(
         keys,
         vec![
@@ -448,7 +472,10 @@ fn local_comps_present_price_with_scope_local() {
     assert_eq!(block["recommended"], json!(72.5));
     assert_eq!(block["comps_count"], 12);
     assert_eq!(block["footnote"], PRICING_FOOTNOTE);
-    assert_eq!(block["area"], "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius");
+    assert_eq!(
+        block["area"],
+        "Camas, WA (lat 45.5871, lon -122.3995), 25 mi radius"
+    );
 }
 
 #[test]
@@ -464,7 +491,10 @@ fn local_missing_wide_nested_prices_with_scope_wide_and_the_note() {
     assert_eq!(block["status"], "priced", "{block}");
     assert_eq!(block["scope"], "wide");
     assert_eq!(block["note"], WIDE_SCOPE_NOTE);
-    assert_eq!(block["note"], "No local items found; priced from wider-area listings.");
+    assert_eq!(
+        block["note"],
+        "No local items found; priced from wider-area listings."
+    );
     assert_eq!(block["category"], "gas_grill");
     assert_eq!(block["recommended"], json!(105.0));
     assert_eq!(block["range"], json!([60.0, 175.0]));
@@ -479,7 +509,11 @@ fn local_missing_wide_nested_prices_with_scope_wide_and_the_note() {
     let bike = pricing_for_item_name(&Ok(book.clone()), "kids BMX bike", None);
     assert_eq!(bike["scope"], "local");
     // identify results get the same wide block.
-    let mut result = identify_result("gas grill", &["propane grill", "barbecue grill"], "Weber Gas Grill");
+    let mut result = identify_result(
+        "gas grill",
+        &["propane grill", "barbecue grill"],
+        "Weber Gas Grill",
+    );
     attach_identify_pricing(&mut result, &Ok(book));
     assert_eq!(result["pricing"]["scope"], "wide");
     assert_eq!(result["pricing"]["note"], WIDE_SCOPE_NOTE);
@@ -534,7 +568,11 @@ fn neither_tier_is_no_comps() {
     let book = parse_book(&doc_without_local_grill()).expect("loads");
     assert!(book.category("gas_grill").is_none());
     assert_eq!(book.skipped.len(), 1, "{:?}", book.skipped);
-    assert!(book.skipped[0].contains("no local comps"), "{:?}", book.skipped);
+    assert!(
+        book.skipped[0].contains("no local comps"),
+        "{:?}",
+        book.skipped
+    );
     let block = pricing_for_item_name(&Ok(book.clone()), "gas grill", None);
     assert_eq!(block, json!({"status": "no_comps"}));
     let mut result = identify_result("gas grill", &["propane grill"], "Gas Grill");
@@ -565,8 +603,14 @@ fn wide_only_files_load_and_bad_wide_lists_are_notes() {
     let block = pricing_for_item_name(&Ok(book), "gas grill", None);
     assert_eq!(block["scope"], "wide");
     for (tag, text) in [
-        ("widenotlist", "{\"categories\": [], \"categories_wide\": {\"a\": 1}}"),
-        ("nothing", "{\"generated\": \"2026-11-01\", \"categories_wide\": null}"),
+        (
+            "widenotlist",
+            "{\"categories\": [], \"categories_wide\": {\"a\": 1}}",
+        ),
+        (
+            "nothing",
+            "{\"generated\": \"2026-11-01\", \"categories_wide\": null}",
+        ),
     ] {
         let book = load_book(&temp_file(tag, text));
         let note = book.as_ref().expect_err(tag);

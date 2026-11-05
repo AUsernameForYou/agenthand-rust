@@ -470,11 +470,8 @@ pub fn canonical_receipt_json(receipt: &Value) -> String {
 /// level Q, scaled by whole modules to roughly 512 px. Pure local
 /// rendering (the `qrcode` crate) — no call, no cost.
 pub fn render_verify_qr_png(payload: &str) -> Result<Vec<u8>, String> {
-    let code = qrcode::QrCode::with_error_correction_level(
-        payload.as_bytes(),
-        qrcode::EcLevel::Q,
-    )
-    .map_err(|e| format!("QR encode failed: {e:?}"))?;
+    let code = qrcode::QrCode::with_error_correction_level(payload.as_bytes(), qrcode::EcLevel::Q)
+        .map_err(|e| format!("QR encode failed: {e:?}"))?;
     let width = code.width();
     let colors = code.to_colors();
     let quiet = 4usize;
@@ -569,8 +566,9 @@ fn annotate_draw_result(
     }
     result["qr_asset"] = json!(qr_handle);
     result["verify_url"] = json!(verify_url);
-    result["label"] =
-        json!(format!("Digitally altered. Original photo and proof: {verify_url}"));
+    result["label"] = json!(format!(
+        "Digitally altered. Original photo and proof: {verify_url}"
+    ));
 }
 
 /// Generate a background plate through the billing choke point (port
@@ -926,12 +924,9 @@ fn stage_source_plate(
         // loudly; a paid edit is kept in the store, not staged.
         Err(stop) => {
             let paid = match (&stop, bytes) {
-                (billing::BillingFailure::AfterCall { .. }, Some(b)) => Some(store.put_bytes(
-                    &b,
-                    KIND_PLATE,
-                    ".png",
-                    Some(&source_record.asset_id),
-                )),
+                (billing::BillingFailure::AfterCall { .. }, Some(b)) => {
+                    Some(store.put_bytes(&b, KIND_PLATE, ".png", Some(&source_record.asset_id)))
+                }
                 _ => None,
             };
             return Err(billing_stop_failure(stop, &call_id, "plate edit", paid));
@@ -1641,7 +1636,11 @@ mod tests {
             Some(Ok("asset://paidplate".to_string())),
         );
         assert_eq!(f.code, "BILLING_STOPPED_AFTER_CALL");
-        assert!(!f.message.contains("Refused before any call"), "{}", f.message);
+        assert!(
+            !f.message.contains("Refused before any call"),
+            "{}",
+            f.message
+        );
         assert!(
             f.message.starts_with(
                 "Billing stopped the draw after the plate edit call succeeded; the call was made and paid for."
@@ -1649,7 +1648,11 @@ mod tests {
             "{}",
             f.message
         );
-        assert!(f.message.contains("SPEND CAP EXCEEDED at settle"), "{}", f.message);
+        assert!(
+            f.message.contains("SPEND CAP EXCEEDED at settle"),
+            "{}",
+            f.message
+        );
         assert!(f.message.contains("asset://paidplate"), "{}", f.message);
         assert_eq!(f.details["cost_counted_usd"], json!(0.95));
         assert_eq!(f.details["actual_usd"], json!(0.95));
@@ -1708,10 +1711,7 @@ mod tests {
     /// the rendered PNG back to exactly the payload URL.
     #[test]
     fn verify_qr_png_roundtrips_through_a_decoder() {
-        let url = format!(
-            "{VERIFY_URL_BASE}#{}",
-            "a".repeat(64)
-        );
+        let url = format!("{VERIFY_URL_BASE}#{}", "a".repeat(64));
         let png = render_verify_qr_png(&url).expect("render");
         let img = image::load_from_memory(&png)
             .expect("png decodes")
@@ -1791,8 +1791,12 @@ mod tests {
             "strip + re-canonicalize must land back on the URL hash"
         );
         // And the label line is exactly the approved wording.
-        let label = format!("Digitally altered. Original photo and proof: {VERIFY_URL_BASE}#{hash}");
+        let label =
+            format!("Digitally altered. Original photo and proof: {VERIFY_URL_BASE}#{hash}");
         assert!(label.starts_with("Digitally altered. Original photo and proof: https://"));
-        assert_eq!(label.len(), "Digitally altered. Original photo and proof: ".len() + VERIFY_URL_BASE.len() + 1 + 64);
+        assert_eq!(
+            label.len(),
+            "Digitally altered. Original photo and proof: ".len() + VERIFY_URL_BASE.len() + 1 + 64
+        );
     }
 }

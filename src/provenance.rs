@@ -163,7 +163,7 @@ fn jpeg_walk(data: &[u8]) -> Option<JpegWalk> {
                 }
                 match data[i + 1] {
                     0x00 | 0xD0..=0xD7 => i += 2, // stuffed byte / restart marker
-                    0xFF => i += 1,             // fill byte
+                    0xFF => i += 1,               // fill byte
                     0xD9 => {
                         eoi_end = Some(i + 2);
                         break;
@@ -349,11 +349,7 @@ impl<'a> Tiff<'a> {
         for i in 0..count {
             let entry = ifd + 2 + i * 12;
             if self.u16_at(entry)? == tag {
-                return Some((
-                    self.u16_at(entry + 2)?,
-                    self.u32_at(entry + 4)?,
-                    entry + 8,
-                ));
+                return Some((self.u16_at(entry + 2)?, self.u32_at(entry + 4)?, entry + 8));
             }
         }
         None
@@ -644,15 +640,15 @@ fn xmp_packets(data: &[u8], format: PhotoFormat) -> Vec<Vec<u8>> {
                     if item.total_extent_bytes() > XMP_PACKET_CAP as u64 {
                         continue;
                     }
-                    let Ok(bytes) =
-                        crate::heic::container::extract_item_data_for(data, item)
+                    let Ok(bytes) = crate::heic::container::extract_item_data_for(data, item)
                     else {
                         continue;
                     };
                     // The packet may begin directly or behind the
                     // MIME content-type token; find its start.
                     let text = String::from_utf8_lossy(&bytes);
-                    if let Some(start) = text.find("<x:xmpmeta").or_else(|| text.find("<?xpacket")) {
+                    if let Some(start) = text.find("<x:xmpmeta").or_else(|| text.find("<?xpacket"))
+                    {
                         packets.push(text[start..].as_bytes().to_vec());
                     }
                 }
@@ -960,12 +956,14 @@ fn census(
                         .sum::<usize>()
                 })
                 .unwrap_or(0);
-            let thumbnail_present = heif.items.iter().any(|item| {
-                item.references.iter().any(|r| r.ref_type == "thmb")
-            }) || heif
+            let thumbnail_present = heif
                 .items
                 .iter()
-                .any(|i| i.references.iter().any(|r| r.ref_type == "thmb"));
+                .any(|item| item.references.iter().any(|r| r.ref_type == "thmb"))
+                || heif
+                    .items
+                    .iter()
+                    .any(|i| i.references.iter().any(|r| r.ref_type == "thmb"));
             let mut aux_types: Vec<String> = Vec::new();
             for item in &heif.items {
                 if let Some(aux) = heif.item_aux_type(item) {
@@ -1404,10 +1402,7 @@ pub fn set_public_copy(block: &mut Value, info: Value) {
 /// still stands; the record must not pretend an offer exists).
 pub fn set_public_copy_unavailable(block: &mut Value, reason: &str) {
     if let Some(location) = block.get_mut("location").and_then(Value::as_object_mut) {
-        location.insert(
-            "public_copy".to_string(),
-            json!({"unavailable": reason}),
-        );
+        location.insert("public_copy".to_string(), json!({"unavailable": reason}));
     }
 }
 
@@ -1726,7 +1721,7 @@ mod tests {
         let lon_off = lat_off + 24;
         t.extend_from_slice(&4u16.to_le_bytes());
         ascii_entry(&mut t, 0x0001, 0, 2); // "N\0" inline below
-        // fix the inline value: overwrite the last 4 bytes written
+                                           // fix the inline value: overwrite the last 4 bytes written
         let n = t.len();
         t[n - 4] = b'N';
         t.extend_from_slice(&0x0002u16.to_le_bytes());
@@ -1851,12 +1846,18 @@ mod tests {
             signal_of(&block, "capture_device")["capture_software_version"],
             "17.0"
         );
-        assert_eq!(signal_of(&block, "editor_software")["finding"], "none_named");
+        assert_eq!(
+            signal_of(&block, "editor_software")["finding"],
+            "none_named"
+        );
         assert!(signal_of(&block, "editor_software")["does_not_establish"]
             .as_str()
             .unwrap()
             .contains("silence is not cleanliness"));
-        assert_eq!(signal_of(&block, "content_credentials")["finding"], "absent");
+        assert_eq!(
+            signal_of(&block, "content_credentials")["finding"],
+            "absent"
+        );
         assert!(signal_of(&block, "content_credentials")["detail"]
             .as_str()
             .unwrap()
@@ -1923,7 +1924,10 @@ mod tests {
         app11.extend_from_slice(b"....c2pa....");
         let jpeg = jpeg_with_segments(&[(0xEB, app11)], &[0x42]);
         let block = provenance_block(&jpeg, Some((10, 10)));
-        assert_eq!(signal_of(&block, "content_credentials")["finding"], "present");
+        assert_eq!(
+            signal_of(&block, "content_credentials")["finding"],
+            "present"
+        );
         assert!(signal_of(&block, "content_credentials")["detail"]
             .as_str()
             .unwrap()
@@ -1937,7 +1941,10 @@ mod tests {
         with_cabx.extend_from_slice(&cabx);
         with_cabx.extend_from_slice(&png[33..]);
         let block = provenance_block(&with_cabx, Some((4, 4)));
-        assert_eq!(signal_of(&block, "content_credentials")["finding"], "present");
+        assert_eq!(
+            signal_of(&block, "content_credentials")["finding"],
+            "present"
+        );
     }
 
     #[test]

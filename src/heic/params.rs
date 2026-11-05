@@ -1199,8 +1199,8 @@ mod sps_log2_range_tests {
         assert!(check_sps_log2_ranges(0, 0, 0, 0, 3).is_err()); // Ctb 8 < 16
         assert!(check_sps_log2_ranges(0, 1, 2, 4, 0).is_err()); // MinTb 64
         assert!(check_sps_log2_ranges(0, 1, 2, 0, 4).is_err()); // MaxTb 64
-        // Absurd ue() values refuse cleanly instead of overflowing
-        // the checker's own arithmetic.
+                                                                // Absurd ue() values refuse cleanly instead of overflowing
+                                                                // the checker's own arithmetic.
         assert!(check_sps_log2_ranges(0, 1, u32::MAX - 1, 0, 3).is_err());
         assert!(check_sps_log2_ranges(0, 1, 2, 0, u32::MAX - 1).is_err());
     }
@@ -1220,7 +1220,11 @@ mod scaling_list_consumption_tests {
 
     impl BitW {
         fn new() -> Self {
-            BitW { bytes: Vec::new(), cur: 0, used: 0 }
+            BitW {
+                bytes: Vec::new(),
+                cur: 0,
+                used: 0,
+            }
         }
         fn u1(&mut self, bit: u32) {
             self.cur = (self.cur << 1) | (bit as u8 & 1);

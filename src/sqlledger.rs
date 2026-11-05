@@ -429,8 +429,7 @@ impl RunStepLog {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("cannot create step-log dir: {e}"))?;
         }
-        let conn =
-            Connection::open(path).map_err(|e| format!("cannot open step log: {e}"))?;
+        let conn = Connection::open(path).map_err(|e| format!("cannot open step log: {e}"))?;
         conn.busy_timeout(BUSY_TIMEOUT)
             .map_err(|e| format!("cannot set step-log busy timeout: {e}"))?;
         conn.execute_batch(RUN_STEPS_SCHEMA)
@@ -441,7 +440,12 @@ impl RunStepLog {
     }
 
     /// Read one step row, if it exists.
-    pub fn get(&self, run_id: &str, item_index: i64, step: &str) -> Result<Option<StepRow>, String> {
+    pub fn get(
+        &self,
+        run_id: &str,
+        item_index: i64,
+        step: &str,
+    ) -> Result<Option<StepRow>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(

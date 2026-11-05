@@ -270,7 +270,11 @@ fn whole_frame_footprint_is_recorded_as_grey() {
     };
     let fg = extract_foreground(&src, &all);
     let r = edit_reference(&src, &fg, 40, 30, ReferenceFill::InpaintDiffusion);
-    assert!(r.image.pixels.chunks_exact(4).all(|p| p == [128, 128, 128, 255]));
+    assert!(r
+        .image
+        .pixels
+        .chunks_exact(4)
+        .all(|p| p == [128, 128, 128, 255]));
     let record = r.fill_record();
     assert_eq!(record["fill"], json!("grey"), "{record}");
     assert_eq!(record["fill_rgb"], json!([128, 128, 128]));

@@ -193,14 +193,20 @@ fn hand_built_two_scan_stream_drops_app1_between_scans() {
     let jfif = segment(0xE0, b"JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00");
     let dqt = segment(0xDB, &[0u8; 65]);
     let sof = segment(0xC0, &[8, 0, 8, 0, 8, 1, 1, 0x11, 0]);
-    let dht1 = segment(0xC4, &[0x00, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x05]);
+    let dht1 = segment(
+        0xC4,
+        &[0x00, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x05],
+    );
     let sos = segment(0xDA, &[1, 1, 0x00, 0, 0x3F, 0]);
     let scan1 = [0x12u8, 0xFF, 0x00, 0x34, 0xFF, 0xD0, 0x56];
     let mut exif = b"Exif\0\0".to_vec();
     exif.extend_from_slice(b"II*\0\x08\0\0\0");
     let app1 = segment(0xE1, &exif);
     let com = segment(0xFE, b"between the scans");
-    let dht2 = segment(0xC4, &[0x10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01]);
+    let dht2 = segment(
+        0xC4,
+        &[0x10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01],
+    );
     let scan2 = [0x78u8, 0xFF, 0x00, 0x9A];
 
     let build = |with_metadata: bool| -> Vec<u8> {
@@ -233,8 +239,8 @@ fn png_chunk_kinds(data: &[u8]) -> Vec<[u8; 4]> {
     let mut kinds = Vec::new();
     let mut pos = 8usize;
     while pos + 12 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         kinds.push([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
         pos += 12 + len;
     }
@@ -257,7 +263,10 @@ fn png_public_copy_keeps_only_allowlisted_chunks() {
     // IHDR chunk), plus colour chunks that must survive.
     let mut dirty = clean[..33].to_vec();
     dirty.extend_from_slice(&png_chunk(b"gAMA", &45455u32.to_be_bytes()));
-    dirty.extend_from_slice(&png_chunk(b"pHYs", &[0, 0, 0x0B, 0x13, 0, 0, 0x0B, 0x13, 1]));
+    dirty.extend_from_slice(&png_chunk(
+        b"pHYs",
+        &[0, 0, 0x0B, 0x13, 0, 0, 0x0B, 0x13, 1],
+    ));
     dirty.extend_from_slice(&png_chunk(b"caBX", b"\0\0\0\x20jumbc2pa.manifest"));
     dirty.extend_from_slice(&png_chunk(b"eXIf", b"II*\0\x08\0\0\0\0\0"));
     dirty.extend_from_slice(&png_chunk(b"tEXt", b"Comment\0shot at 45.5N 122.75W"));
@@ -275,7 +284,12 @@ fn png_public_copy_keeps_only_allowlisted_chunks() {
             String::from_utf8_lossy(banned)
         );
     }
-    for needle in [&b"jumb"[..], b"45.5N", b"private vendor payload", b"TRAILING-BYTES"] {
+    for needle in [
+        &b"jumb"[..],
+        b"45.5N",
+        b"private vendor payload",
+        b"TRAILING-BYTES",
+    ] {
         assert!(!contains(&copy, needle));
     }
     // Allowlisted chunks survive, in order, with their CRCs.
@@ -283,7 +297,10 @@ fn png_public_copy_keeps_only_allowlisted_chunks() {
     assert_eq!(kinds.last(), Some(b"IEND"));
     assert!(kinds.contains(b"gAMA") && kinds.contains(b"pHYs") && kinds.contains(b"IDAT"));
     let gama = png_chunk(b"gAMA", &45455u32.to_be_bytes());
-    assert!(contains(&copy, &gama), "gAMA moves byte for byte, CRC included");
+    assert!(
+        contains(&copy, &gama),
+        "gAMA moves byte for byte, CRC included"
+    );
     // Pixels identical.
     assert_eq!(rgba(&copy).pixel_sha256(), rgba(&clean).pixel_sha256());
 }

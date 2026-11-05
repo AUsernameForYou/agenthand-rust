@@ -90,13 +90,64 @@ pub const DEFAULT_COMPS_FILE_NAME: &str = "pricing-comps.json";
 
 const STOPWORDS: &[&str] = &[
     // function words
-    "an", "and", "or", "the", "with", "without", "for", "of", "in", "on", "to", "at", "by",
-    "from", "this", "that", "is", "it", "its", "as", "into", "plus",
+    "an",
+    "and",
+    "or",
+    "the",
+    "with",
+    "without",
+    "for",
+    "of",
+    "in",
+    "on",
+    "to",
+    "at",
+    "by",
+    "from",
+    "this",
+    "that",
+    "is",
+    "it",
+    "its",
+    "as",
+    "into",
+    "plus",
     // marketplace filler that names no product
-    "great", "good", "excellent", "condition", "works", "working", "used", "like", "new",
-    "nice", "clean", "sale", "obo", "firm", "only", "perfect", "gently", "lightly", "barely",
-    "pick", "pickup", "up", "must", "go", "price", "priced", "cheap", "free", "comes",
-    "included", "includes", "brand", "listing", "item", "product",
+    "great",
+    "good",
+    "excellent",
+    "condition",
+    "works",
+    "working",
+    "used",
+    "like",
+    "new",
+    "nice",
+    "clean",
+    "sale",
+    "obo",
+    "firm",
+    "only",
+    "perfect",
+    "gently",
+    "lightly",
+    "barely",
+    "pick",
+    "pickup",
+    "up",
+    "must",
+    "go",
+    "price",
+    "priced",
+    "cheap",
+    "free",
+    "comes",
+    "included",
+    "includes",
+    "brand",
+    "listing",
+    "item",
+    "product",
     // production notes in the comps item text
     "second",
 ];
@@ -392,7 +443,9 @@ fn parse_tier(
         vocab.insert(tok, 1.0);
     }
     if vocab.is_empty() {
-        return Err(format!("{key}: no item text or comp titles to match against"));
+        return Err(format!(
+            "{key}: no item text or comp titles to match against"
+        ));
     }
 
     let mut priced = json!({
@@ -752,7 +805,10 @@ mod tests {
             tokens("Women's Cropped Denim Jackets (GAP light-wash, P18)"),
             vec!["women", "cropped", "denim", "jacket", "gap", "light", "wash"]
         );
-        assert_eq!(tokens("Kids 20-inch BMX bike"), vec!["kid", "20", "inch", "bmx", "bike"]);
+        assert_eq!(
+            tokens("Kids 20-inch BMX bike"),
+            vec!["kid", "20", "inch", "bmx", "bike"]
+        );
         assert_eq!(tokens("children's bicycle"), vec!["kid", "bike"]);
         assert_eq!(tokens("3pc Patio Set"), vec!["pc", "patio", "set"]);
         assert_eq!(tokens("glass top"), vec!["glass", "top"]);

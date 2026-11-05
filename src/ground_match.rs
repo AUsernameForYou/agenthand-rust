@@ -364,7 +364,10 @@ fn pool(grid: &CellGrid, cells: &[usize]) -> GroundStats {
 
 /// Sample the source photo's ground around and below the product and
 /// inside its open frames, and name it. Source and layer share a frame.
-pub fn ground_descriptor(source: &RgbaImage, foreground: &RgbaImage) -> Result<GroundDescriptor, String> {
+pub fn ground_descriptor(
+    source: &RgbaImage,
+    foreground: &RgbaImage,
+) -> Result<GroundDescriptor, String> {
     if (source.width, source.height) != (foreground.width, foreground.height) {
         return Err("source and product layer frames differ".to_string());
     }

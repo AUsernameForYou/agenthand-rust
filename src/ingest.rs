@@ -216,9 +216,7 @@ fn tiff_capture_time(tiff: &[u8]) -> Option<String> {
     let ifd0 = u32_at(tiff, 4)? as usize;
     let plausible = |s: &str| -> bool {
         let b = s.as_bytes();
-        s.len() >= 10
-            && b[..4].iter().all(|c| c.is_ascii_digit())
-            && b[4] == b':'
+        s.len() >= 10 && b[..4].iter().all(|c| c.is_ascii_digit()) && b[4] == b':'
     };
     // Exif IFD pointer (0x8769, LONG, count 1: value is the offset).
     let count = u16_at(tiff, ifd0)? as usize;
@@ -262,7 +260,8 @@ pub(crate) fn heic_exif_tiff_candidates(data: &[u8]) -> Vec<Vec<u8>> {
         return out;
     };
     if payload.len() >= 4 {
-        let declared = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        let declared =
+            u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
         for start in [4 + declared, declared] {
             if let Some(tiff) = payload.get(start..) {
                 out.push(tiff.to_vec());
@@ -437,12 +436,9 @@ pub fn ingest(source: &str, store: &AssetStore) -> Result<String, String> {
     let mut block = crate::provenance::provenance_block(&data, dims);
     crate::provenance::attach_public_copy(&mut block, store, &data, None);
     let canonical = serde_json::to_string(&block).unwrap_or_default();
-    let annotated = crate::image::inject_png_text(
-        &normalized,
-        crate::assets::PROVENANCE_PNG_KEY,
-        &canonical,
-    )
-    .unwrap_or(normalized);
+    let annotated =
+        crate::image::inject_png_text(&normalized, crate::assets::PROVENANCE_PNG_KEY, &canonical)
+            .unwrap_or(normalized);
     store.put_bytes(&annotated, KIND_SOURCE, ".png", None)
 }
 

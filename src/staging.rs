@@ -372,7 +372,14 @@ impl AngleEstimate {
 
 /// Estimate the shot angle from the subject geometry (pure; no pixels).
 pub fn estimate_shot_angle(g: &SubjectGeometry) -> AngleEstimate {
-    estimate_shot_angle_from(g.width, g.height, g.bbox, g.coverage, g.fills_frame, &g.touches)
+    estimate_shot_angle_from(
+        g.width,
+        g.height,
+        g.bbox,
+        g.coverage,
+        g.fills_frame,
+        &g.touches,
+    )
 }
 
 /// The estimator over primitives (bbox half-open, in frame pixels).

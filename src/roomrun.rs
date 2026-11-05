@@ -801,8 +801,7 @@ pub fn narration_billing_usage(usage: Option<&Value>, duration_s: f64) -> Usage 
     if prompt == 0 && completion == 0 {
         let pieces = plan_narration_chunks(duration_s).len() as i64;
         return Usage {
-            input_tokens: (duration_s * NARRATION_TOKENS_PER_SECOND
-                + NARRATION_PROMPT_TOKENS_FLOOR)
+            input_tokens: (duration_s * NARRATION_TOKENS_PER_SECOND + NARRATION_PROMPT_TOKENS_FLOOR)
                 .ceil() as i64,
             output_tokens: pieces * NARRATION_MAX_TOKENS as i64,
             ..Default::default()
@@ -942,9 +941,8 @@ pub fn prepare_narration_audio(wav_path: &Path) -> (PathBuf, Option<f64>) {
     let mut pos = 12usize;
     while pos + 8 <= data.len() {
         let id = &data[pos..pos + 4];
-        let size =
-            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
-                as usize;
+        let size = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+            as usize;
         let start = pos + 8;
         let end = (start + size).min(data.len());
         match id {
@@ -1475,7 +1473,10 @@ fn narration_budget_remedy(usage: &Value) -> String {
 /// correction path (decision 114); narrate_one records the failure
 /// as a NARRATION_FAILED row and the stills run continues.
 pub fn interpret_narration_body(body: &Value, latency_ms: i64) -> NarrationResult {
-    let choice = body.pointer("/choices/0").cloned().unwrap_or_else(|| json!({}));
+    let choice = body
+        .pointer("/choices/0")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let content = choice
         .pointer("/message/content")
         .and_then(Value::as_str)
@@ -1528,10 +1529,7 @@ fn narration_data_url(audio_path: &Path) -> Result<String, String> {
 /// PCM data under a canonical header carrying the source's format.
 /// The caller owns the piece files and deletes them; pieces are
 /// transport, never deliverables.
-pub fn slice_wav_pieces(
-    wav_path: &Path,
-    chunks: &[(f64, f64)],
-) -> Result<Vec<PathBuf>, String> {
+pub fn slice_wav_pieces(wav_path: &Path, chunks: &[(f64, f64)]) -> Result<Vec<PathBuf>, String> {
     let data = std::fs::read(wav_path).map_err(|e| e.to_string())?;
     if data.len() < 44 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
         return Err("file does not start with RIFF id".to_string());
@@ -1541,9 +1539,8 @@ pub fn slice_wav_pieces(
     let mut pos = 12usize;
     while pos + 8 <= data.len() {
         let id = &data[pos..pos + 4];
-        let size =
-            u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
-                as usize;
+        let size = u32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]])
+            as usize;
         let start = pos + 8;
         let end = (start + size).min(data.len());
         match id {
@@ -2818,8 +2815,7 @@ pub fn verify_ownership_record(store: &AssetStore, receipt: &Value) -> Value {
                         .and_then(Value::as_str)
                         .and_then(|h| store.read_image(h).ok());
                     if let Some(stored) = stored {
-                        if stored.width == recomputed.width && stored.height == recomputed.height
-                        {
+                        if stored.width == recomputed.width && stored.height == recomputed.height {
                             crop_pixels_changed = stored
                                 .pixels
                                 .chunks_exact(4)
@@ -3098,8 +3094,11 @@ fn build_keep_inventory(
             continue;
         }
         let ownership = item.get("ownership").cloned().unwrap_or(Value::Null);
-        let receipt_sha256 =
-            crate::image::sha256_hex(serde_json::to_string(&ownership).unwrap_or_default().as_bytes());
+        let receipt_sha256 = crate::image::sha256_hex(
+            serde_json::to_string(&ownership)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         let crop_asset = item
             .get("output_asset")
             .and_then(Value::as_str)
@@ -3128,7 +3127,9 @@ fn build_keep_inventory(
             Err(_) => "<em>crop image unavailable</em>".to_string(),
         };
         let text_of = |v: &Value| -> String {
-            v.as_str().map(|s| s.to_string()).unwrap_or_else(|| "—".to_string())
+            v.as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "—".to_string())
         };
         rows.push(format!(
             "<tr><td>{}</td><td><strong>{}</strong></td><td>{}</td><td>{}</td><td class=\"mono\">{}</td></tr>",
@@ -3332,8 +3333,7 @@ fn process_item_logged(
     )?;
     log.mark_pending(run_id, item_index, second_step, None)?;
     let mut record = outcome.record;
-    let (phase_cost, evidence) =
-        run_second_phase(ctx, item, &mut record, sources, &primary)?;
+    let (phase_cost, evidence) = run_second_phase(ctx, item, &mut record, sources, &primary)?;
     record["cost_usd"] = json!(outcome.cost + phase_cost);
     let call_id = take_last_call_id(ctx);
     log.mark_complete(
@@ -4781,9 +4781,9 @@ fn run_room_body(
     // directory beside its ledger. Rows are keyed by the run id the
     // caller supplied (or run_room generated); a rerun with the
     // same id replays what a crashed attempt settled.
-    let step_log = std::rc::Rc::new(
-        crate::sqlledger::RunStepLog::open(&out_dir.join("room-steps.sqlite3"))?,
-    );
+    let step_log = std::rc::Rc::new(crate::sqlledger::RunStepLog::open(
+        &out_dir.join("room-steps.sqlite3"),
+    )?);
     let resumed = step_log.run_exists(room_id)?;
 
     // ---- plan pass: one identify per source photo --------------------
@@ -4794,10 +4794,7 @@ fn run_room_body(
             if row.status == "complete" || row.status == "failed" {
                 let refv = step_ref(&row);
                 source.plan = refv.get("plan").cloned().filter(|v| !v.is_null());
-                source.plan_error = refv
-                    .get("plan_error")
-                    .cloned()
-                    .filter(|v| !v.is_null());
+                source.plan_error = refv.get("plan_error").cloned().filter(|v| !v.is_null());
                 source.handle = refv
                     .get("handle")
                     .and_then(Value::as_str)
@@ -5168,8 +5165,7 @@ fn run_room_body(
     if resumed {
         manifest["resumed"] = json!(true);
     }
-    manifest["inventory"] =
-        build_keep_inventory(&ctx.store, out_dir, room_id, &manifest["items"])?;
+    manifest["inventory"] = build_keep_inventory(&ctx.store, out_dir, room_id, &manifest["items"])?;
     let manifest_path = out_dir.join("manifest.json");
     let serialized = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     std::fs::write(&manifest_path, serialized).map_err(|e| e.to_string())?;

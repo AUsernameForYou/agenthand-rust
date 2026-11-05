@@ -25,7 +25,12 @@ fn ground_plate(w: u32, h: u32) -> RgbaImage {
             let joint = if x % 40 == 0 || y % 30 == 0 { -25 } else { 0 };
             let v = (150 + grain + joint).clamp(0, 255) as u8;
             let i = ((y * w + x) * 4) as usize;
-            img.pixels[i..i + 4].copy_from_slice(&[v, v.saturating_sub(6), v.saturating_sub(14), 255]);
+            img.pixels[i..i + 4].copy_from_slice(&[
+                v,
+                v.saturating_sub(6),
+                v.saturating_sub(14),
+                255,
+            ]);
         }
     }
     img
@@ -78,17 +83,36 @@ fn bike() -> RgbaImage {
         }
         for k in 0..12 {
             let a = k as f64 * std::f64::consts::PI / 6.0;
-            line(&mut fg, (cx, cy), (cx + (R - 6.0) * a.cos(), cy + (R - 6.0) * a.sin()), 0.5, SPOKE);
+            line(
+                &mut fg,
+                (cx, cy),
+                (cx + (R - 6.0) * a.cos(), cy + (R - 6.0) * a.sin()),
+                0.5,
+                SPOKE,
+            );
         }
     }
     let (rear, front) = (WHEELS[0], WHEELS[1]);
     let seat = (180.0, 140.0);
     let head = (270.0, 145.0);
     let crank = (200.0, 222.0);
-    for (a, b) in [(rear, seat), (seat, crank), (crank, rear), (seat, head), (head, crank), (head, front)] {
+    for (a, b) in [
+        (rear, seat),
+        (seat, crank),
+        (crank, rear),
+        (seat, head),
+        (head, crank),
+        (head, front),
+    ] {
         line(&mut fg, a, b, 3.0, FRAME);
     }
-    line(&mut fg, (170.0, 130.0), (195.0, 130.0), 4.0, [20, 20, 20, 255]);
+    line(
+        &mut fg,
+        (170.0, 130.0),
+        (195.0, 130.0),
+        4.0,
+        [20, 20, 20, 255],
+    );
     fg
 }
 
@@ -98,7 +122,15 @@ fn luma(px: &[u8]) -> f64 {
 
 /// Mean darkening (1 - after/before luma) over plate pixels in a box
 /// that the product does not cover at all.
-fn darkening(before: &RgbaImage, after: &RgbaImage, fg: &RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32) -> f64 {
+fn darkening(
+    before: &RgbaImage,
+    after: &RgbaImage,
+    fg: &RgbaImage,
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+) -> f64 {
     let (mut sb, mut sa) = (0.0, 0.0);
     for y in y0..y1 {
         for x in x0..x1 {
@@ -119,7 +151,15 @@ fn darkening(before: &RgbaImage, after: &RgbaImage, fg: &RgbaImage, x0: u32, y0:
 
 /// Strongest darkening over plate pixels in a box the product does
 /// not cover.
-fn peak_darkening(before: &RgbaImage, after: &RgbaImage, fg: &RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32) -> f64 {
+fn peak_darkening(
+    before: &RgbaImage,
+    after: &RgbaImage,
+    fg: &RgbaImage,
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+) -> f64 {
     let mut peak: f64 = 0.0;
     for y in y0..y1 {
         for x in x0..x1 {
@@ -146,8 +186,18 @@ fn assert_product_byte_exact(fg: &RgbaImage, plate: &RgbaImage, grounded: &RgbaI
     for i in (0..fg.pixels.len()).step_by(4) {
         if fg.pixels[i + 3] == 255 {
             opaque += 1;
-            assert_eq!(&composite.pixels[i..i + 4], &fg.pixels[i..i + 4], "product pixel {}", i / 4);
-            assert_eq!(&grounded.pixels[i..i + 4], &plate.pixels[i..i + 4], "plate under product {}", i / 4);
+            assert_eq!(
+                &composite.pixels[i..i + 4],
+                &fg.pixels[i..i + 4],
+                "product pixel {}",
+                i / 4
+            );
+            assert_eq!(
+                &grounded.pixels[i..i + 4],
+                &plate.pixels[i..i + 4],
+                "plate under product {}",
+                i / 4
+            );
         }
     }
     assert!(opaque > 0);
@@ -165,10 +215,16 @@ fn front_lit_bike_is_grounded_at_both_tyres_and_no_product_pixel_changes() {
     assert_eq!(r.shadow_falls.as_deref(), Some("behind"));
     // Ground line through both tyre bottoms (y = 270).
     let line = r.ground_line.unwrap();
-    assert!((line[0][1] - 271.0).abs() <= 2.0 && (line[1][1] - 271.0).abs() <= 2.0, "{line:?}");
+    assert!(
+        (line[0][1] - 271.0).abs() <= 2.0 && (line[1][1] - 271.0).abs() <= 2.0,
+        "{line:?}"
+    );
     assert_eq!(r.contacts.len(), 2, "{:?}", r.contacts);
     for (c, &(cx, _)) in r.contacts.iter().zip(WHEELS.iter()) {
-        assert!(c[0] <= cx && cx <= c[1], "contact {c:?} misses the tyre at {cx}");
+        assert!(
+            c[0] <= cx && cx <= c[1],
+            "contact {c:?} misses the tyre at {cx}"
+        );
     }
     assert_product_byte_exact(&fg, &plate, &out.plate);
 
@@ -179,14 +235,20 @@ fn front_lit_bike_is_grounded_at_both_tyres_and_no_product_pixel_changes() {
         let d = darkening(&plate, &out.plate, &fg, cx - 20, 268, cx + 20, 274);
         let far = darkening(&plate, &out.plate, &fg, cx - 20, 284, cx + 20, 290);
         eprintln!("contact x={cx}: {d:.4}, 15 px in front: {far:.4}");
-        assert!(d > 0.15 && far < 0.2 * d, "contact darkening {d} at x={cx}, in front {far}");
+        assert!(
+            d > 0.15 && far < 0.2 * d,
+            "contact darkening {d} at x={cx}, in front {far}"
+        );
     }
     // Falls away from the viewer: behind the contact line (up the
     // image, through the open wheels) is darker than in front of it.
     let behind = darkening(&plate, &out.plate, &fg, 100, 250, 320, 266);
     let front = darkening(&plate, &out.plate, &fg, 100, 278, 320, 294);
     eprintln!("front-lit: behind {behind:.4} in front {front:.4}");
-    assert!(behind > 2.0 * front && behind > 0.04, "behind {behind} front {front}");
+    assert!(
+        behind > 2.0 * front && behind > 0.04,
+        "behind {behind} front {front}"
+    );
     // No halo: nothing near the frame tubes high above the ground.
     let high = darkening(&plate, &out.plate, &fg, 140, 110, 300, 200);
     assert!(high.abs() < 1e-9, "darkening around the frame {high}");
@@ -213,7 +275,10 @@ fn the_light_side_moves_the_cast_shadow() {
         };
         let out = ground_shadow(&plate, &fg, &light);
         assert!(out.report.applied);
-        assert_eq!(out.report.direction_source.as_deref(), Some("light_estimate"));
+        assert_eq!(
+            out.report.direction_source.as_deref(),
+            Some("light_estimate")
+        );
         assert_product_byte_exact(&fg, &plate, &out.plate);
         out.plate
     };
@@ -224,18 +289,27 @@ fn the_light_side_moves_the_cast_shadow() {
     let right = peak_darkening(&plate, &p, &fg, 345, 258, 395, 274);
     let left = peak_darkening(&plate, &p, &fg, 20, 258, 75, 274);
     eprintln!("from camera-left: right {right:.4} left {left:.4}");
-    assert!(right > 0.05 && right > 3.0 * left, "right {right} left {left}");
+    assert!(
+        right > 0.05 && right > 3.0 * left,
+        "right {right} left {left}"
+    );
     let p = run(LightSide::FromRight);
     let right = peak_darkening(&plate, &p, &fg, 345, 258, 395, 274);
     let left = peak_darkening(&plate, &p, &fg, 20, 258, 75, 274);
     eprintln!("from camera-right: right {right:.4} left {left:.4}");
-    assert!(left > 0.05 && left > 3.0 * right, "left {left} right {right}");
+    assert!(
+        left > 0.05 && left > 3.0 * right,
+        "left {left} right {right}"
+    );
     // Back-lit: the shadow falls toward the camera (down the image).
     let p = run(LightSide::FromBehind);
     let behind = darkening(&plate, &p, &fg, 100, 250, 320, 266);
     let front = darkening(&plate, &p, &fg, 100, 278, 320, 294);
     eprintln!("back-lit: behind {behind:.4} in front {front:.4}");
-    assert!(front > 2.0 * behind && front > 0.04, "front {front} behind {behind}");
+    assert!(
+        front > 2.0 * behind && front > 0.04,
+        "front {front} behind {behind}"
+    );
     // Overhead: only a band at the base.
     let p = run(LightSide::Overhead);
     let far = darkening(&plate, &p, &fg, 100, 284, 320, 298);
@@ -299,7 +373,12 @@ fn surfaces_and_bottom_cut_products_are_left_alone() {
     }
     let out = ground_shadow(&plate, &fg, &front_lit());
     assert!(!out.report.applied);
-    assert!(out.report.reason.as_deref().unwrap().contains("bottom edge"));
+    assert!(out
+        .report
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("bottom edge"));
     assert_eq!(out.plate.pixels, plate.pixels);
     // Empty layer.
     let empty = RgbaImage::solid(W, H, [0, 0, 0, 0]);
@@ -329,26 +408,38 @@ fn grounded_draw_verifies_and_the_kill_switch_restores_the_plain_composite() {
     source = alpha_composite(&source, &fg);
     let source_handle = store.put_image(&source, KIND_SOURCE, None).unwrap();
     let parent = AssetStore::parse_handle(&source_handle).unwrap();
-    let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+    let fg_handle = store
+        .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+        .unwrap();
     // A generated plate at another size: the draw cover-fits it.
     let plate = ground_plate(600, 450);
     let plate_handle = store.put_image(&plate, KIND_PLATE, None).unwrap();
 
     std::env::remove_var(GROUND_SHADOW_ENV);
-    let (plain_handle, plain_receipt) =
-        composite::draw_product_with_plate_kind(&store, &fg_handle, "drive", Some(&plate_handle), None).unwrap();
+    let (plain_handle, plain_receipt) = composite::draw_product_with_plate_kind(
+        &store,
+        &fg_handle,
+        "drive",
+        Some(&plate_handle),
+        None,
+    )
+    .unwrap();
     assert!(plain_receipt.get("ground_shadow").is_none());
     let plain = store.read_image(&plain_handle).unwrap();
 
     let (handle, receipt) =
-        composite::draw_product_grounded(&store, &fg_handle, "drive", &plate_handle, &front_lit()).unwrap();
+        composite::draw_product_grounded(&store, &fg_handle, "drive", &plate_handle, &front_lit())
+            .unwrap();
     let record = &receipt["ground_shadow"];
     assert_eq!(record["applied"], json!(true), "{record}");
     assert_eq!(record["product_pixels_written"], json!(0));
     assert_eq!(receipt["changed_opaque_pixels"], json!(0));
     assert_eq!(receipt["plate_kind"], json!("model_generated"));
     // The fitted-plate hash keeps its meaning: the fit of the stored plate.
-    assert_eq!(receipt["plate_fitted_pixel_sha256"], plain_receipt["plate_fitted_pixel_sha256"]);
+    assert_eq!(
+        receipt["plate_fitted_pixel_sha256"],
+        plain_receipt["plate_fitted_pixel_sha256"]
+    );
     assert_eq!(receipt["opaque_pixels"], plain_receipt["opaque_pixels"]);
     let delivered = store.read_image(&handle).unwrap();
     assert_ne!(delivered.pixels, plain.pixels);
@@ -362,8 +453,14 @@ fn grounded_draw_verifies_and_the_kill_switch_restores_the_plain_composite() {
 
     for off in ["off", "0", "false", "no", "OFF"] {
         std::env::set_var(GROUND_SHADOW_ENV, off);
-        let (h, r) =
-            composite::draw_product_grounded(&store, &fg_handle, "drive", &plate_handle, &front_lit()).unwrap();
+        let (h, r) = composite::draw_product_grounded(
+            &store,
+            &fg_handle,
+            "drive",
+            &plate_handle,
+            &front_lit(),
+        )
+        .unwrap();
         assert_eq!(r["ground_shadow"]["applied"], json!(false));
         assert_eq!(
             r["ground_shadow"]["reason"],
@@ -413,7 +510,10 @@ fn real_fixture_hero_ground() {
     let fg = load(&dir.join("foreground.png"));
     let plate = load(&dir.join("plate.png"));
     let estimate = agenthand::staging::estimate_light_direction(&source, &fg);
-    eprintln!("light estimate: {:?} {} ({})", estimate.side, estimate.method, estimate.reason);
+    eprintln!(
+        "light estimate: {:?} {} ({})",
+        estimate.side, estimate.method, estimate.reason
+    );
     let light = GroundLight::from_estimate(&estimate);
     let t = std::time::Instant::now();
     let out = ground_shadow(&plate, &fg, &light);
@@ -475,7 +575,8 @@ fn real_fixture_hero_ground() {
         image::imageops::replace(&mut canvas, zb, 0, y);
         image::imageops::replace(&mut canvas, za, (pw + gap) as i64, y);
     }
-    let name = std::env::var("AGENTHAND_GROUND_NAME").unwrap_or_else(|_| "hero_ground_before_after.jpg".to_string());
+    let name = std::env::var("AGENTHAND_GROUND_NAME")
+        .unwrap_or_else(|_| "hero_ground_before_after.jpg".to_string());
     let mut file = std::io::BufWriter::new(std::fs::File::create(out_dir.join(name)).unwrap());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 90)
         .encode_image(&canvas)

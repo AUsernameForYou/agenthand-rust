@@ -39,7 +39,11 @@ pub struct SettleOverage {
 /// When others + actual exceeds the cap, the receipt is marked
 /// `over_cap` with the overage in its note, and the breach returned;
 /// the caller still records the receipt (truthfully) and then fails.
-pub fn apply_settle_cap(receipt: &mut Receipt, others_usd: f64, cap_usd: f64) -> Option<SettleOverage> {
+pub fn apply_settle_cap(
+    receipt: &mut Receipt,
+    others_usd: f64,
+    cap_usd: f64,
+) -> Option<SettleOverage> {
     let total = ((others_usd + receipt.usd_estimate) * 1e6).round() / 1e6;
     if total <= cap_usd {
         return None;

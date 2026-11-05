@@ -236,8 +236,8 @@ fn stdio_price_tool_is_removed() {
         std::env::temp_dir().join(format!("agenthand-e2e-noprice-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     std::fs::create_dir_all(&data_dir).unwrap();
-    let comps = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/pricing-comps.json");
+    let comps =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pricing-comps.json");
     let mut server = Server::spawn_with_comps(&data_dir, comps.to_str().unwrap());
     server.call(
         "initialize",

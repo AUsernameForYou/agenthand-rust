@@ -358,7 +358,13 @@ fn layered_files(dir: &std::path::Path) -> RgbaImage {
         pixels: mask.clone(),
         icc_profile: None,
     };
-    let recon = build(8, 6, |x, _| if x < 2 { [200, 190, 180, 255] } else { [0, 0, 0, 0] });
+    let recon = build(8, 6, |x, _| {
+        if x < 2 {
+            [200, 190, 180, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
     let plate = build(16, 12, |x, y| [(x * 15) as u8, 99, (y * 20) as u8, 255]);
     let fitted = agenthand::resample::fit(&plate, 8, 6);
     let mut fg = source.clone();
@@ -462,7 +468,13 @@ fn verify_files_layer_checks_refuse_paper_under_the_mask() {
     assert_eq!(layer_only["non_product_pixels_verified"], false);
 
     // Paper on the edge-band pixel (mask 128) and one product pixel.
-    let mut recon = build(8, 6, |x, _| if x < 2 { [200, 190, 180, 255] } else { [0, 0, 0, 0] });
+    let mut recon = build(8, 6, |x, _| {
+        if x < 2 {
+            [200, 190, 180, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
     set_px(&mut recon, 5, 3, [9, 9, 9, 40]);
     set_px(&mut recon, 3, 2, [9, 9, 9, 255]);
     std::fs::write(&r, encode_png_rgba(&recon)).unwrap();

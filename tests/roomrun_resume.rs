@@ -27,10 +27,7 @@ const CUT_COST: f64 = 0.0025;
 const DRAW_COST: f64 = 0.01;
 
 fn temp_root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "agenthand-resume-{tag}-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("agenthand-resume-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     root
@@ -93,7 +90,8 @@ impl Fake {
         // identical for every call, so control and resumed runs
         // produce identical listings regardless of call sequence.
         if !self.plans_by_uri.contains_key(image_ref) {
-            self.crop_identify_calls.set(self.crop_identify_calls.get() + 1);
+            self.crop_identify_calls
+                .set(self.crop_identify_calls.get() + 1);
             self.spend.set(self.spend.get() + IDENTIFY_COST);
             return Ok(json!({
                 "status": "ok",
@@ -116,9 +114,7 @@ impl Fake {
         // plans were inserted in photo order and the URI map keeps
         // its own index in the plan's helper field.
         let idx = plan["photo_index"].as_u64().unwrap() as usize;
-        self.photo_handles
-            .borrow_mut()
-            .insert(handle.clone(), idx);
+        self.photo_handles.borrow_mut().insert(handle.clone(), idx);
         let mut result = json!({
             "status": "ok",
             "image": handle,
@@ -347,10 +343,11 @@ fn killed_room_run_resumes_without_rebilling() {
     // run_room sets process env (the room ledger pins); a panic
     // skips its restore, so save + restore by hand around the
     // crashed invocation.
-    let saved: Vec<(&str, Option<std::ffi::OsString>)> = ["AGENTHAND_LEDGER_PATH", "AGENTHAND_LEDGER"]
-        .iter()
-        .map(|k| (*k, std::env::var_os(k)))
-        .collect();
+    let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+        ["AGENTHAND_LEDGER_PATH", "AGENTHAND_LEDGER"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
     let restore = |saved: &Vec<(&str, Option<std::ffi::OsString>)>| {
         for (k, v) in saved {
             match v {
@@ -395,8 +392,7 @@ fn killed_room_run_resumes_without_rebilling() {
     assert_eq!(row.status, "complete");
     let row = log.get("resume-room", 2, "cut_out").unwrap().unwrap();
     assert_eq!(row.status, "pending", "item 3 died mid-probe");
-    let checkpoint: Value =
-        serde_json::from_str(row.result_ref.as_deref().unwrap()).unwrap();
+    let checkpoint: Value = serde_json::from_str(row.result_ref.as_deref().unwrap()).unwrap();
     assert_eq!(
         checkpoint["sightings"].as_array().unwrap().len(),
         1,

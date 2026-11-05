@@ -61,7 +61,11 @@ pub fn py_float_repr(f: f64) -> String {
         return if f > 0.0 { "inf".into() } else { "-inf".into() };
     }
     if f == 0.0 {
-        return if f.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        return if f.is_sign_negative() {
+            "-0.0".into()
+        } else {
+            "0.0".into()
+        };
     }
     let sci = format!("{f:e}");
     let (mant, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
@@ -91,7 +95,11 @@ fn py_number(n: &Number) -> String {
 
 /// `repr(str)`: single quotes unless the text holds a `'` and no `"`.
 pub fn py_str_repr(s: &str) -> String {
-    let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let quote = if s.contains('\'') && !s.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
     let mut out = String::with_capacity(s.len() + 2);
     out.push(quote);
     for c in s.chars() {
@@ -250,7 +258,11 @@ fn json_number(n: &Number) -> String {
     if f.is_nan() {
         "NaN".into()
     } else if f.is_infinite() {
-        if f > 0.0 { "Infinity".into() } else { "-Infinity".into() }
+        if f > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        }
     } else {
         py_float_repr(f)
     }
@@ -263,8 +275,14 @@ fn newline_indent(out: &mut String, indent: Option<usize>, level: usize) {
     }
 }
 
-fn write_seq<'a, I>(out: &mut String, open: char, close: char, items: I, indent: Option<usize>, level: usize)
-where
+fn write_seq<'a, I>(
+    out: &mut String,
+    open: char,
+    close: char,
+    items: I,
+    indent: Option<usize>,
+    level: usize,
+) where
     I: ExactSizeIterator<Item = (Option<&'a str>, PyRef<'a>)>,
 {
     if items.len() == 0 {
@@ -365,12 +383,24 @@ pub fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
         out.push(ALPHABET[(n >> 18) as usize & 63] as char);
         out.push(ALPHABET[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -394,7 +424,12 @@ pub fn init_line(init: &Value) -> Result<String, String> {
     let info = init
         .get("result")
         .and_then(|r| r.get("serverInfo"))
-        .ok_or_else(|| format!("initialize returned no result.serverInfo: {}", py_slice(&py_json_dumps(init), 600)))?;
+        .ok_or_else(|| {
+            format!(
+                "initialize returned no result.serverInfo: {}",
+                py_slice(&py_json_dumps(init), 600)
+            )
+        })?;
     Ok(format!(
         "initialize -> serverInfo name={} version={}",
         py_str(info.get("name")),
@@ -408,7 +443,12 @@ pub fn tools_list_line(resp: &Value) -> Result<String, String> {
         .get("result")
         .and_then(|r| r.get("tools"))
         .and_then(|t| t.as_array())
-        .ok_or_else(|| format!("tools/list returned no result.tools: {}", py_slice(&py_json_dumps(resp), 600)))?;
+        .ok_or_else(|| {
+            format!(
+                "tools/list returned no result.tools: {}",
+                py_slice(&py_json_dumps(resp), 600)
+            )
+        })?;
     let names: Vec<Value> = tools
         .iter()
         .map(|t| t.get("name").cloned().unwrap_or(Value::Null))
@@ -440,7 +480,10 @@ pub fn identify_result_lines(ident: &Value, secs: f64) -> Vec<String> {
 }
 
 pub fn cut_call_lines(src_handle: &str) -> Vec<String> {
-    vec![String::new(), format!("$ tools/call cut_out  image={src_handle}")]
+    vec![
+        String::new(),
+        format!("$ tools/call cut_out  image={src_handle}"),
+    ]
 }
 
 pub fn cut_result_lines(cut: &Value, secs: f64) -> Vec<String> {
@@ -460,7 +503,11 @@ pub fn draw_call_lines(fg: &str, scene: &str) -> Vec<String> {
         format!("$ tools/call draw  asset={fg}"),
         format!(
             "  scene: {}",
-            if scene.is_empty() { "(none - merged-build defaults)" } else { scene }
+            if scene.is_empty() {
+                "(none - merged-build defaults)"
+            } else {
+                scene
+            }
         ),
     ]
 }
@@ -485,8 +532,14 @@ pub fn receipt_lines(draw: &Value) -> Vec<String> {
     vec![
         String::new(),
         "  FIDELITY LOCK RECEIPT".into(),
-        format!("  product pixels checked : {}", py_commas(get("opaque_pixels"))),
-        format!("  product pixels changed : {}", py_str(get("changed_opaque_pixels"))),
+        format!(
+            "  product pixels checked : {}",
+            py_commas(get("opaque_pixels"))
+        ),
+        format!(
+            "  product pixels changed : {}",
+            py_str(get("changed_opaque_pixels"))
+        ),
         format!("  verify: {}", py_str(draw.get("verify_url"))),
     ]
 }
@@ -513,7 +566,10 @@ pub fn look_result_lines(look: &Value, secs: f64) -> Vec<String> {
         ),
     ];
     if look.get("status").and_then(|s| s.as_str()) != Some("ok") {
-        lines.push(format!("  LOOK-TEST FAILED: {}", py_slice(&py_json_dumps(look), 300)));
+        lines.push(format!(
+            "  LOOK-TEST FAILED: {}",
+            py_slice(&py_json_dumps(look), 300)
+        ));
     }
     lines
 }
@@ -540,7 +596,11 @@ pub fn verify_outcome(stdout: &str, stderr: &str) -> (String, String) {
         Some(Value::Bool(b)) => !*b,
         _ => false,
     };
-    let verdict = if py_truthy(rv.get("ok")) && changed_is_zero { "PASS" } else { "CHECK OUTPUT" };
+    let verdict = if py_truthy(rv.get("ok")) && changed_is_zero {
+        "PASS"
+    } else {
+        "CHECK OUTPUT"
+    };
     let Some(checked) = py_commas_checked(rv.get("checked_pixels")) else {
         return (verdict.into(), raw_line);
     };
@@ -583,7 +643,9 @@ pub fn total_settled(steps: &[&Value]) -> (f64, Value) {
         }
     }
     let stored = if is_float {
-        Number::from_f64(total).map(Value::Number).unwrap_or(Value::Null)
+        Number::from_f64(total)
+            .map(Value::Number)
+            .unwrap_or(Value::Null)
     } else {
         Value::from(int_total)
     };
@@ -619,7 +681,10 @@ pub fn strip_images(resp: &Value) -> Value {
                             _ => 0,
                         })
                         .unwrap_or(0);
-                    map.insert("data".into(), Value::String(format!("<stripped {n} chars>")));
+                    map.insert(
+                        "data".into(),
+                        Value::String(format!("<stripped {n} chars>")),
+                    );
                 }
             }
         }
@@ -646,10 +711,13 @@ pub struct Opts {
     pub no_look_test: bool,
 }
 
-pub const USAGE: &str = "usage: agenthand-take [-h] [--src SRC] --out OUT [--bin BIN] [--dry-run] [--no-look-test]";
+pub const USAGE: &str =
+    "usage: agenthand-take [-h] [--src SRC] --out OUT [--bin BIN] [--dry-run] [--no-look-test]";
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub enum ArgsError {
@@ -690,8 +758,15 @@ pub fn parse_args(args: &[String]) -> Result<Opts, ArgsError> {
         }
         i += 1;
     }
-    let out = out.ok_or_else(|| ArgsError::Bad("the following arguments are required: --out".into()))?;
-    Ok(Opts { src, out, bin, dry_run, no_look_test })
+    let out =
+        out.ok_or_else(|| ArgsError::Bad("the following arguments are required: --out".into()))?;
+    Ok(Opts {
+        src,
+        out,
+        bin,
+        dry_run,
+        no_look_test,
+    })
 }
 
 /// `--bin`, else the sibling `agenthand` next to this executable, else
@@ -757,7 +832,12 @@ impl Server {
                 }
             }
         });
-        Ok(Server { child, stdin, rx, next_id: 0 })
+        Ok(Server {
+            child,
+            stdin,
+            rx,
+            next_id: 0,
+        })
     }
 
     fn send(&mut self, msg: &PyJson) -> Result<(), String> {
@@ -797,8 +877,12 @@ impl Server {
         ]);
         self.send(&req)?;
         let line = self.read_line()?;
-        serde_json::from_str(&line)
-            .map_err(|e| format!("{method}: server reply is not JSON ({e}): {}", py_slice(&line, 300)))
+        serde_json::from_str(&line).map_err(|e| {
+            format!(
+                "{method}: server reply is not JSON ({e}): {}",
+                py_slice(&line, 300)
+            )
+        })
     }
 
     fn notify(&mut self, method: &str) -> Result<(), String> {
@@ -812,14 +896,23 @@ impl Server {
     /// tools/call; saves `<name>-response.json` (images stripped) and
     /// returns structuredContent, or an error when there is none.
     fn tool(&mut self, name: &str, arguments: PyJson, out: &Path) -> Result<Value, String> {
-        let resp = self.call("tools/call", obj(vec![("name", val(Value::from(name))), ("arguments", arguments)]))?;
+        let resp = self.call(
+            "tools/call",
+            obj(vec![
+                ("name", val(Value::from(name))),
+                ("arguments", arguments),
+            ]),
+        )?;
         let structured = resp
             .get("result")
             .and_then(|r| r.get("structuredContent"))
             .filter(|s| !s.is_null())
             .cloned();
         let saved = strip_images(&resp);
-        write_file(&out.join(format!("{name}-response.json")), &py_json_dumps_indent(&saved))?;
+        write_file(
+            &out.join(format!("{name}-response.json")),
+            &py_json_dumps_indent(&saved),
+        )?;
         structured.ok_or_else(|| {
             format!(
                 "{name} returned no structuredContent: {}",
@@ -889,7 +982,9 @@ fn command_stdout(cmd: &mut Command) -> String {
 }
 
 fn file_name_of(p: &Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn str_field(v: &Value, key: &str, tool: &str) -> Result<String, String> {
@@ -905,14 +1000,21 @@ fn run(opts: &Opts) -> Result<u8, String> {
     // Fail before anything prints, so a camera never rolls on a
     // half-transcript. The key's value is never read here.
     if !opts.dry_run
-        && std::env::var("META_API_KEY").map(|k| k.trim().is_empty()).unwrap_or(true)
+        && std::env::var("META_API_KEY")
+            .map(|k| k.trim().is_empty())
+            .unwrap_or(true)
     {
-        return Err("META_API_KEY is not set in the environment (export it by sourcing \
+        return Err(
+            "META_API_KEY is not set in the environment (export it by sourcing \
 ~/.config/agenthand/env: set -a; . ~/.config/agenthand/env; set +a)"
-            .into());
+                .into(),
+        );
     }
     if !bin.is_file() {
-        return Err(format!("server binary not found: {} (pass --bin)", bin.display()));
+        return Err(format!(
+            "server binary not found: {} (pass --bin)",
+            bin.display()
+        ));
     }
 
     let src = &opts.src;
@@ -933,7 +1035,12 @@ fn run(opts: &Opts) -> Result<u8, String> {
     t.emit(&command_stdout(&mut Command::new("date")));
     t.emit("");
     t.emit(&format!("$ ls -l {src_name}"));
-    t.emit(&command_stdout(Command::new("ls").arg("-l").arg(&src_name).current_dir(&src_parent)));
+    t.emit(&command_stdout(
+        Command::new("ls")
+            .arg("-l")
+            .arg(&src_name)
+            .current_dir(&src_parent),
+    ));
     t.emit("");
     t.emit(&banner_line(&bin_name, build_version()));
     let mut srv = Server::spawn(&bin, &data_dir)?;
@@ -964,14 +1071,24 @@ fn run(opts: &Opts) -> Result<u8, String> {
     }
 
     // --- identify
-    let src_bytes = std::fs::read(src).map_err(|e| format!("cannot read {}: {e}", src.display()))?;
+    let src_bytes =
+        std::fs::read(src).map_err(|e| format!("cannot read {}: {e}", src.display()))?;
     let data_uri = format!("data:image/heic;base64,{}", base64_encode(&src_bytes));
-    let src_size = std::fs::metadata(src).map(|m| m.len()).unwrap_or(src_bytes.len() as u64);
+    let src_size = std::fs::metadata(src)
+        .map(|m| m.len())
+        .unwrap_or(src_bytes.len() as u64);
     drop(src_bytes);
     t.emit_all(&identify_call_lines(&src_name, src_size));
     let started = Instant::now();
-    let ident = srv.tool("identify", obj(vec![("image", val(Value::String(data_uri)))]), out)?;
-    t.emit_all(&identify_result_lines(&ident, started.elapsed().as_secs_f64()));
+    let ident = srv.tool(
+        "identify",
+        obj(vec![("image", val(Value::String(data_uri)))]),
+        out,
+    )?;
+    t.emit_all(&identify_result_lines(
+        &ident,
+        started.elapsed().as_secs_f64(),
+    ));
     if ident.get("status").and_then(|s| s.as_str()) != Some("ok") {
         t.emit(&failed_line("identify", &ident));
         return Ok(1);
@@ -981,7 +1098,11 @@ fn run(opts: &Opts) -> Result<u8, String> {
     // --- cut_out
     t.emit_all(&cut_call_lines(&src_handle));
     let started = Instant::now();
-    let cut = srv.tool("cut_out", obj(vec![("image", val(Value::from(src_handle.as_str())))]), out)?;
+    let cut = srv.tool(
+        "cut_out",
+        obj(vec![("image", val(Value::from(src_handle.as_str())))]),
+        out,
+    )?;
     t.emit_all(&cut_result_lines(&cut, started.elapsed().as_secs_f64()));
     if cut.get("status").and_then(|s| s.as_str()) != Some("ok") {
         t.emit(&failed_line("cut_out", &cut));
@@ -1095,14 +1216,20 @@ fn run(opts: &Opts) -> Result<u8, String> {
     let v_stderr = String::from_utf8_lossy(&verify.stderr).into_owned();
     write_file(
         &out.join("verify-output.json"),
-        if v_stdout.is_empty() { &v_stderr } else { &v_stdout },
+        if v_stdout.is_empty() {
+            &v_stderr
+        } else {
+            &v_stdout
+        },
     )?;
     let (verdict, verify_line) = verify_outcome(&v_stdout, &v_stderr);
     t.emit(&verify_line);
 
     // --- result + summary
     let (total, total_value) = total_settled(&[&ident, &cut, &draw]);
-    let changed = draw.get("fidelity_receipt").and_then(|r| r.get("changed_opaque_pixels"));
+    let changed = draw
+        .get("fidelity_receipt")
+        .and_then(|r| r.get("changed_opaque_pixels"));
     t.emit("");
     t.emit(&result_line(changed, total));
     let machine = command_stdout(Command::new("uname").arg("-n"));
@@ -1122,10 +1249,16 @@ fn run(opts: &Opts) -> Result<u8, String> {
     ];
     if let Some(look) = &look {
         summary.push(("look_test", val(look.clone())));
-        summary.push(("look_test_cost_usd", val(look.get("cost_usd").cloned().unwrap_or(Value::Null))));
+        summary.push((
+            "look_test_cost_usd",
+            val(look.get("cost_usd").cloned().unwrap_or(Value::Null)),
+        ));
     }
     summary.push(("total_cost_usd", val(total_value)));
-    write_file(&out.join("chain-summary.json"), &py_json_dumps_ordered(&obj(summary), Some(2)))?;
+    write_file(
+        &out.join("chain-summary.json"),
+        &py_json_dumps_ordered(&obj(summary), Some(2)),
+    )?;
     t.emit("");
     t.emit("$ date");
     t.emit(&command_stdout(&mut Command::new("date")));
@@ -1139,13 +1272,17 @@ fn main() -> ExitCode {
         Err(ArgsError::Help) => {
             println!("{USAGE}");
             println!();
-            println!("Filmed-demo MCP client: identify -> cut_out -> draw -> look-test draw -> verify.");
+            println!(
+                "Filmed-demo MCP client: identify -> cut_out -> draw -> look-test draw -> verify."
+            );
             println!("  --src SRC        photo to stage (default ~/Downloads/IMG_1443.heic)");
             println!("  --out OUT        output folder (required; created if missing)");
             println!("  --bin BIN        server binary (default: sibling `agenthand`, else ~/{RELEASE_FALLBACK})");
             println!("  --dry-run        initialize + tools/list only; stop before identify (no key needed)");
             println!("  --no-look-test   skip the extra logo-wall look-test draw");
-            println!("META_API_KEY must be in the environment for a real take; it is never printed.");
+            println!(
+                "META_API_KEY must be in the environment for a real take; it is never printed."
+            );
             return ExitCode::SUCCESS;
         }
         Err(ArgsError::Bad(msg)) => {

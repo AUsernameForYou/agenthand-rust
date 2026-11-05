@@ -326,7 +326,10 @@ fn build_body(look: Option<(&Value, f64)>) -> Vec<String> {
     out.push(line);
     let (total, _) = take::total_settled(&[&ident, &cut, &draw]);
     out.push(String::new());
-    out.push(take::result_line(draw["fidelity_receipt"].get("changed_opaque_pixels"), total));
+    out.push(take::result_line(
+        draw["fidelity_receipt"].get("changed_opaque_pixels"),
+        total,
+    ));
     out
 }
 
@@ -338,9 +341,15 @@ fn build_body(look: Option<(&Value, f64)>) -> Vec<String> {
 fn transcript_matches_the_recorded_mac_run_line_for_line() {
     let sample = lines(SAMPLE_TRANSCRIPT);
     let start = sample.iter().position(|l| l.contains(" serve ")).unwrap();
-    let end = sample.iter().position(|l| l.starts_with("RESULT:")).unwrap();
+    let end = sample
+        .iter()
+        .position(|l| l.starts_with("RESULT:"))
+        .unwrap();
     let mut expected: Vec<String> = sample[start..=end].to_vec();
-    let scene = expected.iter().position(|l| l.starts_with("  scene: ")).unwrap();
+    let scene = expected
+        .iter()
+        .position(|l| l.starts_with("  scene: "))
+        .unwrap();
     expected[scene] = "  scene: (none - merged-build defaults)".into();
     assert_eq!(build_body(None), expected);
 }
@@ -404,9 +413,16 @@ fn failure_lines_match_python_shapes() {
     ident["error"] = json!({"code": "IMAGE_REFUSED", "message": "caf\u{e9} ".repeat(80)});
     let line = take::failed_line("identify", &ident);
     assert!(line.starts_with("identify FAILED: {\"alternates\": [\"kids BMX bike\", \"small blue bicycle\"], \"attempts\": 1, "));
-    assert_eq!(line.chars().count(), "identify FAILED: ".len() + 300, "json.dumps(...)[:300]");
     assert_eq!(
-        take::failed_line("draw", &json!({"status": "error", "error": {"message": "caf\u{e9}"}})),
+        line.chars().count(),
+        "identify FAILED: ".len() + 300,
+        "json.dumps(...)[:300]"
+    );
+    assert_eq!(
+        take::failed_line(
+            "draw",
+            &json!({"status": "error", "error": {"message": "caf\u{e9}"}})
+        ),
         "draw FAILED: {\"error\": {\"message\": \"caf\\u00e9\"}, \"status\": \"error\"}",
         "sorted keys, Python separators, ensure_ascii"
     );
@@ -421,11 +437,32 @@ fn failure_lines_match_python_shapes() {
 #[test]
 fn verify_outcome_pass_check_and_raw() {
     let (v, l) = take::verify_outcome(VERIFY_OUTPUT, "");
-    assert_eq!((v.as_str(), l.as_str()), ("PASS", "  verify PASS : checked 5,660,280 px, changed 0 px, ok=True"));
-    let (v, l) = take::verify_outcome(r#"{"ok": false, "changed_pixels": 3, "checked_pixels": 1200}"#, "");
-    assert_eq!((v.as_str(), l.as_str()), ("CHECK OUTPUT", "  verify CHECK OUTPUT : checked 1,200 px, changed 3 px, ok=False"));
+    assert_eq!(
+        (v.as_str(), l.as_str()),
+        (
+            "PASS",
+            "  verify PASS : checked 5,660,280 px, changed 0 px, ok=True"
+        )
+    );
+    let (v, l) = take::verify_outcome(
+        r#"{"ok": false, "changed_pixels": 3, "checked_pixels": 1200}"#,
+        "",
+    );
+    assert_eq!(
+        (v.as_str(), l.as_str()),
+        (
+            "CHECK OUTPUT",
+            "  verify CHECK OUTPUT : checked 1,200 px, changed 3 px, ok=False"
+        )
+    );
     let (v, l) = take::verify_outcome("", "verify failed: cannot read mask.png");
-    assert_eq!((v.as_str(), l.as_str()), ("UNPARSED", "  verify raw: verify failed: cannot read mask.png"));
+    assert_eq!(
+        (v.as_str(), l.as_str()),
+        (
+            "UNPARSED",
+            "  verify raw: verify failed: cannot read mask.png"
+        )
+    );
     let (v, _) = take::verify_outcome("[1, 2]", "");
     assert_eq!(v, "UNPARSED");
 }
@@ -443,20 +480,40 @@ fn saved_response_json_is_python_indent2_byte_for_byte() {
 #[test]
 fn image_blocks_are_stripped_to_a_char_count() {
     let saved = take::strip_images(&draw_response());
-    assert_eq!(saved["result"]["content"][1]["data"], json!("<stripped 10000 chars>"));
-    assert_eq!(saved["result"]["content"][1]["mimeType"], json!("image/png"));
-    assert_eq!(saved["result"]["content"][0]["text"], json!("{\"status\":\"ok\"}"));
+    assert_eq!(
+        saved["result"]["content"][1]["data"],
+        json!("<stripped 10000 chars>")
+    );
+    assert_eq!(
+        saved["result"]["content"][1]["mimeType"],
+        json!("image/png")
+    );
+    assert_eq!(
+        saved["result"]["content"][0]["text"],
+        json!("{\"status\":\"ok\"}")
+    );
     let text = take::py_json_dumps_indent(&saved);
-    assert!(text.contains("\n        \"thin_fraction\": 4e-06,\n"), "Python float repr inside indent=2");
+    assert!(
+        text.contains("\n        \"thin_fraction\": 4e-06,\n"),
+        "Python float repr inside indent=2"
+    );
     assert!(!text.ends_with('\n'));
 }
 
 #[test]
 fn python_value_formatting() {
     for (f, want) in [
-        (0.006692, "0.006692"), (0.0025, "0.0025"), (0.01, "0.01"), (4e-6, "4e-06"),
-        (1e-5, "1e-05"), (0.0001, "0.0001"), (1.0, "1.0"), (1e15, "1000000000000000.0"),
-        (1e16, "1e+16"), (1.5e16, "1.5e+16"), (0.0, "0.0"),
+        (0.006692, "0.006692"),
+        (0.0025, "0.0025"),
+        (0.01, "0.01"),
+        (4e-6, "4e-06"),
+        (1e-5, "1e-05"),
+        (0.0001, "0.0001"),
+        (1.0, "1.0"),
+        (1e15, "1000000000000000.0"),
+        (1e16, "1e+16"),
+        (1.5e16, "1.5e+16"),
+        (0.0, "0.0"),
     ] {
         assert_eq!(take::py_float_repr(f), want, "repr({f})");
     }
@@ -468,12 +525,23 @@ fn python_value_formatting() {
     assert_eq!(take::py_str(Some(&json!(true))), "True");
     assert_eq!(take::py_str(Some(&json!(0.0025))), "0.0025");
     assert_eq!(take::py_str(Some(&json!(0))), "0");
-    assert_eq!(take::py_repr(&json!(["identify", "it's"])), "['identify', \"it's\"]");
-    assert_eq!(take::py_json_dumps(&json!({"b": [1, 2.5], "a": "caf\u{e9} \u{1F6B2}"})),
-        "{\"a\": \"caf\\u00e9 \\ud83d\\udeb2\", \"b\": [1, 2.5]}");
-    assert_eq!(take::py_json_dumps_indent(&json!({"a": [], "b": {}})), "{\n  \"a\": [],\n  \"b\": {}\n}");
+    assert_eq!(
+        take::py_repr(&json!(["identify", "it's"])),
+        "['identify', \"it's\"]"
+    );
+    assert_eq!(
+        take::py_json_dumps(&json!({"b": [1, 2.5], "a": "caf\u{e9} \u{1F6B2}"})),
+        "{\"a\": \"caf\\u00e9 \\ud83d\\udeb2\", \"b\": [1, 2.5]}"
+    );
+    assert_eq!(
+        take::py_json_dumps_indent(&json!({"a": [], "b": {}})),
+        "{\n  \"a\": [],\n  \"b\": {}\n}"
+    );
     let ordered = take::obj(vec![("z", take::val(json!(1))), ("a", take::obj(vec![]))]);
-    assert_eq!(take::py_json_dumps_ordered(&ordered, Some(2)), "{\n  \"z\": 1,\n  \"a\": {}\n}");
+    assert_eq!(
+        take::py_json_dumps_ordered(&ordered, Some(2)),
+        "{\n  \"z\": 1,\n  \"a\": {}\n}"
+    );
 }
 
 #[test]
@@ -485,15 +553,33 @@ fn total_settled_matches_python_sum() {
     assert_eq!(format!("{total:.6}"), "0.019192");
     assert_eq!(take::py_json_dumps(&stored), "0.019192");
     // `or 0`: missing, null and 0.0 all add int 0, so the stored total stays an int.
-    let (total, stored) = take::total_settled(&[&json!({}), &json!({"cost_usd": null}), &json!({"cost_usd": 0.0})]);
+    let (total, stored) = take::total_settled(&[
+        &json!({}),
+        &json!({"cost_usd": null}),
+        &json!({"cost_usd": 0.0}),
+    ]);
     assert_eq!((total, stored), (0.0, json!(0)));
-    assert_eq!(take::result_line(Some(&json!(0)), 0.019192), "RESULT: 0 product pixels changed | TOTAL SETTLED: $0.019192");
-    assert_eq!(take::result_line(None, 0.0), "RESULT: None product pixels changed | TOTAL SETTLED: $0.000000");
+    assert_eq!(
+        take::result_line(Some(&json!(0)), 0.019192),
+        "RESULT: 0 product pixels changed | TOTAL SETTLED: $0.019192"
+    );
+    assert_eq!(
+        take::result_line(None, 0.0),
+        "RESULT: None product pixels changed | TOTAL SETTLED: $0.000000"
+    );
 }
 
 #[test]
 fn base64_matches_known_vectors() {
-    for (raw, want) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
+    for (raw, want) in [
+        ("", ""),
+        ("f", "Zg=="),
+        ("fo", "Zm8="),
+        ("foo", "Zm9v"),
+        ("foob", "Zm9vYg=="),
+        ("fooba", "Zm9vYmE="),
+        ("foobar", "Zm9vYmFy"),
+    ] {
         assert_eq!(take::base64_encode(raw.as_bytes()), want);
     }
     let all: Vec<u8> = (0..=255u8).collect();
@@ -503,14 +589,22 @@ fn base64_matches_known_vectors() {
 #[test]
 fn args_parse_like_argparse() {
     let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    let o = take::parse_args(&s(&["--out", "/tmp/x", "--src=/p/IMG.heic", "--dry-run"])).ok().unwrap();
+    let o = take::parse_args(&s(&["--out", "/tmp/x", "--src=/p/IMG.heic", "--dry-run"]))
+        .ok()
+        .unwrap();
     assert_eq!(o.out, PathBuf::from("/tmp/x"));
     assert_eq!(o.src, PathBuf::from("/p/IMG.heic"));
     assert!(o.dry_run && !o.no_look_test && o.bin.is_none());
     let o = take::parse_args(&s(&["--out", "o"])).ok().unwrap();
     assert!(o.src.ends_with("Downloads/IMG_1443.heic"));
-    assert!(matches!(take::parse_args(&s(&["--src", "x"])), Err(take::ArgsError::Bad(_))));
-    assert!(matches!(take::parse_args(&s(&["--out", "o", "--nope"])), Err(take::ArgsError::Bad(_))));
+    assert!(matches!(
+        take::parse_args(&s(&["--src", "x"])),
+        Err(take::ArgsError::Bad(_))
+    ));
+    assert!(matches!(
+        take::parse_args(&s(&["--out", "o", "--nope"])),
+        Err(take::ArgsError::Bad(_))
+    ));
     assert!(take::resolve_bin(Some(Path::new("/x/agenthand-9"))).ends_with("agenthand-9"));
 }
 
@@ -538,14 +632,34 @@ fn dry_run_handshakes_with_the_local_server_and_stops_before_identify() {
         .output()
         .expect("run agenthand-take");
     let stdout = String::from_utf8(run.stdout).unwrap();
-    assert!(run.status.success(), "stdout:\n{stdout}\nstderr:\n{}", String::from_utf8_lossy(&run.stderr));
+    assert!(
+        run.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     let got = lines(&stdout);
     assert_eq!(got[0], "$ date");
     assert_eq!(got[3], "$ ls -l Cargo.toml");
     assert!(got[4].ends_with(" Cargo.toml"), "ls -l line: {}", got[4]);
-    assert_eq!(got[6], format!("$ agenthand serve   # agenthand {} (Rust), MCP stdio", env!("CARGO_PKG_VERSION")));
-    assert_eq!(got[7], format!("initialize -> serverInfo name=agenthand version={}", env!("CARGO_PKG_VERSION")));
-    assert!(got[8].starts_with("tools/list -> ['identify', 'cut_out', 'draw'"), "{}", got[8]);
+    assert_eq!(
+        got[6],
+        format!(
+            "$ agenthand serve   # agenthand {} (Rust), MCP stdio",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+    assert_eq!(
+        got[7],
+        format!(
+            "initialize -> serverInfo name=agenthand version={}",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+    assert!(
+        got[8].starts_with("tools/list -> ['identify', 'cut_out', 'draw'"),
+        "{}",
+        got[8]
+    );
     assert!(got.last().unwrap().starts_with("DRY RUN: "));
     assert!(!stdout.contains("tools/call"));
     let transcript = std::fs::read_to_string(out.join("session-transcript.txt")).unwrap();
@@ -572,7 +686,10 @@ fn real_take_without_key_fails_before_printing_anything() {
 
 #[test]
 fn missing_out_is_a_usage_error() {
-    let run = Command::new(env!("CARGO_BIN_EXE_agenthand-take")).output().unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_agenthand-take"))
+        .output()
+        .unwrap();
     assert_eq!(run.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&run.stderr).contains("the following arguments are required: --out"));
+    assert!(String::from_utf8_lossy(&run.stderr)
+        .contains("the following arguments are required: --out"));
 }

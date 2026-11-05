@@ -35,7 +35,11 @@ fn crc32_ieee(data: &[u8]) -> u32 {
     for (i, slot) in table.iter_mut().enumerate() {
         let mut c = i as u32;
         for _ in 0..8 {
-            c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB88320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
         }
         *slot = c;
     }
@@ -159,7 +163,8 @@ impl Fake {
         if !self.plans_by_uri.contains_key(image_ref) {
             // A crop identify (staging's second route, or the keep
             // path's condition call): one generic plan.
-            self.crop_identify_calls.set(self.crop_identify_calls.get() + 1);
+            self.crop_identify_calls
+                .set(self.crop_identify_calls.get() + 1);
             self.spend.set(self.spend.get() + IDENTIFY_COST);
             return Ok(json!({
                 "status": "ok",
@@ -170,7 +175,8 @@ impl Fake {
                 "cost_usd": IDENTIFY_COST,
             }));
         }
-        self.plan_identify_calls.set(self.plan_identify_calls.get() + 1);
+        self.plan_identify_calls
+            .set(self.plan_identify_calls.get() + 1);
         self.spend.set(self.spend.get() + IDENTIFY_COST);
         let plan = self.plans_by_uri.get(image_ref).cloned().unwrap();
         let handle = agenthand::ingest::ingest(image_ref, &self.store)?;
@@ -231,7 +237,9 @@ impl Fake {
             "color_profile_preserved": true,
         });
         self.store.save_receipt(&composite, &receipt)?;
-        Ok(json!({"status": "ok", "output_asset": composite, "fidelity_receipt": receipt, "cost_usd": DRAW_COST}))
+        Ok(
+            json!({"status": "ok", "output_asset": composite, "fidelity_receipt": receipt, "cost_usd": DRAW_COST}),
+        )
     }
 
     fn chain(self: &Rc<Self>) -> RoomChain {
@@ -296,7 +304,10 @@ fn narrated_run_with_sell_keep_mentioned_and_no_match() {
     // touches the photo's top edge: a RESHOOT-grade cut.
     let contents: HashMap<(usize, String), ([i64; 4], String)> = [
         ((0usize, "red bike"), ([4, 4, 30, 30], "bike1".to_string())),
-        ((1usize, "brass lamp"), ([4, 4, 30, 30], "lamp1".to_string())),
+        (
+            (1usize, "brass lamp"),
+            ([4, 4, 30, 30], "lamp1".to_string()),
+        ),
         ((2usize, "old rug"), ([4, 4, 30, 30], "rug1".to_string())),
         ((2usize, "oak desk"), ([4, 0, 30, 30], "desk1".to_string())),
     ]
@@ -378,7 +389,12 @@ fn narrated_run_with_sell_keep_mentioned_and_no_match() {
     // Its verification recomputed the crop: 0 changed.
     assert_eq!(lamp["verification"]["ok"], json!(true));
     assert_eq!(lamp["verification"]["crop_pixels_changed"], 0);
-    assert!(lamp["verification"]["crop_pixels_checked"].as_u64().unwrap() > 0);
+    assert!(
+        lamp["verification"]["crop_pixels_checked"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
     // And its cost is cut + one crop identify — no draw money.
     assert!((lamp["cost_usd"].as_f64().unwrap() - (CUT_COST + IDENTIFY_COST)).abs() < 1e-9);
 
@@ -389,7 +405,10 @@ fn narrated_run_with_sell_keep_mentioned_and_no_match() {
     let instruction = desk["ownership"]["cut_quality"]["reshoot_instruction"]
         .as_str()
         .unwrap();
-    assert!(instruction.contains("top"), "instruction names the edge: {instruction}");
+    assert!(
+        instruction.contains("top"),
+        "instruction names the edge: {instruction}"
+    );
     assert_eq!(desk["verification"]["crop_pixels_changed"], 0);
 
     // Every staged receipt verifies 0 changed (fake verifier's
@@ -400,8 +419,14 @@ fn narrated_run_with_sell_keep_mentioned_and_no_match() {
         assert_eq!(by_name(staged)["verification"]["changed_opaque_pixels"], 0);
     }
     let log = RunStepLog::open(&out.join("room-steps.sqlite3")).unwrap();
-    let lamp_index = items.iter().position(|i| i["name"] == "brass lamp").unwrap() as i64;
-    let row = log.get("keep-room", lamp_index, "ownership").unwrap().unwrap();
+    let lamp_index = items
+        .iter()
+        .position(|i| i["name"] == "brass lamp")
+        .unwrap() as i64;
+    let row = log
+        .get("keep-room", lamp_index, "ownership")
+        .unwrap()
+        .unwrap();
     assert_eq!(row.status, "complete");
     assert!(log.get("keep-room", lamp_index, "draw").unwrap().is_none());
 
@@ -512,7 +537,10 @@ fn keep_run_with_gps_photo_carries_provenance_and_mints_public_copy() {
     plans_by_uri.insert(data_uri_for(&photos[0]), p);
     let contents: HashMap<(usize, String), ([i64; 4], String)> = [
         ((0usize, "red bike"), ([4, 4, 30, 30], "bike1".to_string())),
-        ((0usize, "brass lamp"), ([4, 4, 30, 30], "lamp1".to_string())),
+        (
+            (0usize, "brass lamp"),
+            ([4, 4, 30, 30], "lamp1".to_string()),
+        ),
         ((0usize, "old rug"), ([4, 4, 30, 30], "rug1".to_string())),
     ]
     .into_iter()
@@ -621,5 +649,8 @@ fn keep_run_with_gps_photo_carries_provenance_and_mints_public_copy() {
     assert_eq!(entry["location_warning"].as_str().unwrap(), warning);
     assert_eq!(entry["public_copy"]["asset"], copy_info["asset"]);
     let sheet = std::fs::read_to_string(out.join("inventory.html")).unwrap();
-    assert!(sheet.contains("Location warning:"), "sheet shows the warning");
+    assert!(
+        sheet.contains("Location warning:"),
+        "sheet shows the warning"
+    );
 }

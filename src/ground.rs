@@ -66,7 +66,11 @@ pub const CONTACT_OPACITY: f64 = 0.6;
 pub const CAST_OPACITY: f64 = 0.40;
 /// Height bands (x product height), their blur radius (x product
 /// height) and their opacity weight.
-pub const CAST_BANDS: [(f64, f64, f64); 3] = [(0.20, 0.008, 1.0), (0.50, 0.016, 0.8), (f64::INFINITY, 0.028, 0.6)];
+pub const CAST_BANDS: [(f64, f64, f64); 3] = [
+    (0.20, 0.008, 1.0),
+    (0.50, 0.016, 0.8),
+    (f64::INFINITY, 0.028, 0.6),
+];
 /// Vertical blur as a share of the horizontal (the ground is
 /// foreshortened in depth).
 pub const CAST_BLUR_Y_SHARE: f64 = 0.5;
@@ -461,7 +465,11 @@ pub fn ground_line(foreground: &RgbaImage) -> Option<GroundLine> {
 
 /// Draw the contact and cast shadow onto the plate (same frame as the
 /// foreground), plate pixels only.
-pub fn ground_shadow(plate: &RgbaImage, foreground: &RgbaImage, light: &GroundLight) -> GroundOutput {
+pub fn ground_shadow(
+    plate: &RgbaImage,
+    foreground: &RgbaImage,
+    light: &GroundLight,
+) -> GroundOutput {
     let unchanged = |reason: &str| GroundOutput {
         plate: plate.clone(),
         report: GroundReport::skipped(reason),
@@ -477,7 +485,9 @@ pub fn ground_shadow(plate: &RgbaImage, foreground: &RgbaImage, light: &GroundLi
         return unchanged("subject is a surface or fills the frame; no ground to shade");
     }
     if subject.touches.contains(&"bottom") {
-        return unchanged("the product touches the bottom edge of the frame; its ground is not in the picture");
+        return unchanged(
+            "the product touches the bottom edge of the frame; its ground is not in the picture",
+        );
     }
     let (fw, fh) = (foreground.width as usize, foreground.height as usize);
     let cell = fw.max(fh).div_ceil(GROUND_GRID_MAX).max(1);
@@ -493,7 +503,10 @@ pub fn ground_shadow(plate: &RgbaImage, foreground: &RgbaImage, light: &GroundLi
 
     // Alpha coverage per cell over the product bbox.
     let (gx0, gy0) = (bbox.0 as usize / cell, bbox.1 as usize / cell);
-    let (gx1, gy1) = ((bbox.2 as usize).div_ceil(cell), (bbox.3 as usize).div_ceil(cell));
+    let (gx1, gy1) = (
+        (bbox.2 as usize).div_ceil(cell),
+        (bbox.3 as usize).div_ceil(cell),
+    );
     let mut cover = vec![0f32; gw * gh];
     for gy in gy0..gy1 {
         let ys = gy * cell..((gy + 1) * cell).min(fh);
@@ -527,10 +540,20 @@ pub fn ground_shadow(plate: &RgbaImage, foreground: &RgbaImage, light: &GroundLi
             let ground = geo.at(xc);
             let h = (ground - yc).max(0.0);
             let rel = h / height_px.max(1.0);
-            let band = CAST_BANDS.iter().position(|b| rel < b.0).unwrap_or(CAST_BANDS.len() - 1);
+            let band = CAST_BANDS
+                .iter()
+                .position(|b| rel < b.0)
+                .unwrap_or(CAST_BANDS.len() - 1);
             let sx = xc + ax * h;
             let sy = geo.at(sx) + ay * h;
-            splat(&mut bands[band], gw, gh, sx / cell as f64, sy / cell as f64, a);
+            splat(
+                &mut bands[band],
+                gw,
+                gh,
+                sx / cell as f64,
+                sy / cell as f64,
+                a,
+            );
         }
     }
     let mut cast_light = vec![1f32; gw * gh];

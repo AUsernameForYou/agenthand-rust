@@ -27,10 +27,8 @@ const H: u32 = 6;
 
 fn temp_store() -> AssetStore {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "agenthand-rust-schema3-{}-{n}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("agenthand-rust-schema3-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     AssetStore::new(&dir)
 }
@@ -77,7 +75,9 @@ fn schema3_draw(paint: Option<(u32, u32, [u8; 4])>, paper_on_product: bool) -> D
         3 => [10, 10, 10, 128],
         _ => [0, 0, 0, 0],
     });
-    let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&source_id)).unwrap();
+    let fg_handle = store
+        .put_image(&fg, KIND_FOREGROUND, Some(&source_id))
+        .unwrap();
     let fg_id = AssetStore::parse_handle(&fg_handle).unwrap();
     let plate = build(|_, _| [200, 190, 170, 255]);
     let plate_handle = store.put_image(&plate, KIND_PLATE, None).unwrap();
@@ -88,7 +88,9 @@ fn schema3_draw(paint: Option<(u32, u32, [u8; 4])>, paper_on_product: bool) -> D
             [0, 0, 0, 0]
         }
     });
-    let layer_handle = store.put_image(&layer, "reconstruction", Some(&fg_id)).unwrap();
+    let layer_handle = store
+        .put_image(&layer, "reconstruction", Some(&fg_id))
+        .unwrap();
     let mut map_pixels = vec![0u8; (W * H) as usize];
     for y in 0..H {
         for x in 0..W {
@@ -226,9 +228,18 @@ const SCHEMA3_CHECKS: [&str; 9] = [
 fn python_schema3_receipt_verifies_with_the_reconstruction_checks() {
     let draw = schema3_draw(None, false);
     let report = verify(&draw, &draw.receipt);
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
     for check in SCHEMA3_CHECKS {
-        assert_eq!(report["checks"][check], json!(true), "check {check}: {report}");
+        assert_eq!(
+            report["checks"][check],
+            json!(true),
+            "check {check}: {report}"
+        );
     }
     // The shared core ran too.
     assert_eq!(report["checks"]["zero_changed_pixels"], json!(true));
@@ -252,7 +263,12 @@ fn schema4_is_graded_as_schema3_plus_additive_fields() {
     receipt["a_future_additive_field"] = json!({"anything": [1, 2, 3]});
     receipt["reconstruction"]["another_additive_key"] = json!("tolerated");
     let report = verify(&draw, &receipt);
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
     assert_eq!(report["checks"]["layer_reproduction"], json!(true));
 }
 
@@ -273,11 +289,10 @@ fn schema4_without_quality_blocks_fails_closed() {
         assert_eq!(report["ok"], json!(false), "stripped {strip}: {report}");
         assert_eq!(report["checks"]["receipt_shape"], json!(false));
         assert!(
-            report["problems"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|p| p.as_str().unwrap_or("").contains(&format!("missing field: {strip}"))),
+            report["problems"].as_array().unwrap().iter().any(|p| p
+                .as_str()
+                .unwrap_or("")
+                .contains(&format!("missing field: {strip}"))),
             "stripped {strip}: problems: {}",
             report["problems"]
         );
@@ -292,9 +307,16 @@ fn recomposition_catches_pixels_outside_the_three_layers() {
     let draw = schema3_draw(Some((7, 5, [255, 0, 255, 255])), false);
     let report = verify(&draw, &draw.receipt);
     assert_eq!(report["ok"], json!(false));
-    assert_eq!(report["checks"]["layer_reproduction"], json!(false), "{report}");
+    assert_eq!(
+        report["checks"]["layer_reproduction"],
+        json!(false),
+        "{report}"
+    );
     assert_eq!(report["checks"]["zero_changed_pixels"], json!(true));
-    assert_eq!(report["checks"]["recount_reconstruction_pixels"], json!(true));
+    assert_eq!(
+        report["checks"]["recount_reconstruction_pixels"],
+        json!(true)
+    );
 }
 
 #[test]
@@ -304,7 +326,11 @@ fn paper_under_the_product_edge_fails_the_overlap_recount() {
     let draw = schema3_draw(None, true);
     let report = verify(&draw, &draw.receipt);
     assert_eq!(report["ok"], json!(false));
-    assert_eq!(report["checks"]["recount_overlap_zero"], json!(false), "{report}");
+    assert_eq!(
+        report["checks"]["recount_overlap_zero"],
+        json!(false),
+        "{report}"
+    );
     assert_eq!(report["checks"]["layer_reproduction"], json!(false));
 }
 

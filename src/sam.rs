@@ -1459,9 +1459,11 @@ mod place_in_frame_tests {
         assert!(place_in_frame(&[], 4, 4, &fb(0, 0, 4, 4, 4, 4), 4, 4)
             .iter()
             .all(|&v| v == 0));
-        assert!(place_in_frame(&[1; 16], 4, 4, &fb(10, 10, 14, 14, 14, 14), 4, 4)
-            .iter()
-            .all(|&v| v == 0));
+        assert!(
+            place_in_frame(&[1; 16], 4, 4, &fb(10, 10, 14, 14, 14, 14), 4, 4)
+                .iter()
+                .all(|&v| v == 0)
+        );
     }
 }
 

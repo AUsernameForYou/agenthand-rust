@@ -1528,7 +1528,11 @@ mod http_timeout_tests {
         assert_eq!(DEFAULT_HTTP_TIMEOUT_S, 180);
         assert_eq!(http_timeout_from(None), Duration::from_secs(180));
         for raw in ["", "  ", "abc", "0", "-5", "2.5"] {
-            assert_eq!(http_timeout_from(Some(raw)), Duration::from_secs(180), "{raw:?}");
+            assert_eq!(
+                http_timeout_from(Some(raw)),
+                Duration::from_secs(180),
+                "{raw:?}"
+            );
         }
         assert_eq!(http_timeout_from(Some("240")), Duration::from_secs(240));
         assert_eq!(http_timeout_from(Some(" 45 ")), Duration::from_secs(45));

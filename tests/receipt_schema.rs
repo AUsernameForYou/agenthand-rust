@@ -312,7 +312,12 @@ fn foreground_profile_pin_is_graded() {
 
     // Untouched: the pin is graded (present in checks) and holds.
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
     assert_eq!(
         report["checks"]["foreground_profile_matches_receipt"],
         json!(true)
@@ -335,9 +340,11 @@ fn foreground_profile_pin_is_graded() {
         .collect();
     assert_eq!(
         problems,
-        vec!["foreground_profile_matches_receipt: the receipt's foreground profile hash \
+        vec![
+            "foreground_profile_matches_receipt: the receipt's foreground profile hash \
               does not match the foreground asset's recorded profile"
-            .to_string()]
+                .to_string()
+        ]
     );
 
     // A v1 receipt (no marker, no v2-only fields) carries no pin, so
@@ -349,7 +356,12 @@ fn foreground_profile_pin_is_graded() {
         obj.remove(field);
     }
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&v1)).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
     assert!(report["checks"]
         .get("foreground_profile_matches_receipt")
         .is_none());
@@ -389,15 +401,22 @@ fn schema_2_foreground_must_match_source() {
         .collect();
     assert_eq!(
         problems,
-        vec!["foreground_matches_source: the foreground differs from the source photo on \
+        vec![
+            "foreground_matches_source: the foreground differs from the source photo on \
               fully opaque pixels; the product layer is not the photograph it claims to be"
-            .to_string()]
+                .to_string()
+        ]
     );
 
     // Honest: the photo's own pixels wherever the foreground is opaque.
     let (store, _dir, _photo, fg) = seeded_store_alpha_mask();
     let (handle, receipt) = composite::draw_product(&store, &fg, "a regal room", None).unwrap();
     let report = composite::verify_receipt_from_disk(&store, &handle, Some(&receipt)).unwrap();
-    assert_eq!(report["ok"], json!(true), "problems: {}", report["problems"]);
+    assert_eq!(
+        report["ok"],
+        json!(true),
+        "problems: {}",
+        report["problems"]
+    );
     assert_eq!(report["checks"]["foreground_matches_source"], json!(true));
 }

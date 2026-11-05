@@ -1222,7 +1222,13 @@ pub fn open_frame_keyword(concept: &str) -> Option<&'static str> {
 
 /// `carve_holes_opts` behind both kill switches: the cut_out entry point.
 pub fn carve_holes(source: &RgbaImage, mask: &GrayImage, concept: &str) -> (GrayImage, Value) {
-    carve_holes_opts(source, mask, concept, hole_carve_enabled(), hole_complete_enabled())
+    carve_holes_opts(
+        source,
+        mask,
+        concept,
+        hole_carve_enabled(),
+        hole_complete_enabled(),
+    )
 }
 
 /// `carve_holes_opts` with the completion pass on.
@@ -1406,7 +1412,11 @@ fn sliding_extreme_line(line: &[u8], r: usize, want_max: bool, out: &mut [u8]) {
     let mut pre = vec![0u8; len];
     let mut suf = vec![0u8; len];
     for i in 0..len {
-        pre[i] = if i % k == 0 { at(i) } else { op(pre[i - 1], at(i)) };
+        pre[i] = if i % k == 0 {
+            at(i)
+        } else {
+            op(pre[i - 1], at(i))
+        };
     }
     for i in (0..len).rev() {
         suf[i] = if i == len - 1 || (i + 1) % k == 0 {
@@ -1426,7 +1436,12 @@ fn sliding_extreme_line(line: &[u8], r: usize, want_max: bool, out: &mut [u8]) {
 fn square_extreme(plane: &[u8], w: usize, h: usize, r: usize, want_max: bool) -> Vec<u8> {
     let mut tmp = vec![0u8; plane.len()];
     for y in 0..h {
-        sliding_extreme_line(&plane[y * w..(y + 1) * w], r, want_max, &mut tmp[y * w..(y + 1) * w]);
+        sliding_extreme_line(
+            &plane[y * w..(y + 1) * w],
+            r,
+            want_max,
+            &mut tmp[y * w..(y + 1) * w],
+        );
     }
     if h == 0 || w == 0 {
         return tmp;
@@ -1665,7 +1680,17 @@ impl CarveTileModels {
                 pr.push(carve_model(&smooth_bins(&loc_pr), &g_pr, g_pr_sum));
             }
         }
-        (CarveTileModels { tile, ntx, nty, bg, pr }, n_bg, n_pr)
+        (
+            CarveTileModels {
+                tile,
+                ntx,
+                nty,
+                bg,
+                pr,
+            },
+            n_bg,
+            n_pr,
+        )
     }
 
     /// (P(colour | background), P(colour | product)) at pixel i of the
@@ -1701,8 +1726,6 @@ impl CarveTileModels {
 fn carve_luma(px: &[u8]) -> u8 {
     ((px[0] as u32 * 19595 + px[1] as u32 * 38470 + px[2] as u32 * 7471 + 0x8000) >> 16) as u8
 }
-
-
 
 /// The no-op record (mask returned unchanged). The gate does not apply:
 /// nothing was carved, so no open-frame interior was judged.
@@ -1799,7 +1822,9 @@ fn restore_pale_parts<'s>(
         let (mx, mn) = (px[0].max(px[1]).max(px[2]), px[0].min(px[1]).min(px[2]));
         carve_luma(px) >= CARVE_PALE_MIN_LUMA && mx - mn <= CARVE_PALE_MAX_CHROMA
     };
-    let plane: Vec<u8> = (0..n).map(|i| if on[i] && is_pale(i) { 255 } else { 0 }).collect();
+    let plane: Vec<u8> = (0..n)
+        .map(|i| if on[i] && is_pale(i) { 255 } else { 0 })
+        .collect();
     let opened = square_extreme(&square_extreme(&plane, w, h, r, false), w, h, r, true);
     drop(plane);
     if !opened.iter().any(|&v| v != 0) {
@@ -1812,10 +1837,16 @@ fn restore_pale_parts<'s>(
         let joined: Vec<bool> = if join == 0 {
             opened.iter().map(|&v| v != 0).collect()
         } else {
-            square_extreme(&square_extreme(&opened, w, h, join, true), w, h, join, false)
-                .iter()
-                .map(|&v| v != 0)
-                .collect()
+            square_extreme(
+                &square_extreme(&opened, w, h, join, true),
+                w,
+                h,
+                join,
+                false,
+            )
+            .iter()
+            .map(|&v| v != 0)
+            .collect()
         };
         let (labels, count) = label8(&joined, w, h);
         drop(joined);
@@ -1873,7 +1904,8 @@ fn restore_pale_parts<'s>(
             };
             let mut hull: Vec<(i64, i64)> = Vec::with_capacity(pts.len() + 1);
             for &pt in pts.iter().chain(pts.iter().rev().skip(1)) {
-                while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], pt) <= 0 {
+                while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], pt) <= 0
+                {
                     hull.pop();
                 }
                 hull.push(pt);
@@ -1972,7 +2004,12 @@ struct StripOutcome {
 fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOutcome {
     let (w, h) = (p.w, p.h);
     let n = w * h;
-    let mut out = StripOutcome { released_px: 0, released_cells: 0, bridged_px: 0, residue_px: 0 };
+    let mut out = StripOutcome {
+        released_px: 0,
+        released_cells: 0,
+        bridged_px: 0,
+        residue_px: 0,
+    };
     if p.interior.len() != n {
         return out;
     }
@@ -1983,7 +2020,8 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
     };
     let q: Vec<u8> = (0..n)
         .map(|i| {
-            if p.interior[i] && p.cand[i] && !carved[i] && !p.thin[i] && !p.faint[i] && !is_pale(i) {
+            if p.interior[i] && p.cand[i] && !carved[i] && !p.thin[i] && !p.faint[i] && !is_pale(i)
+            {
                 255
             } else {
                 0
@@ -1996,7 +2034,9 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
     let rw = CARVE_STRIP_WIDE_MIN_PX.max((CARVE_STRIP_WIDE_DIAG_FRAC * p.diag).round() as usize);
     let rc = CARVE_STRIP_CORE_MIN_PX.max((CARVE_STRIP_CORE_DIAG_FRAC * p.diag).round() as usize);
     let wide = square_extreme(&square_extreme(&q, w, h, rw, false), w, h, rw, true);
-    let narrow: Vec<u8> = (0..n).map(|i| if q[i] != 0 && wide[i] == 0 { 255 } else { 0 }).collect();
+    let narrow: Vec<u8> = (0..n)
+        .map(|i| if q[i] != 0 && wide[i] == 0 { 255 } else { 0 })
+        .collect();
     drop((q, wide));
     let core: Vec<bool> = square_extreme(&square_extreme(&narrow, w, h, rc, false), w, h, rc, true)
         .iter()
@@ -2040,7 +2080,9 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
     }
     let share = |l: usize| open[l] as f64 / border[l].max(1) as f64;
     let release: Vec<bool> = (0..=count)
-        .map(|l| l != 0 && apply && area[l] >= CARVE_CELL_MIN_PX && share(l) >= CARVE_STRIP_RELEASE_FRAC)
+        .map(|l| {
+            l != 0 && apply && area[l] >= CARVE_CELL_MIN_PX && share(l) >= CARVE_STRIP_RELEASE_FRAC
+        })
         .collect();
     for l in 1..=count {
         if release[l] {
@@ -2090,7 +2132,10 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
             t += 1;
         }
         (0..cont).all(|k| {
-            kept_at(x as f64 + dx * (t + k) as f64, y as f64 + dy * (t + k) as f64) == Some(true)
+            kept_at(
+                x as f64 + dx * (t + k) as f64,
+                y as f64 + dy * (t + k) as f64,
+            ) == Some(true)
         })
     };
     let mut bridge = vec![false; n];
@@ -2099,7 +2144,10 @@ fn release_strips(p: &StripInputs, carved: &mut [bool], apply: bool) -> StripOut
             continue;
         }
         let (x, y) = (i % w, i / w);
-        if dirs.iter().any(|&(dx, dy)| side(x, y, dx, dy) && side(x, y, -dx, -dy)) {
+        if dirs
+            .iter()
+            .any(|&(dx, dy)| side(x, y, dx, dy) && side(x, y, -dx, -dy))
+        {
             bridge[i] = true;
         }
     }
@@ -2196,8 +2244,8 @@ fn complete_windows(
     let n = w * h;
     let r = CARVE_THIN_RADIUS;
     let accepted_px = carved.iter().filter(|&&c| c).count() as u64;
-    let core = CARVE_COMPLETE_CORE_MIN_PX
-        .max((CARVE_COMPLETE_CORE_DIAG_FRAC * p.diag).round() as u16);
+    let core =
+        CARVE_COMPLETE_CORE_MIN_PX.max((CARVE_COMPLETE_CORE_DIAG_FRAC * p.diag).round() as u16);
     let empty = CompletionOutcome {
         accepted_px,
         released_px: 0,
@@ -2254,7 +2302,9 @@ fn complete_windows(
             .iter()
             .map(|e| e.0 != usize::MAX && (e.2 - e.0 + 1).max(e.3 - e.1 + 1) >= p.min_extent)
             .collect();
-        (0..n).map(|i| structure[i] && long[sl[i] as usize]).collect()
+        (0..n)
+            .map(|i| structure[i] && long[sl[i] as usize])
+            .collect()
     };
     // 2. Depth floor from the accepted windows (Euclidean depth, so the
     // floor is the same in every direction: a chessboard depth is ~30%
@@ -2286,7 +2336,14 @@ fn complete_windows(
     // 3. Cells and their border.
     let (cl, cc) = label8(&open, w, h);
     if cc == 0 {
-        return (CompletionOutcome { depth_floor_px: floor, ..empty }, Vec::new(), interior_plane);
+        return (
+            CompletionOutcome {
+                depth_floor_px: floor,
+                ..empty
+            },
+            Vec::new(),
+            interior_plane,
+        );
     }
     let look: Vec<bool> = {
         let plane: Vec<u8> = (0..n)
@@ -2315,7 +2372,11 @@ fn complete_windows(
         let plane: Vec<u8> = (0..n)
             .map(|i| {
                 let solid_part = structure[i] || !p.cand[i] || (p.thin[i] && dense[i] >= need);
-                if p.on[i] && !carved[i] && solid_part { 255 } else { 0 }
+                if p.on[i] && !carved[i] && solid_part {
+                    255
+                } else {
+                    0
+                }
             })
             .collect();
         drop(dense);
@@ -2375,7 +2436,8 @@ fn complete_windows(
         .map(|l| {
             l != 0 && !touches_band[l] && {
                 let c = comp[l] as usize;
-                area[l] >= CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * p.comp_area[c] as f64) as u64)
+                area[l]
+                    >= CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * p.comp_area[c] as f64) as u64)
             }
         })
         .collect();
@@ -2392,7 +2454,13 @@ fn complete_windows(
     // accepted window pixel (gaps of at most 2k px are bridged).
     let link = |member: &[bool]| -> Vec<bool> {
         let plane: Vec<u8> = (0..n)
-            .map(|i| if carved[i] || member[cl[i] as usize] { 255 } else { 0 })
+            .map(|i| {
+                if carved[i] || member[cl[i] as usize] {
+                    255
+                } else {
+                    0
+                }
+            })
             .collect();
         let grown: Vec<bool> = square_extreme(&plane, w, h, CARVE_COMPLETE_LINK_RADIUS, true)
             .iter()
@@ -2420,7 +2488,11 @@ fn complete_windows(
     // 4. Release, and the gate's remainder.
     let mut released_px = 0u64;
     let mut remainder_px = 0u64;
-    let cells_released = if apply { release.iter().filter(|&&v| v).count() as u64 } else { 0 };
+    let cells_released = if apply {
+        release.iter().filter(|&&v| v).count() as u64
+    } else {
+        0
+    };
     let cells_enclosed = interior.iter().filter(|&&v| v).count() as u64;
     for l in 1..=cc {
         if interior[l] && !(apply && release[l]) {
@@ -2562,11 +2634,17 @@ pub fn carve_holes_opts(
     let bg_dense: Vec<bool> = {
         let dense_at = |rr: usize| -> Vec<bool> {
             let need = (CARVE_RELEASE_FRAC * ((2 * rr + 1) * (2 * rr + 1)) as f64).ceil() as u16;
-            box_count(&bgl, w, h, rr).iter().map(|&c| c >= need).collect()
+            box_count(&bgl, w, h, rr)
+                .iter()
+                .map(|&c| c >= need)
+                .collect()
         };
         let near = dense_at(CARVE_RELEASE_RADIUS);
         let wide = dense_at(3 * CARVE_RELEASE_RADIUS);
-        near.iter().zip(wide.iter()).map(|(&a, &b)| a && b).collect()
+        near.iter()
+            .zip(wide.iter())
+            .map(|(&a, &b)| a && b)
+            .collect()
     };
     let r = CARVE_THIN_RADIUS;
     let (mut cx0, mut cy0, mut cx1, mut cy1) = (usize::MAX, usize::MAX, 0usize, 0usize);
@@ -2610,8 +2688,8 @@ pub fn carve_holes_opts(
         thin0[i] = c >= CARVE_THIN_CONTRAST && !(bgl[i] && bg_dense[i]);
     }
     drop((luma, closing, opening, bg_dense));
-    let min_extent = CARVE_THIN_MIN_EXTENT_PX
-        .max((CARVE_THIN_EXTENT_DIAG_FRAC * diag).round() as usize);
+    let min_extent =
+        CARVE_THIN_MIN_EXTENT_PX.max((CARVE_THIN_EXTENT_DIAG_FRAC * diag).round() as usize);
     let (thin_labels, thin_count) = label8(&thin0, w, h);
     let mut ext = vec![(usize::MAX, usize::MAX, 0usize, 0usize); thin_count + 1];
     for i in 0..n {
@@ -2644,7 +2722,9 @@ pub fn carve_holes_opts(
         let rr = CARVE_RELEASE_RADIUS;
         let cap = (CARVE_FAINT_MAX_DENSITY * ((2 * rr + 1) * (2 * rr + 1)) as f64) as u16;
         let dens = box_count(&rough0, w, h, rr);
-        let set: Vec<bool> = (0..n).map(|i| (raw0[i] && dens[i] <= cap) || thin[i]).collect();
+        let set: Vec<bool> = (0..n)
+            .map(|i| (raw0[i] && dens[i] <= cap) || thin[i])
+            .collect();
         drop(dens);
         let (fl, fc) = label8(&set, w, h);
         let mut fext = vec![(usize::MAX, usize::MAX, 0usize, 0usize); fc + 1];
@@ -2662,7 +2742,9 @@ pub fn carve_holes_opts(
             .iter()
             .map(|e| e.0 != usize::MAX && (e.2 - e.0 + 1).max(e.3 - e.1 + 1) >= min_extent)
             .collect();
-        (0..n).map(|i| set[i] && !thin[i] && keep[fl[i] as usize]).collect()
+        (0..n)
+            .map(|i| set[i] && !thin[i] && keep[fl[i] as usize])
+            .collect()
     };
     drop((raw0, rough0));
 
@@ -2732,11 +2814,19 @@ pub fn carve_holes_opts(
     // that share of its border STRICT narrow too: a real opening between
     // spokes, not a crescent along a shaded rim.
     let solid_narrow = |close: usize| -> Vec<bool> {
-        let plane: Vec<u8> = (0..n).map(|i| if on[i] && !carve_x[i] { 255 } else { 0 }).collect();
+        let plane: Vec<u8> = (0..n)
+            .map(|i| if on[i] && !carve_x[i] { 255 } else { 0 })
+            .collect();
         let closed = if close == 0 {
             plane
         } else {
-            square_extreme(&square_extreme(&plane, w, h, close, true), w, h, close, false)
+            square_extreme(
+                &square_extreme(&plane, w, h, close, true),
+                w,
+                h,
+                close,
+                false,
+            )
         };
         let eroded = square_extreme(&closed, w, h, r, false);
         let opened = square_extreme(&eroded, w, h, r, true);
@@ -2745,13 +2835,20 @@ pub fn carve_holes_opts(
         let wide = square_extreme(&square_extreme(&eroded, w, h, r, false), w, h, 2 * r, true);
         (0..n)
             .map(|i| {
-                cand[i] && !carve_x[i] && if thin[i] { wide[i] == 0 } else { opened[i] == 0 }
+                cand[i]
+                    && !carve_x[i]
+                    && if thin[i] {
+                        wide[i] == 0
+                    } else {
+                        opened[i] == 0
+                    }
             })
             .collect()
     };
     let narrow = solid_narrow(0);
     let strict = solid_narrow(CARVE_SOLID_CLOSE_RADIUS);
-    let core_depth = CARVE_CORE_DEPTH_MIN_PX.max((CARVE_CORE_DEPTH_DIAG_FRAC * diag).round() as u16);
+    let core_depth =
+        CARVE_CORE_DEPTH_MIN_PX.max((CARVE_CORE_DEPTH_DIAG_FRAC * diag).round() as u16);
     let depth = {
         let not_x: Vec<bool> = carve_x.iter().map(|&v| !v).collect();
         chessboard_distance_u16(&not_x, w, h, true, core_depth)
@@ -2808,7 +2905,8 @@ pub fn carve_holes_opts(
                 return false;
             }
             let c = cell_comp[l] as usize;
-            let cell_min = CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * comp_area[c] as f64) as u64);
+            let cell_min =
+                CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * comp_area[c] as f64) as u64);
             let border = (cell_thin[l] + cell_other[l]) as f64;
             cell_area[l] >= cell_min && cell_thin[l] as f64 >= CARVE_CELL_FRAME_FRAC * border
         })
@@ -2817,7 +2915,11 @@ pub fn carve_holes_opts(
         let plane: Vec<u8> = (0..n)
             .map(|i| {
                 let l = cell_labels[i] as usize;
-                if l != 0 && framed[l] && cell_deep[l] { 255 } else { 0 }
+                if l != 0 && framed[l] && cell_deep[l] {
+                    255
+                } else {
+                    0
+                }
             })
             .collect();
         let near = square_extreme(&plane, w, h, 2 * r + 1, true);
@@ -2894,9 +2996,16 @@ pub fn carve_holes_opts(
         comp_ok[c] = bg_frac >= CARVE_MIN_ENCLOSED_FRAC
             && (cand_frac >= CARVE_OPEN_FRAME_FRAC || keyword.is_some());
     }
-    let best_bg = if best_c > 0 { enc_bg[best_c] as f64 / comp_area[best_c] as f64 } else { 0.0 };
-    let best_cand =
-        if best_c > 0 { enc_cand[best_c] as f64 / comp_area[best_c] as f64 } else { 0.0 };
+    let best_bg = if best_c > 0 {
+        enc_bg[best_c] as f64 / comp_area[best_c] as f64
+    } else {
+        0.0
+    };
+    let best_cand = if best_c > 0 {
+        enc_cand[best_c] as f64 / comp_area[best_c] as f64
+    } else {
+        0.0
+    };
     let open_frame = json!({
         "keyword": keyword,
         "enclosed_background_fraction": crate::round6(best_bg),
@@ -3007,7 +3116,8 @@ pub fn carve_holes_opts(
                     return false;
                 }
                 let c = p_comp[l] as usize;
-                let floor = CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * comp_area[c] as f64) as u64);
+                let floor =
+                    CARVE_CELL_MIN_PX.max((CARVE_CELL_MIN_FRAC * comp_area[c] as f64) as u64);
                 let b = p_border[l] as f64;
                 let ok = p_frame[l] as f64 >= CARVE_CELL_FRAME_FRAC * b
                     && (p_deep[l] || p_strict[l] as f64 >= CARVE_CELL_FRAME_FRAC * b);
@@ -3019,7 +3129,11 @@ pub fn carve_holes_opts(
                 (0..n)
                     .map(|i| {
                         let l = pl[i] as usize;
-                        if l != 0 && drop_piece[l] == want_drop { 255 } else { 0 }
+                        if l != 0 && drop_piece[l] == want_drop {
+                            255
+                        } else {
+                            0
+                        }
                     })
                     .collect()
             };
@@ -3077,7 +3191,9 @@ pub fn carve_holes_opts(
     let mut released = 0u64;
     {
         let kept_solid: Vec<bool> = {
-            let plane: Vec<u8> = (0..n).map(|i| if on[i] && !carved[i] { 255 } else { 0 }).collect();
+            let plane: Vec<u8> = (0..n)
+                .map(|i| if on[i] && !carved[i] { 255 } else { 0 })
+                .collect();
             let opened = square_extreme(&square_extreme(&plane, w, h, r, false), w, h, r, true);
             opened.iter().map(|&v| v != 0).collect()
         };
@@ -3314,10 +3430,8 @@ pub fn carve_holes_opts(
     let product_after = out.pixels.iter().filter(|&&v| v == 255).count() as u64;
     // The enclosed-remainder gate (cut_out refuses when it fails).
     let remainder_px = completion.remainder_px + strips.residue_px;
-    let enclosed_px = completion.accepted_px
-        + completion.released_px
-        + strips.released_px
-        + remainder_px;
+    let enclosed_px =
+        completion.accepted_px + completion.released_px + strips.released_px + remainder_px;
     let remainder_frac = if enclosed_px > 0 {
         remainder_px as f64 / enclosed_px as f64
     } else {
@@ -3411,12 +3525,8 @@ mod interface_contract_chamfer {
                 let y = t[1].as_u64().unwrap() as usize;
                 target[y * w + x] = true;
             }
-            let got = chessboard_distance(
-                &target,
-                w,
-                h,
-                case["border_is_target"].as_bool().unwrap(),
-            );
+            let got =
+                chessboard_distance(&target, w, h, case["border_is_target"].as_bool().unwrap());
             let expected: Vec<u8> = case["expected"]
                 .as_array()
                 .unwrap()

@@ -55,7 +55,10 @@ fn generated_is_the_default_and_the_env_restores_source_edit() {
         assert_eq!(backdrop::DRAW_PLATE_DEFAULT, "generated");
         assert_eq!(backdrop::DRAW_PLATE_MODES[0], backdrop::DRAW_PLATE_DEFAULT);
         assert_eq!(backdrop::resolve_draw_plate(None).unwrap(), "generated");
-        assert_eq!(backdrop::resolve_draw_plate(Some("  ")).unwrap(), "generated");
+        assert_eq!(
+            backdrop::resolve_draw_plate(Some("  ")).unwrap(),
+            "generated"
+        );
 
         std::env::set_var("AGENTHAND_DRAW_PLATE", "source_edit");
         assert_eq!(backdrop::resolve_draw_plate(None).unwrap(), "source_edit");
@@ -107,11 +110,16 @@ fn a_draw_without_plate_takes_the_generated_route() {
                 }
             }
             let parent = AssetStore::parse_handle(&photo_handle).unwrap();
-            let fg_handle = store.put_image(&fg, KIND_FOREGROUND, Some(&parent)).unwrap();
+            let fg_handle = store
+                .put_image(&fg, KIND_FOREGROUND, Some(&parent))
+                .unwrap();
 
             let (result, _) = agenthand::server::tool_draw(&fg_handle, "a quiet room").unwrap();
             assert_eq!(result["status"], "error", "{env:?}: {result}");
-            assert_eq!(result["error"]["code"], "SPEND_CAP_REFUSED", "{env:?}: {result}");
+            assert_eq!(
+                result["error"]["code"], "SPEND_CAP_REFUSED",
+                "{env:?}: {result}"
+            );
             assert_eq!(result["error"]["call_made"], serde_json::json!(false));
             let message = result["error"]["message"].as_str().unwrap();
             assert!(
