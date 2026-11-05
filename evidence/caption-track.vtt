@@ -1,0 +1,27 @@
+WEBVTT - agenthand demo caption track v2 (deep-link edition)
+Source: BUILD-REPORT-v10.3.md (film chapters unchanged from v10.2 except Ch9 cast line and the Close)
+Video: agenthand-demo-x.mp4, 179.000 s
+Each cue is a claim chapter. Verify with: agenthand evidence verify <claim-id>
+Deep link from any moment in the film: agenthand evidence chapter <m:ss>
+returns the chapter at that timestamp and the claim it maps to, if any.
+Unclaimed chapters carry no cue by design.
+
+00:00:00.000 --> 00:00:14.930
+Claim 5 - agenthand evidence verify 5
+Ch0 baseline: suitcase still, Muse Image edit vs agenthand 0 changed
+
+00:00:37.080 --> 00:00:51.850
+Claim 9 - agenthand evidence verify 9
+Ch2 hero: run-1443-v102, two-zone, 4,053,953 product pixels checked, 0 changed
+
+00:01:36.160 --> 00:01:50.930
+Claim 4 - agenthand evidence verify 4
+Ch5 open-house fill: 1,128,708 placed pixels, 0 changed
+
+00:02:05.700 --> 00:02:20.470
+Claim 2 - agenthand evidence verify 2
+Ch7 parity: 580,613 checked, 0 changed, $0.020044
+
+00:02:20.470 --> 00:02:35.240
+Claim 3 - agenthand evidence verify 3
+Ch8 take: recorded hero take, 5,659,218 checked, 0 changed; final card is run-1443-v102, not the recorded take

@@ -1,6 +1,6 @@
 ![agenthand](docs/logo-r-v1.png)
 
-# agenthand — Rust build
+# agenthand: Rust build
 
 [![CI](https://github.com/AUsernameForYou/agenthand-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/AUsernameForYou/agenthand-rust/actions/workflows/ci.yml)
 
@@ -15,8 +15,10 @@ agenthand: one static binary, no Python runtime. The Python build
 also on PyPI as `agenthand`) remains available as the fallback install
 and is the reference implementation this port is measured against.
 
-**Demo film:** _link lands here at the reveal (submissions close
-Nov 4, 2026)._
+**Demo film:**
+https://github.com/AUsernameForYou/agenthand-rust/releases/download/v1.0.0-hackathon/agenthand-demo-x.mp4
+(reveal post on X:
+https://x.com/honeycombpixel/status/2118117434314158272)
 **Verify a staged image in your browser:**
 https://ausernameforyou.github.io/agenthand/#fidelity
 **Project site:** https://ausernameforyou.github.io/agenthand/
@@ -53,7 +55,7 @@ the living specification. `conformance/` holds the Differential
 Conformance Suite fixtures and the frozen replay package. `evidence/`
 is the Proof Graph (database, receipts, verifier). `docs/` is product
 documentation. `experiments/` is quarantined working material from the
-build — **not the product, not built, not shipped** (see
+build, **not the product, not built, not shipped** (see
 `experiments/README.md`).
 
 ## Install
@@ -61,9 +63,9 @@ build — **not the product, not built, not shipped** (see
 Download an MCPB bundle or a bare binary from the
 [latest release](https://github.com/AUsernameForYou/agenthand-rust/releases/latest):
 
-- `agenthand-0.3.0-linux-x86_64.mcpb` / `agenthand-0.3.0-linux-x86_64` — Linux x86_64
-- `agenthand-0.3.0-macos-arm64.mcpb` / `agenthand-0.3.0-macos-arm64` — macOS, Apple Silicon
-- `agenthand-0.3.0-macos-x86_64.mcpb` / `agenthand-0.3.0-macos-x86_64` — macOS, Intel
+- `agenthand-0.3.0-linux-x86_64.mcpb` / `agenthand-0.3.0-linux-x86_64`: Linux x86_64
+- `agenthand-0.3.0-macos-arm64.mcpb` / `agenthand-0.3.0-macos-arm64`: macOS, Apple Silicon
+- `agenthand-0.3.0-macos-x86_64.mcpb` / `agenthand-0.3.0-macos-x86_64`: macOS, Intel
 
 The `.mcpb` bundles install in one click in MCPB-supporting clients.
 For any other MCP client, point it at the bare binary:
@@ -79,7 +81,7 @@ For any other MCP client, point it at the bare binary:
 }
 ```
 
-Or register it from the command line — Claude Code:
+Or register it from the command line, Claude Code:
 
 ```sh
 claude mcp add agenthand --env META_API_KEY=your-key -- /path/to/agenthand
@@ -147,12 +149,12 @@ Staging is fine. Proof is the missing piece.
 
 ### The three tools
 
-- **identify** — reads a product photo and returns a description, a
+- **identify**: reads a product photo and returns a description, a
   cut-out-ready concept, and listing copy (title, bullets, condition).
-- **cut_out** — segments the product with SAM 3.1 and stores a
+- **cut_out**: segments the product with SAM 3.1 and stores a
   transparent foreground PNG plus mask, with file and pixel hashes
   recorded for lineage.
-- **draw** — Fidelity Lock staging. The stored product layer is never
+- **draw**: Fidelity Lock staging. The stored product layer is never
   regenerated: the model generates only the background plate and
   deterministic code composites the original pixels over it. Every
   staged image ships with a receipt, and an independent verifier can
@@ -188,7 +190,7 @@ with the agenthand mark, or studio gray). A mention the photos
 cannot support fails honestly as NO_MATCH instead of becoming a
 listing. When the calling agent supplies market comps, the run also
 emits a priced table (suggested prices are recommendations, never
-orders). On October 28, 2026, a room run over Daniel's real room
+orders). On October 28, 2026, a room run over a real room
 staged six distinct items with 352,597 product pixels checked across
 them and 0 changed, for $0.154487 in settled Meta calls (including a same-day re-cut of one hat).
 
@@ -253,9 +255,9 @@ counted, never claimed as verbatim.
 ### The counterpoint, measured
 
 The headline count has a measured counterpoint. Method: photographs
-of real physical products from the verified room run — a bright
+of real physical products from the verified room run: a bright
 orange hardshell suitcase (223,600 product pixels) and a gray
-storage box (31,932) — handed to Muse Image 1.0's full-frame edit
+storage box (31,932), handed to Muse Image 1.0's full-frame edit
 mode with a staging prompt that explicitly instructed the model to
 keep the product exactly as-is, three independent runs per item,
 counted with the receipt's own counting rule (October 28, 2026).
@@ -342,16 +344,16 @@ staged image's product pixels without installing anything.
 
 **Everything a judge needs is in this repo.**
 
-- [docs/receipt-format.md](docs/receipt-format.md) — every receipt
+- [docs/receipt-format.md](docs/receipt-format.md): every receipt
   field, and exactly what the verifier recomputes.
-- [docs/EVIDENCE.md](docs/EVIDENCE.md) — the Proof Graph verbs,
+- [docs/EVIDENCE.md](docs/EVIDENCE.md): the Proof Graph verbs,
   exit codes, and the judge pack export (`agenthand evidence
   export <dir>`: the database, every receipt file, and a manifest
   in one folder).
-- [JUDGING.md](JUDGING.md) — the judging index: every headline
+- [JUDGING.md](JUDGING.md): the judging index, every headline
   number in this README, pointed at its Proof Graph trace.
-- [SUBMISSION.md](SUBMISSION.md) — the submission statement.
-- [llms.txt](llms.txt) — the machine-readable summary of this
+- [SUBMISSION.md](SUBMISSION.md): the submission statement.
+- [llms.txt](llms.txt): the machine-readable summary of this
   README.
 - Setup is [Install](#install) above; `.env.example` lists every
   key, and the replay and evidence verbs need none.
@@ -446,7 +448,7 @@ agenthand ships as two independent builds of the same tool: a Rust build and
 a Python build, written separately, each checking the other's output.
 Where they disagree, that is a defect, and the pair is the quality control.
 Before settling on that shape we built and measured three alternatives.
-Of those, only the first — the Differential Conformance Suite — is in
+Of those, only the first, the Differential Conformance Suite, is in
 the shipped product; the rest were experiments run alongside the build,
 and none of them shipped.
 
@@ -521,7 +523,7 @@ can use how a photo was shot instead of re-measuring it.
 
 Every staged image ships with one of these. This is the actual
 receipt from the frozen proof run (the verified live run of
-2026-10-26; file sha256 f0f68ec2…93198b), shown in full —
+2026-10-26; file sha256 f0f68ec2…93198b), shown in full:
 580,613 opaque product pixels checked, 0 changed, and every hash a
 verifier needs to recount that from the stored files. What each
 field means, and exactly what the verifier recomputes, is specified
@@ -604,11 +606,11 @@ Verify every claim in the Proof Graph:
 agenthand evidence verify --all
 ```
 
-- `agenthand evidence trace claim:1` — walk from a claim to its run,
+- `agenthand evidence trace claim:1`: walk from a claim to its run,
   its calls, and its receipt.
-- `agenthand evidence chapter 1:42` — from any moment in the demo
+- `agenthand evidence chapter 1:42`: from any moment in the demo
   film to the chapter at that timestamp and the claim behind it.
-- `agenthand evidence export <dir>` — a judge pack: the database,
+- `agenthand evidence export <dir>`: a judge pack, the database,
   every receipt file, and a manifest, in one folder.
 - Receipts root: `1179530968c27879e3d84aa5475998a475cba64ba5b95f1823a8e7310174ecc3`
   (recompute it with `agenthand evidence root`).
@@ -1030,8 +1032,8 @@ audit trail. The Rust implementation is a port of the Python
 reference implementation, whose dated build log (BUILD_LOG.md in
 that repo) records the project's provenance from an empty directory.
 
-The whole project behind this submission — every run, test, and
-experiment, not just the ones in the film — cost **$4.52 in Meta API
+The whole project behind this submission, every run, test, and
+experiment, not just the ones in the film, cost **$4.52 in Meta API
 calls** (rounded to the nearest cent; the exact settled total is
 $4.522337, struck from the project's call ledgers on November 3,
 2026).

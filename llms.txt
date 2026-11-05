@@ -1,9 +1,9 @@
-# agenthand — reviewer brief
+# agenthand: reviewer brief
 
 agenthand is an MCP server for AI agents that work with real rooms,
 objects, and property. Three tools: identify (what is this, what
 condition, what is it worth), cut_out (pixel-exact extraction), and
-draw (a new background composited under the untouched product —
+draw (a new background composited under the untouched product,
 Fidelity Lock: the product pixels never change, and a hash receipt
 proves it).
 
@@ -15,34 +15,34 @@ is knowledge graph engineering applied to build evidence: the nodes
 and edges are derived from the data's own foreign keys at import,
 never drawn by hand.
 
-- `agenthand evidence verify --all` — re-checks every receipt in the
+- `agenthand evidence verify --all`: re-checks every receipt in the
   Proof Graph against the shipped files; one verdict line per claim.
-- `agenthand evidence chapter <m:ss>` — deep link from any moment in
+- `agenthand evidence chapter <m:ss>`: deep link from any moment in
   the demo film to the chapter at that timestamp and its claim.
-- `agenthand evidence export <dir>` — writes a judge pack: the
+- `agenthand evidence export <dir>`: writes a judge pack: the
   evidence database, every resolvable receipt file, and a manifest
   with the receipts root, in one folder.
-- `agenthand evidence trace <claim|chapter|receipt>` — walks the
+- `agenthand evidence trace <claim|chapter|receipt>`: walks the
   graph from a film timestamp or a claim to the run, the receipt,
   and its sha256.
-- `agenthand evidence graph --format mermaid` — the whole graph,
+- `agenthand evidence graph --format mermaid`: the whole graph,
   rendered.
 - No keys needed: `conformance/` holds a frozen offline replay of a
   real run (580,613 pixels checked, 0 changed) that verifies locally.
 - Receipts root: `1179530968c27879e3d84aa5475998a475cba64ba5b95f1823a8e7310174ecc3`
-  — one hash pins the whole evidence set; recompute it with
+  One hash pins the whole evidence set; recompute it with
   `agenthand evidence root` and compare.
 
 ## Layout
 
-- `README.md` — setup (including adding your own Meta Model API and
+- `README.md`: setup (including adding your own Meta Model API and
   Baseten keys), the model-calls table, the Proof Graph section.
-- `JUDGING.md` — rubric-mapped index: each criterion points at the
+- `JUDGING.md`: rubric-mapped index, each criterion points at the
   exact files, commands, and numbers that speak to it.
-- `evidence/` — the Proof Graph database (SQLite via rusqlite).
-- `reference/` — the Python reference implementation (the QC build;
+- `evidence/`: the Proof Graph database (SQLite via rusqlite).
+- `reference/`: the Python reference implementation (the QC build;
   the Rust build is the product; the two cross-verify).
-- `conformance/` — the parity harness and the frozen replay package.
+- `conformance/`: the parity harness and the frozen replay package.
 
 ## Runtime models (all Meta)
 

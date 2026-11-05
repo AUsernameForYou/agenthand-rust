@@ -25,7 +25,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Video chapters of the demo film (BUILD-REPORT-v10.2 chapter map).
-CHAPTERS = [(1, 0.0, 14.93, 'Ch0 baseline: suitcase still, Muse Image edit vs agenthand 0 changed', 5), (2, 14.93, 37.08, 'Ch1 switchboard: yard, phone, board, run-1443-v102 results', None), (3, 37.08, 51.85, 'Ch2 hero: run-1443-v102, 5,072,763 product pixels checked, 0 changed', 1), (4, 51.85, 66.62, 'Ch3a buyer/seller: verifier PASS, deliberate tamper FAIL', None), (5, 66.62, 81.39, 'Ch3b fence bid packet: card printed width 10 in, CARD_SOFT on, no size number', None), (6, 81.39, 96.16, 'Ch4 moving-day narration: what was said / what the run returned', None), (7, 96.16, 110.93, 'Ch5 open-house fill: 1,128,708 placed pixels, 0 changed; QR proof run-1443-fixed', 4), (8, 110.93, 125.7, 'Ch6 walkaround and dashboard counters', None), (9, 125.7, 140.47, 'Ch7 under the hood: Python/Rust parity, 580,613 checked, 0 changed, $0.020044', 2), (10, 140.47, 155.24, 'Ch8 real screen recording 19:06 take sped up 20x; final card run-1443-v102, not the recorded take', 3), (11, 155.24, 170.35, 'Ch9 cast and prints', None), (12, 170.35, 179.0, 'ChClose lockup, recorded-run call times (wall time per call, client-printed, 19:06 recorded take: 26.9 / 31.9 / 44.7 s), total Meta spend $2.93 settled Nov 1', None)]
+CHAPTERS = [(1, 0.0, 14.93, 'Ch0 baseline: suitcase still, Muse Image edit vs agenthand 0 changed', 5), (2, 14.93, 37.08, 'Ch1 switchboard: yard, phone, board, run-1443-v102 results', None), (3, 37.08, 51.85, 'Ch2 hero: run-1443-v102, two-zone, 4,053,953 product pixels checked, 0 changed', 9), (4, 51.85, 66.62, 'Ch3a buyer/seller: verifier PASS, deliberate tamper FAIL', None), (5, 66.62, 81.39, 'Ch3b fence bid packet: card printed width 10 in, CARD_SOFT on, no size number', None), (6, 81.39, 96.16, 'Ch4 moving-day narration: what was said / what the run returned', None), (7, 96.16, 110.93, 'Ch5 open-house fill: 1,128,708 placed pixels, 0 changed; QR proof run-1443-fixed', 4), (8, 110.93, 125.7, 'Ch6 walkaround and dashboard counters', None), (9, 125.7, 140.47, 'Ch7 under the hood: Python/Rust parity, 580,613 checked, 0 changed, $0.020044', 2), (10, 140.47, 155.24, 'Ch8 real screen recording 19:06 take sped up 20x; final card run-1443-v102, not the recorded take', 3), (11, 155.24, 170.35, 'Ch9 cast and prints', None), (12, 170.35, 179.0, 'ChClose lockup, recorded-run call times (wall time per call, client-printed, 19:06 recorded take: 26.9 / 31.9 / 44.7 s), total Meta spend $4.52 settled ($4.522337 final, struck from the project\'s call ledgers on November 3)', None)]
 
 TOOLS = (  # inventory field prefixes, in chain order
     ("identify", "identify_model", "identify_cost_usd", None, None),
@@ -39,7 +39,7 @@ TOOLS = (  # inventory field prefixes, in chain order
 # receipts keep NULL rather than receiving an inferred command.
 RECEIPT_CHECKS = {
     0: (
-        "env -u META_API_KEY python3 ~/workspace/agenthand/scripts/replay_verified_run.py",
+        "env -u META_API_KEY python3 agenthand/scripts/replay_verified_run.py",
         "REPLAY: PASS",
     ),
     1: (
@@ -330,9 +330,9 @@ def main():
                        "test_settle_over_the_cap_is_recorded_and_fails_loudly; Rust "
                        "settle_over_the_cap_is_recorded_and_fails_loudly_in_both_stores. "
                        "Both assert over_cap recording and refusal of the next reservation."),
-            "source_url": ("~/workspace/agenthand/tests/test_meta_client.py::"
+            "source_url": ("agenthand/tests/test_meta_client.py::"
                            "test_settle_over_the_cap_is_recorded_and_fails_loudly; "
-                           "~/workspace/meta-hackathon/fixpass-verify2/rust-166ea6b/tests/"
+                           "meta-hackathon/fixpass-verify2/rust-166ea6b/tests/"
                            "billing_cap.rs::"
                            "settle_over_the_cap_is_recorded_and_fails_loudly_in_both_stores"),
             "criterion": "Technical Depth & Execution",

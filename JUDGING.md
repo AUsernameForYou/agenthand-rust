@@ -21,7 +21,7 @@ through runs and calls to a receipt a judge can re-verify offline.
 ## Impact
 
 - The problem surface: agents that stage, price, and document real
-  rooms, objects, and property — listing photos, bid packets, room
+  rooms, objects, and property: listing photos, bid packets, room
   records. README, opening sections.
 - The dispute case: a staged photo a buyer can challenge is answered
   by a receipt, not an argument. Film chapters 0–2; trace any of
@@ -93,6 +93,13 @@ film timestamp and it names the chapter and the claim behind it:
 | 1:36 to 1:50 | Ch5 open-house fill | 4 | `agenthand evidence verify 4` |
 | 2:05 to 2:20 | Ch7 parity | 2 | `agenthand evidence verify 2` |
 | 2:20 to 2:35 | Ch8 recorded take | 3 | `agenthand evidence verify 3` |
+
+A note on claims 3 and 4: both rest on record-only receipts whose
+source files are not in this package, so the scoped checks
+(`agenthand evidence verify 3` and `agenthand evidence verify 4`)
+report INCOMPLETE by design. The full check,
+`agenthand evidence verify --all`, re-hashes all 30 rooted receipts
+and recomputes the receipts root.
 
 Chapters with no claim behind them resolve to no claim, by design;
 nothing in the film is mapped to evidence it does not have. The
