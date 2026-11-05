@@ -220,6 +220,12 @@ NO_MATCH. The narration runs on Baseten partner credits, a pool
 separate from the Meta Model API spend cap; the three tools
 themselves run on the hosted Meta models in the table above.
 
+Build partner: Muse Wonder (Meta Model API, run on the builder's
+own card in a separate pool) audited the image pipeline on
+October 29, and its findings drove the cut-quality gate and the
+wonder-fix build that followed. A build-time tool, not a runtime
+model.
+
 **The product is never regenerated, and the receipt is the
 product.** Generative staging tools rebuild the item and ask the
 seller to trust the result. agenthand generates only the room
